@@ -28,6 +28,7 @@ namespace Harpoon.Runtime
         private GUIStyle _debugStyle;
         private GUIStyle _debugHeaderStyle;
         private GUIStyle _activationStyle;
+        private GUIStyle _sectionHeaderStyle;
         private Side _selectedFormation = Side.UsNavy;
         private string _selectedFormationId = "US Task Force";
         private HexCoord? _hoveredHex;
@@ -93,6 +94,11 @@ namespace Harpoon.Runtime
         private bool _confirmRestart;
         private bool _confirmExit;
         private string _saveStatus = string.Empty;
+        private bool _showObjectiveSection = true;
+        private bool _showOrdersSection = true;
+        private bool _showRosterSection;
+        private bool _showSystemSection;
+        private bool _showEventSection;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureBootstrap()
@@ -1386,18 +1392,13 @@ namespace Harpoon.Runtime
         private void DrawScenarioControls()
         {
             var score = _game.CurrentScore();
-            GUILayout.Label("SCENARIO OBJECTIVE", _cardHeaderStyle);
             GUILayout.Label("Damage the opposing merchant / amphibious ship.", _cardStatStyle);
-            GUILayout.Label($"US {score.UsObjectiveDamage}   -   PLAN {score.PlanObjectiveDamage}", _labelStyle);
+            var oldColor = GUI.color;
+            GUI.color = new Color(0.28f, 0.78f, 1f);
+            GUILayout.Label($"OBJECTIVE DAMAGE    US {score.UsObjectiveDamage}   -   PLAN {score.PlanObjectiveDamage}",
+                _cardHeaderStyle);
+            GUI.color = oldColor;
             GUILayout.Label($"Escort tie-break: US {score.UsTieBreakDamage}   -   PLAN {score.PlanTieBreakDamage}", _cardStatStyle);
-            GUILayout.Label($"MATCH SEED {_game.Seed}", _cardStatStyle);
-            GUILayout.BeginHorizontal();
-            _seedText = GUILayout.TextField(_seedText, 16, GUILayout.Width(112f));
-            GUI.enabled = !IsClientSession;
-            if (GUILayout.Button("RESTART SEED", _buttonStyle)) Restart();
-            if (GUILayout.Button("RANDOM", _buttonStyle, GUILayout.Width(78f))) UseRandomSeed();
-            GUI.enabled = true;
-            GUILayout.EndHorizontal();
             if (!_game.State.IsGameOver)
             {
                 GUILayout.BeginHorizontal();
@@ -1412,6 +1413,109 @@ namespace Harpoon.Runtime
             else
                 GUILayout.Label($"{_game.State.Result} - {_game.State.EndReason}", _titleStyle);
             GUILayout.Space(8f);
+        }
+
+        private bool DrawSectionHeader(string title, string summary, Color accent, bool expanded)
+        {
+            var previous = GUI.backgroundColor;
+            GUI.backgroundColor = accent;
+            var label = $"{(expanded ? "-" : "+")}  {title}";
+            if (!string.IsNullOrWhiteSpace(summary)) label += $"     {summary}";
+            var clicked = GUILayout.Button(label, _sectionHeaderStyle);
+            GUI.backgroundColor = previous;
+            return clicked;
+        }
+
+        private void DrawCurrentOrders()
+        {
+            DrawSpeedDeclaration();
+            GUILayout.Space(6f);
+            var actionPhase = _game.State.Phase == ActivationPhase.PlayerMove ||
+                              _game.State.Phase == ActivationPhase.PlayerAction;
+            var hasDetectedTarget = !_game.State.DetectionRulesEnabled || _game.State.Forces.Any(force =>
+                force.Side != LocalSide && _game.State.Detection.IsDetected(LocalSide, force.Id));
+            var prior = GUI.backgroundColor;
+            GUI.backgroundColor = new Color(0.78f, 0.24f, 0.16f);
+            GUI.enabled = CanLocalAct() && actionPhase && !_game.State.PlayerHasAttacked && hasDetectedTarget;
+            if (GUILayout.Button("ATTACK RED-RINGED TARGET", _buttonStyle))
+            {
+                var selectedTarget = _game.State.Formation(_selectedFormationId);
+                var targetFormationId = selectedTarget != null && selectedTarget.Side != LocalSide
+                    ? selectedTarget.Id : null;
+                if (IsClientSession)
+                {
+                    SendCommand(GameCommandType.Attack, targetId: targetFormationId);
+                    _status = "Attack command sent to host.";
+                }
+                else
+                {
+                    var commandResult = _game.Execute(new GameCommand(GameCommandType.Attack,
+                        LocalSide, _game.State.Revision, targetId: targetFormationId));
+                    _status = commandResult.Accepted && _game.State.Phase == ActivationPhase.MissileCombat
+                        ? "Missile engagement opened. Allocate factors to targets."
+                        : commandResult.Accepted && _game.State.Phase == ActivationPhase.GunCombat
+                            ? "Close action opened. Resolve the gun engagement."
+                            : commandResult.Summary;
+                    RefreshViews();
+                    if (IsHostSession) BroadcastSnapshot();
+                }
+            }
+            GUI.backgroundColor = new Color(0.18f, 0.56f, 0.34f);
+            var activeForce = _game.State.ForceFor(LocalSide);
+            GUI.enabled = !_game.State.IsGameOver && CanLocalAct() &&
+                          activeForce.DeclaredSpeed >= 0 && activeForce.MovementRemaining == 0;
+            if (GUILayout.Button("END ACTIVATION", _buttonStyle))
+            {
+                if (IsClientSession)
+                {
+                    SendCommand(GameCommandType.EndActivation);
+                    _status = "End activation sent to host.";
+                }
+                else
+                {
+                    var commandResult = _game.Execute(new GameCommand(GameCommandType.EndActivation,
+                        LocalSide, _game.State.Revision));
+                    _status = commandResult.Summary;
+                    if (commandResult.Accepted)
+                        _status = _game.State.IsGameOver ? _game.State.Result : "Waiting for the other activation.";
+                    RefreshViews();
+                    if (IsHostSession) BroadcastSnapshot();
+                }
+            }
+            GUI.enabled = true;
+            GUI.backgroundColor = prior;
+        }
+
+        private void DrawSystemControls()
+        {
+            GUILayout.Label($"DETERMINISTIC MATCH SEED   {_game.Seed}", _cardStatStyle);
+            GUILayout.BeginHorizontal();
+            _seedText = GUILayout.TextField(_seedText, 16, GUILayout.Width(112f));
+            GUI.enabled = !IsClientSession;
+            if (GUILayout.Button("RESTART SEED", _buttonStyle)) Restart();
+            if (GUILayout.Button("RANDOM", _buttonStyle, GUILayout.Width(78f))) UseRandomSeed();
+            GUILayout.EndHorizontal();
+            if (GUILayout.Button("PAUSE / SAVE  [P]", _buttonStyle)) SetPaused(true);
+            if (GUILayout.Button("BRIEFING / RULES  [F1]", _buttonStyle)) _showBriefing = true;
+            if (GUILayout.Button("RESTART SCENARIO", _buttonStyle)) _confirmRestart = true;
+            GUI.enabled = true;
+            if (GUILayout.Button(_sessionMode == SessionMode.HotSeat ? "RETURN TO SOLO" : "HOT-SEAT 1 vs 1", _buttonStyle))
+            {
+                if (_sessionMode == SessionMode.HotSeat)
+                {
+                    _sessionMode = SessionMode.SinglePlayer;
+                    Restart();
+                }
+                else StartHotSeat();
+            }
+            if (GUILayout.Button(_sessionMode == SessionMode.SinglePlayer ? "MULTIPLAYER" : "MULTIPLAYER / CONNECTION", _buttonStyle))
+                _showMultiplayer = !_showMultiplayer;
+            if (GUILayout.Button(_showDebug ? "CLOSE DEBUG TRACE  [F3]" : "DEBUG TRACE  [F3]", _buttonStyle))
+                _showDebug = !_showDebug;
+            var previous = GUI.backgroundColor;
+            GUI.backgroundColor = new Color(0.62f, 0.18f, 0.16f);
+            if (GUILayout.Button("EXIT GAME", _buttonStyle)) _confirmExit = true;
+            GUI.backgroundColor = previous;
         }
 
         private string CurrentDecisionPrompt()
@@ -1522,105 +1626,88 @@ namespace Harpoon.Runtime
             var commandPanelHeight = Mathf.Max(300f, Screen.height - 36f);
             GUI.Box(new Rect(18, 18, 370, commandPanelHeight), GUIContent.none);
             GUILayout.BeginArea(new Rect(28, 28, 350, commandPanelHeight - 20f));
-            _commandPanelScroll = GUILayout.BeginScrollView(_commandPanelScroll, false, true);
+            GUILayout.BeginHorizontal();
             GUILayout.Label("HARPOON", _titleStyle);
+            GUILayout.FlexibleSpace();
             GUILayout.Label(_sessionMode == SessionMode.SinglePlayer ? "SOLO - US NAVY" :
                 _sessionMode == SessionMode.HotSeat ? $"HOT-SEAT - {LocalSide.ToString().ToUpperInvariant()} TO ACT" :
-                $"ONLINE - {LocalSide.ToString().ToUpperInvariant()} - {NetworkStatus}", _labelStyle);
-            GUILayout.Label("FIRST ISLAND CHAIN · SCENARIO 1", _labelStyle);
-            GUILayout.Label("WASD pan · wheel zoom · RMB/Q/E orbit · F11 display", _labelStyle);
-            GUILayout.Space(10);
+                $"ONLINE - {LocalSide.ToString().ToUpperInvariant()}", _cardStatStyle);
+            GUILayout.EndHorizontal();
             var turnLimit = _game.State.MaximumTurns > 0 ? _game.State.MaximumTurns.ToString() : "∞";
-            GUILayout.Label($"TURN {_game.State.Turn}/{turnLimit}   ·   {_game.State.Phase}", _labelStyle);
-            GUILayout.Label(_status, _labelStyle);
+            GUILayout.Label($"TURN {_game.State.Turn}/{turnLimit}   ·   {_game.State.Phase}   ·   SEED {_game.Seed}", _cardStatStyle);
+            GUILayout.Label(_status, _cardStatStyle);
             var priorPrompt = GUI.color;
             GUI.color = new Color(1f, 0.84f, 0.28f);
             GUILayout.Label(CurrentDecisionPrompt(), _cardHeaderStyle);
             GUI.color = priorPrompt;
-            GUILayout.Space(10);
-            DrawScenarioControls();
-            foreach (var force in _game.State.Forces)
+            GUILayout.Space(6f);
+
+            if (_game.State.Phase == ActivationPhase.MissileCombat ||
+                _game.State.Phase == ActivationPhase.GunCombat) _showOrdersSection = true;
+            _commandPanelScroll = GUILayout.BeginScrollView(_commandPanelScroll, false, true,
+                GUILayout.ExpandHeight(true));
+
+            var score = _game.CurrentScore();
+            if (DrawSectionHeader("VICTORY / OBJECTIVE",
+                    $"US {score.UsObjectiveDamage} : {score.PlanObjectiveDamage} PLAN",
+                    new Color(0.08f, 0.48f, 0.68f), _showObjectiveSection))
+                _showObjectiveSection = !_showObjectiveSection;
+            if (_showObjectiveSection)
             {
-                DrawForce(force);
-                GUILayout.Space(4);
+                GUILayout.BeginVertical(GUI.skin.box);
+                DrawScenarioControls();
+                GUILayout.EndVertical();
             }
-            GUILayout.Space(8);
-            DrawSpeedDeclaration();
-            GUILayout.Space(8);
-            var actionPhase = _game.State.Phase == ActivationPhase.PlayerMove ||
-                              _game.State.Phase == ActivationPhase.PlayerAction;
-            var hasDetectedTarget = !_game.State.DetectionRulesEnabled || _game.State.Forces.Any(force =>
-                force.Side != LocalSide && _game.State.Detection.IsDetected(LocalSide, force.Id));
-            GUI.enabled = CanLocalAct() && actionPhase && !_game.State.PlayerHasAttacked && hasDetectedTarget;
-            if (GUILayout.Button("ATTACK", _buttonStyle))
+
+            var usShips = _game.State.Forces.Where(force => force.Side == Side.UsNavy)
+                .Sum(force => force.ActiveUnits.Count());
+            var planShips = _game.State.Forces.Where(force => force.Side == Side.Plan)
+                .Sum(force => force.ActiveUnits.Count());
+            if (DrawSectionHeader("ORDER OF BATTLE", $"US {usShips} · PLAN {planShips}",
+                    new Color(0.16f, 0.34f, 0.62f), _showRosterSection))
+                _showRosterSection = !_showRosterSection;
+            if (_showRosterSection)
             {
-                var selectedTarget = _game.State.Formation(_selectedFormationId);
-                var targetFormationId = selectedTarget != null && selectedTarget.Side != LocalSide
-                    ? selectedTarget.Id : null;
-                if (IsClientSession)
+                GUILayout.BeginVertical(GUI.skin.box);
+                foreach (var force in _game.State.Forces)
                 {
-                    SendCommand(GameCommandType.Attack, targetId: targetFormationId);
-                    _status = "Attack command sent to host.";
+                    DrawForce(force);
+                    GUILayout.Space(3f);
                 }
-                else
-                {
-                    var commandResult = _game.Execute(new GameCommand(GameCommandType.Attack,
-                        LocalSide, _game.State.Revision, targetId: targetFormationId));
-                    _status = commandResult.Accepted && _game.State.Phase == ActivationPhase.MissileCombat
-                        ? "Missile engagement opened. Allocate factors to targets."
-                        : commandResult.Accepted && _game.State.Phase == ActivationPhase.GunCombat
-                            ? "Close action opened. Resolve the gun engagement."
-                            : commandResult.Summary;
-                    RefreshViews();
-                    if (IsHostSession) BroadcastSnapshot();
-                }
+                GUILayout.EndVertical();
             }
-            var activeForce = _game.State.ForceFor(LocalSide);
-            GUI.enabled = !_game.State.IsGameOver && CanLocalAct() &&
-                          activeForce.DeclaredSpeed >= 0 && activeForce.MovementRemaining == 0;
-            if (GUILayout.Button("END ACTIVATION", _buttonStyle))
+
+            if (DrawSectionHeader("CURRENT ORDERS", _game.State.Phase.ToString().ToUpperInvariant(),
+                    new Color(0.82f, 0.45f, 0.08f), _showOrdersSection))
+                _showOrdersSection = !_showOrdersSection;
+            if (_showOrdersSection)
             {
-                if (IsClientSession)
-                {
-                    SendCommand(GameCommandType.EndActivation);
-                    _status = "End activation sent to host.";
-                }
-                else
-                {
-                    var commandResult = _game.Execute(new GameCommand(GameCommandType.EndActivation,
-                        LocalSide, _game.State.Revision));
-                    _status = commandResult.Summary;
-                    if (commandResult.Accepted)
-                        _status = _game.State.IsGameOver ? _game.State.Result : "Waiting for the other activation.";
-                    RefreshViews();
-                    if (IsHostSession) BroadcastSnapshot();
-                }
+                GUILayout.BeginVertical(GUI.skin.box);
+                DrawCurrentOrders();
+                GUILayout.EndVertical();
             }
-            GUI.enabled = true;
-            GUI.enabled = !IsClientSession;
-            if (GUILayout.Button("PAUSE / SAVE  [P]", _buttonStyle)) SetPaused(true);
-            if (GUILayout.Button("BRIEFING / RULES  [F1]", _buttonStyle)) _showBriefing = true;
-            if (GUILayout.Button("RESTART SCENARIO", _buttonStyle)) _confirmRestart = true;
-            GUI.enabled = true;
-            if (GUILayout.Button(_sessionMode == SessionMode.HotSeat ? "RETURN TO SOLO" : "HOT-SEAT 1 vs 1", _buttonStyle))
+
+            if (DrawSectionHeader("MATCH & SYSTEM", $"{(_sessionMode == SessionMode.SinglePlayer ? "SOLO" : "1 vs 1")}",
+                    new Color(0.32f, 0.36f, 0.42f), _showSystemSection))
+                _showSystemSection = !_showSystemSection;
+            if (_showSystemSection)
             {
-                if (_sessionMode == SessionMode.HotSeat)
-                {
-                    _sessionMode = SessionMode.SinglePlayer;
-                    Restart();
-                }
-                else StartHotSeat();
+                GUILayout.BeginVertical(GUI.skin.box);
+                DrawSystemControls();
+                GUILayout.EndVertical();
             }
-            if (GUILayout.Button(_sessionMode == SessionMode.SinglePlayer ? "MULTIPLAYER" : "MULTIPLAYER / CONNECTION", _buttonStyle))
-                _showMultiplayer = !_showMultiplayer;
-            if (GUILayout.Button(_showDebug ? "CLOSE DEBUG TRACE  [F3]" : "DEBUG TRACE  [F3]", _buttonStyle))
-                _showDebug = !_showDebug;
-            if (GUILayout.Button("EXIT GAME", _buttonStyle)) _confirmExit = true;
-            GUILayout.Space(12);
-            if (_game.State.IsGameOver) GUILayout.Label(_game.State.Result, _titleStyle);
-            GUILayout.Label("EVENT LOG", _labelStyle);
-            foreach (var entry in _game.State.Log.Skip(System.Math.Max(0, _game.State.Log.Count - 7)))
-                GUILayout.Label("• " + entry, _labelStyle);
+
+            var latestEvent = _game.State.Log.LastOrDefault() ?? "No events";
+            if (latestEvent.Length > 25) latestEvent = latestEvent.Substring(0, 25) + "...";
+            if (DrawSectionHeader("EVENT LOG", latestEvent, new Color(0.18f, 0.48f, 0.44f), _showEventSection))
+                _showEventSection = !_showEventSection;
+            if (_showEventSection)
+            {
+                GUILayout.BeginVertical(GUI.skin.box);
+                foreach (var entry in _game.State.Log.Skip(System.Math.Max(0, _game.State.Log.Count - 9)))
+                    GUILayout.Label("• " + entry, _cardStatStyle);
+                GUILayout.EndVertical();
+            }
             GUILayout.EndScrollView();
             GUILayout.EndArea();
             DrawFormationCards();
@@ -2540,6 +2627,17 @@ namespace Harpoon.Runtime
             _labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, wordWrap = true };
             _labelStyle.normal.textColor = new Color(0.85f, 0.9f, 0.94f);
             _buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 14, fixedHeight = 34f };
+            _sectionHeaderStyle = new GUIStyle(GUI.skin.button)
+            {
+                fontSize = 13,
+                fontStyle = FontStyle.Bold,
+                fixedHeight = 32f,
+                alignment = TextAnchor.MiddleLeft,
+                padding = new RectOffset(10, 8, 4, 4)
+            };
+            _sectionHeaderStyle.normal.textColor = Color.white;
+            _sectionHeaderStyle.hover.textColor = Color.white;
+            _sectionHeaderStyle.active.textColor = Color.white;
             _cardHeaderStyle = new GUIStyle(GUI.skin.label) { fontSize = 15, fontStyle = FontStyle.Bold, wordWrap = true };
             _cardHeaderStyle.normal.textColor = new Color(0.87f, 0.94f, 1f);
             _cardStatStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, wordWrap = true };
