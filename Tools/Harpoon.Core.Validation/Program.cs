@@ -15,6 +15,7 @@ static class Program
             GunfireObjectiveRoute();
             GunfireBreakOffRoute();
             ReplayAndSaveRoute();
+            ReleaseVersionRoute();
             Console.WriteLine($"HARPOON CORE VALIDATION PASSED: {_checks} checks; scripted movement, missile, gunfire, scoring, stopping, and replay routes complete.");
             return 0;
         }
@@ -224,6 +225,14 @@ static class Program
         mirror.ApplySnapshot(snapshot);
         Check(mirror.Seed == original.Seed && mirror.State.Result == original.State.Result &&
             mirror.State.Transactions.Count == original.State.Transactions.Count, "Snapshot/export restore");
+    }
+
+    private static void ReleaseVersionRoute()
+    {
+        Check(ReleaseVersion.IsNewer("v0.1.1", "0.1.0"), "Release tag patch upgrade");
+        Check(ReleaseVersion.IsNewer("v1.0.0", "0.9.9"), "Release tag major upgrade");
+        Check(!ReleaseVersion.IsNewer("v0.1.0", "0.1.0"), "Equal release is not an update");
+        Check(!ReleaseVersion.IsNewer("invalid", "0.1.0"), "Invalid release tag is rejected");
     }
 
     private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,

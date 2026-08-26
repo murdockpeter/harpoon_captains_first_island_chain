@@ -34,6 +34,8 @@ Press **F1** for the operational briefing and Scenario 1 quick reference. Press 
 
 Release validation is also one command: `release-check.cmd`. Use `test.cmd` for the standalone .NET core suite or `smoke.cmd` for only the Windows build/player smoke gate. Each command returns a nonzero exit code when its gate fails.
 
+Windows builds check published GitHub Releases for verified updates. Release tags drive the tested build/publish workflow, while installation remains an explicit player choice under **Match & System**. See [`docs/AUTO_UPDATES.md`](docs/AUTO_UPDATES.md) for the release contract, one-time Unity license setup, security checks, and recovery path.
+
 ## Architecture
 
 `Assets/Harpoon/Core` is independent of Unity and is the authoritative simulation layer. Rendering and input consume its state without changing rules outcomes, supporting later hidden information, replay, saves, stronger AI, and multiplayer.

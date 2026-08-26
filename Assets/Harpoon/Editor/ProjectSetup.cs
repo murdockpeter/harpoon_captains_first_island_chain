@@ -14,6 +14,7 @@ namespace Harpoon.Editor
 {
     public static class ProjectSetup
     {
+        public const string DefaultReleaseVersion = "0.1.1";
         [MenuItem("Harpoon/Public Multiplayer Setup")]
         public static void OpenPublicMultiplayerSetup()
         {
@@ -31,6 +32,7 @@ namespace Harpoon.Editor
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene("Assets/Main.unity", true) };
             PlayerSettings.productName = "Harpoon: First Island Chain";
             PlayerSettings.companyName = "Open Source Harpoon Community";
+            PlayerSettings.bundleVersion = ReleaseVersionFromCommandLine();
             PlayerSettings.defaultScreenWidth = 1600;
             PlayerSettings.defaultScreenHeight = 900;
             PlayerSettings.fullScreenMode = FullScreenMode.FullScreenWindow;
@@ -129,6 +131,7 @@ namespace Harpoon.Editor
         public static void BuildWindowsPlayer()
         {
             EnsureRenderingAssets();
+            PlayerSettings.bundleVersion = ReleaseVersionFromCommandLine();
             const string outputPath = "Build/Windows/HarpoonFirstIslandChain.exe";
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? "Build/Windows");
             var options = new BuildPlayerOptions
@@ -141,7 +144,25 @@ namespace Harpoon.Editor
             var report = BuildPipeline.BuildPlayer(options);
             if (report.summary.result != BuildResult.Succeeded)
                 throw new InvalidOperationException($"Windows build failed: {report.summary.result}");
+            File.WriteAllText("Build/Windows/harpoon-version.txt", PlayerSettings.bundleVersion);
             Debug.Log($"HARPOON WINDOWS BUILD PASSED: {outputPath}");
+        }
+
+        private static string ReleaseVersionFromCommandLine()
+        {
+            var arguments = Environment.GetCommandLineArgs();
+            for (var index = 0; index < arguments.Length - 1; index++)
+                if (string.Equals(arguments[index], "-releaseVersion", StringComparison.OrdinalIgnoreCase))
+                    return NormalizeVersion(arguments[index + 1]);
+            return DefaultReleaseVersion;
+        }
+
+        private static string NormalizeVersion(string value)
+        {
+            var clean = (value ?? string.Empty).Trim().TrimStart('v', 'V');
+            if (!ReleaseVersion.TryParse(clean, out var parsed))
+                throw new InvalidOperationException($"Invalid release version '{value}'. Expected major.minor.patch.");
+            return parsed.ToString();
         }
 
         private static void EnsureRenderingAssets()

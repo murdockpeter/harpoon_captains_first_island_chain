@@ -1,0 +1,72 @@
+name: Publish Windows release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  validate-build-release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_ASSET: Harpoon-First-Island-Chain-Windows.zip
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Run Unity-independent release suite
+        shell: pwsh
+        run: ./test.ps1
+
+      - name: Cache Unity Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ runner.os }}-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-${{ runner.os }}-
+
+      - name: Build tagged Windows player
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          unityVersion: 6000.2.12f1
+          targetPlatform: StandaloneWindows64
+          buildMethod: Harpoon.Editor.ProjectSetup.BuildWindowsPlayer
+          customParameters: -releaseVersion ${{ github.ref_name }}
+
+      - name: Package and checksum Windows player
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath 'Build/Windows/HarpoonFirstIslandChain.exe')) {
+            throw 'The tagged Windows build was not produced.'
+          }
+          $expected = $env:RELEASE_TAG.TrimStart('v', 'V')
+          $actual = (Get-Content -LiteralPath 'Build/Windows/harpoon-version.txt' -Raw).Trim()
+          if ($actual -ne $expected) { throw "Player version $actual does not match tag $expected." }
+          Compress-Archive -Path 'Build/Windows/*' -DestinationPath $env:RELEASE_ASSET -CompressionLevel Optimal
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $env:RELEASE_ASSET).Hash.ToLowerInvariant()
+          "$hash  $env:RELEASE_ASSET" | Set-Content -LiteralPath "$env:RELEASE_ASSET.sha256"
+
+      - name: Create draft, attach complete assets, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "$RELEASE_ASSET#Windows x64 auto-update package" \
+            "$RELEASE_ASSET.sha256#SHA-256 checksum" \
+            --verify-tag --generate-notes --draft --title "Harpoon $RELEASE_TAG"
+          gh release edit "$RELEASE_TAG" --draft=false --latest

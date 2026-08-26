@@ -94,6 +94,11 @@ namespace Harpoon.Runtime
         private bool _confirmRestart;
         private bool _confirmExit;
         private string _saveStatus = string.Empty;
+        private bool _checkingForUpdate;
+        private bool _downloadingUpdate;
+        private float _updateProgress;
+        private string _updateStatus = "Updates have not been checked.";
+        private UpdateCheckResult _availableUpdate;
         private bool _showObjectiveSection = true;
         private bool _showOrdersSection = true;
         private bool _showRosterSection;
@@ -118,6 +123,7 @@ namespace Harpoon.Runtime
             BuildSoundboard();
             BuildGameAudio();
             Restart();
+            if (!Application.isEditor) StartCoroutine(CheckForUpdates());
         }
 
         private void Update()
@@ -1432,16 +1438,18 @@ namespace Harpoon.Runtime
             GUILayout.Space(6f);
             var actionPhase = _game.State.Phase == ActivationPhase.PlayerMove ||
                               _game.State.Phase == ActivationPhase.PlayerAction;
-            var hasDetectedTarget = !_game.State.DetectionRulesEnabled || _game.State.Forces.Any(force =>
-                force.Side != LocalSide && _game.State.Detection.IsDetected(LocalSide, force.Id));
+            var legalTargets = _game.State.Forces.Where(IsLegalAttackTarget).ToArray();
             var prior = GUI.backgroundColor;
             GUI.backgroundColor = new Color(0.78f, 0.24f, 0.16f);
-            GUI.enabled = CanLocalAct() && actionPhase && !_game.State.PlayerHasAttacked && hasDetectedTarget;
-            if (GUILayout.Button("ATTACK RED-RINGED TARGET", _buttonStyle))
+            GUI.enabled = CanLocalAct() && actionPhase && !_game.State.PlayerHasAttacked && legalTargets.Length > 0;
+            var attackLabel = legalTargets.Length == 0 ? "NO TARGET IN WEAPON RANGE" :
+                legalTargets.Length == 1 ? $"ATTACK {legalTargets[0].Id.ToUpperInvariant()}" :
+                "ATTACK SELECTED RED-RINGED TARGET";
+            if (GUILayout.Button(attackLabel, _buttonStyle))
             {
                 var selectedTarget = _game.State.Formation(_selectedFormationId);
-                var targetFormationId = selectedTarget != null && selectedTarget.Side != LocalSide
-                    ? selectedTarget.Id : null;
+                var targetFormationId = selectedTarget != null && legalTargets.Contains(selectedTarget)
+                    ? selectedTarget.Id : legalTargets.Length == 1 ? legalTargets[0].Id : null;
                 if (IsClientSession)
                 {
                     SendCommand(GameCommandType.Attack, targetId: targetFormationId);
@@ -1488,6 +1496,31 @@ namespace Harpoon.Runtime
 
         private void DrawSystemControls()
         {
+            GUILayout.Label($"INSTALLED VERSION   {Application.version}", _cardStatStyle);
+            var versionColor = GUI.color;
+            GUI.color = _availableUpdate?.UpdateAvailable == true
+                ? new Color(0.35f, 1f, 0.48f) : new Color(0.66f, 0.82f, 0.9f);
+            GUILayout.Label(_updateStatus, _cardStatStyle);
+            GUI.color = versionColor;
+            if (_downloadingUpdate)
+            {
+                GUILayout.Label($"DOWNLOADING & VERIFYING   {Mathf.RoundToInt(_updateProgress * 100f)}%", _cardHeaderStyle);
+            }
+            else
+            {
+                GUILayout.BeginHorizontal();
+                GUI.enabled = !_checkingForUpdate;
+                if (GUILayout.Button(_checkingForUpdate ? "CHECKING..." : "CHECK FOR UPDATE", _buttonStyle))
+                    StartCoroutine(CheckForUpdates());
+                GUI.enabled = _availableUpdate?.UpdateAvailable == true;
+                var priorUpdateColor = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(0.16f, 0.68f, 0.34f);
+                if (GUILayout.Button("INSTALL UPDATE", _buttonStyle)) StartCoroutine(InstallAvailableUpdate());
+                GUI.backgroundColor = priorUpdateColor;
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.Space(7f);
             GUILayout.Label($"DETERMINISTIC MATCH SEED   {_game.Seed}", _cardStatStyle);
             GUILayout.BeginHorizontal();
             _seedText = GUILayout.TextField(_seedText, 16, GUILayout.Width(112f));
@@ -1518,6 +1551,50 @@ namespace Harpoon.Runtime
             GUI.backgroundColor = previous;
         }
 
+        private IEnumerator CheckForUpdates()
+        {
+            if (_checkingForUpdate || _downloadingUpdate) yield break;
+            _checkingForUpdate = true;
+            _updateStatus = "Checking GitHub Releases...";
+            UpdateCheckResult result = null;
+            yield return GitHubUpdateService.Check(Application.version, value => result = value);
+            _checkingForUpdate = false;
+            _availableUpdate = result?.UpdateAvailable == true ? result : null;
+            _updateStatus = result?.Message ?? "Update check returned no result.";
+        }
+
+        private IEnumerator InstallAvailableUpdate()
+        {
+            if (_downloadingUpdate || _availableUpdate?.UpdateAvailable != true) yield break;
+            _downloadingUpdate = true;
+            _updateProgress = 0f;
+            _updateStatus = $"Downloading {_availableUpdate.Release.tag_name}...";
+            string packagePath = null;
+            string downloadError = null;
+            yield return GitHubUpdateService.DownloadAndVerify(_availableUpdate.Release, _availableUpdate.Asset,
+                value => _updateProgress = value, (path, error) =>
+                {
+                    packagePath = path;
+                    downloadError = error;
+                });
+            _downloadingUpdate = false;
+            if (!string.IsNullOrWhiteSpace(downloadError))
+            {
+                _updateStatus = downloadError;
+                yield break;
+            }
+            SaveMatch();
+            var targetVersion = _availableUpdate.Release.tag_name.TrimStart('v', 'V');
+            if (!GitHubUpdateService.LaunchInstaller(packagePath, targetVersion, out var launchError))
+            {
+                _updateStatus = "Installer could not start: " + launchError;
+                yield break;
+            }
+            _updateStatus = "Verified. Closing Harpoon so the updater can install and relaunch.";
+            yield return null;
+            QuitGame();
+        }
+
         private string CurrentDecisionPrompt()
         {
             if (_game.State.IsGameOver) return "SCENARIO COMPLETE - review the score or begin a new match.";
@@ -1539,7 +1616,9 @@ namespace Harpoon.Runtime
             var force = _game.State.ForceFor(LocalSide);
             if (force.MovementRemaining > 0)
                 return "DECISION REQUIRED - enter a cyan adjacent hex; red-ringed formations are legal targets.";
-            return "DECISION REQUIRED - attack a red-ringed target or end activation.";
+            return _game.State.Forces.Any(IsLegalAttackTarget)
+                ? "DECISION REQUIRED - attack a red-ringed target or end activation."
+                : "NO WEAPON IN RANGE - end this formation's activation.";
         }
 
         private void DrawBriefingOverlay()
@@ -1687,7 +1766,10 @@ namespace Harpoon.Runtime
                 GUILayout.EndVertical();
             }
 
-            if (DrawSectionHeader("MATCH & SYSTEM", $"{(_sessionMode == SessionMode.SinglePlayer ? "SOLO" : "1 vs 1")}",
+            var systemSummary = _availableUpdate?.UpdateAvailable == true
+                ? $"UPDATE {_availableUpdate.Release.tag_name}"
+                : (_sessionMode == SessionMode.SinglePlayer ? "SOLO" : "1 vs 1");
+            if (DrawSectionHeader("MATCH & SYSTEM", systemSummary,
                     new Color(0.32f, 0.36f, 0.42f), _showSystemSection))
                 _showSystemSection = !_showSystemSection;
             if (_showSystemSection)
