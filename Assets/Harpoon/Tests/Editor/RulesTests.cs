@@ -6,6 +6,72 @@ namespace Harpoon.Core.Tests
     public sealed class RulesTests
     {
         [Test]
+        public void ScenarioTwoLoadsPrintedFormationAndScoresAllHullHits()
+        {
+            var definition = FirstIslandChainScenarios.FlagshipDuel;
+            var battle = ScenarioOne.Create(false, definition);
+            Assert.That(battle.Scenario.Id, Is.EqualTo("fic-02"));
+            Assert.That(battle.Player.Position, Is.EqualTo(new HexCoord(12, 13)));
+            Assert.That(battle.Enemy.Position, Is.EqualTo(new HexCoord(5, 10)));
+            Assert.That(battle.Player.Units.Select(unit => unit.Definition.Id), Is.EquivalentTo(new[]
+            {
+                "us-burke-iia-1", "us-burke-iia-2", "us-ticonderoga", "us-san-antonio"
+            }));
+            Assert.That(battle.Enemy.Units.Single().Definition.Id, Is.EqualTo("plan-type-055"));
+
+            var game = new ScenarioOneGame(2, null, true, false, null, definition);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.units.Single(unit => unit.id == "plan-type-055").hullDamage = 1;
+            snapshot.units.Single(unit => unit.id == "us-burke-iia-1").hullDamage = 1;
+            snapshot.units.Single(unit => unit.id == "us-san-antonio").hullDamage = 1;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.CurrentScore().UsObjectiveDamage, Is.EqualTo(1));
+            Assert.That(game.CurrentScore().PlanObjectiveDamage, Is.EqualTo(2));
+            Assert.That(game.CurrentScore().Result, Is.EqualTo("PLAN VICTORY"));
+        }
+
+        [Test]
+        public void ScenarioThreeScoresGunfireButNotMissileDamage()
+        {
+            var definition = FirstIslandChainScenarios.CloseAboard;
+            var battle = ScenarioOne.Create(false, definition);
+            Assert.That(battle.Player.Position, Is.EqualTo(new HexCoord(13, 13)));
+            Assert.That(battle.Enemy.Position, Is.EqualTo(new HexCoord(10, 10)));
+            Assert.That(battle.Player.Units.Count, Is.EqualTo(2));
+            Assert.That(battle.Enemy.Units.Count, Is.EqualTo(3));
+
+            var game = new ScenarioOneGame(3, null, true, false, null, definition);
+            var snapshot = game.CaptureSnapshot();
+            var plan = snapshot.units.Single(unit => unit.id == "plan-type-056a-1");
+            plan.hullDamage = 1;
+            plan.gunfireHullDamage = 0;
+            var us = snapshot.units.Single(unit => unit.id == "us-constellation");
+            us.hullDamage = 1;
+            us.gunfireHullDamage = 1;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.CurrentScore().UsObjectiveDamage, Is.Zero);
+            Assert.That(game.CurrentScore().PlanObjectiveDamage, Is.EqualTo(1));
+            Assert.That(game.CurrentScore().Result, Is.EqualTo("PLAN VICTORY"));
+        }
+
+        [Test]
+        public void ScenarioFourRedactsUndetectedPicketAndRecognizesArrival()
+        {
+            var definition = FirstIslandChainScenarios.PicketLine;
+            var game = new ScenarioOneGame(4, null, true, false, null, definition);
+            var hidden = game.CaptureSnapshotFor(Side.UsNavy);
+            Assert.That(hidden.formations.Single(item => item.side == Side.Plan).unitIds, Is.Empty);
+            Assert.That(hidden.formations.Single(item => item.side == Side.Plan).column, Is.Zero);
+            Assert.That(hidden.units.Any(item => item.id.StartsWith("plan-")), Is.False);
+
+            game.State.Detection.Detect(Side.UsNavy, game.State.Enemy,
+                DetectionMethod.SurfaceSearchRadar, game.State.Turn);
+            var known = game.CaptureSnapshotFor(Side.UsNavy);
+            Assert.That(known.formations.Single(item => item.side == Side.Plan).unitIds.Length, Is.EqualTo(3));
+            Assert.That(known.formations.Single(item => item.side == Side.Plan).column, Is.EqualTo(15));
+        }
+
+        [Test]
         public void ScenarioStartsThreeHexesApart()
         {
             var battle = ScenarioOne.Create();

@@ -18,6 +18,7 @@ namespace Harpoon.Runtime
         private Transform _playerMarker;
         private Transform _enemyMarker;
         private readonly Dictionary<string, Transform> _formationMarkers = new Dictionary<string, Transform>();
+        private readonly Dictionary<string, int> _formationMarkerShipCounts = new Dictionary<string, int>();
         private LineRenderer _movementPathPreview;
         private GUIStyle _titleStyle;
         private GUIStyle _labelStyle;
@@ -104,6 +105,8 @@ namespace Harpoon.Runtime
         private bool _showRosterSection;
         private bool _showSystemSection;
         private bool _showEventSection;
+        private ScenarioDefinition _selectedScenario = FirstIslandChainScenarios.ContactOffBashiChannel;
+        private bool _placingPlanDeployment;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureBootstrap()
@@ -157,7 +160,8 @@ namespace Harpoon.Runtime
                 var tile = hit.collider.GetComponent<HexTileView>();
                 if (tile != null)
                 {
-                    TryLocalMove(tile.Coordinate);
+                    if (_placingPlanDeployment) DeployPlanFormation(tile.Coordinate);
+                    else TryLocalMove(tile.Coordinate);
                     RefreshViews();
                 }
             }
@@ -176,7 +180,7 @@ namespace Harpoon.Runtime
             }
             _pendingCommands.Clear();
             _game = new ScenarioOneGame(_matchSeed, null, _sessionMode != SessionMode.SinglePlayer,
-                _detectionTestMode);
+                _detectionTestMode, null, _selectedScenario);
             _game.AttackResolved += OnAttackResolved;
             _game.CommandProcessed += OnCommandProcessed;
             _selectedFormation = LocalSide;
@@ -282,6 +286,26 @@ namespace Harpoon.Runtime
             if (result.Accepted) SelectFormation(LocalSide, newId);
             RefreshViews();
             if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void DeployPlanFormation(HexCoord destination)
+        {
+            var command = new GameCommand(GameCommandType.DeployFormation, Side.Plan,
+                _game.State.Revision, destination, formationId: "PLAN Picket Group");
+            if (IsClientSession)
+            {
+                _pendingCommands[command.Id] = command;
+                NetworkSend(new NetworkMessage { kind = "command", command = command.ToData() });
+                _status = "PLAN deployment request sent to host.";
+            }
+            else
+            {
+                var result = _game.Execute(command);
+                _status = result.Accepted ? "PLAN picket deployed. Its position remains hidden from the US player."
+                    : result.Summary;
+                if (result.Accepted && IsHostSession) BroadcastSnapshot();
+            }
+            _placingPlanDeployment = false;
         }
 
         private void DeclareLocalRadar(bool enabled)
@@ -490,8 +514,11 @@ namespace Harpoon.Runtime
                             var knownCommands = _game.State.CommandLog.Count;
                             var snapshot = JsonUtility.FromJson<ScenarioOneSnapshot>(message.snapshot);
                             _game.ApplySnapshot(snapshot);
+                            _selectedScenario = _game.State.Scenario;
                             _matchSeed = _game.Seed;
                             _seedText = _matchSeed.ToString();
+                            _selectedFormation = LocalSide;
+                            _selectedFormationId = _game.State.Forces.First(force => force.Side == LocalSide).Id;
                             foreach (var observed in _game.State.CommandLog.Skip(knownCommands)
                                          .Where(item => item.actor != LocalSide))
                                 PlayClientCommandFeedback(GameCommand.FromData(observed), true);
@@ -861,6 +888,8 @@ namespace Harpoon.Runtime
             _enemyMarker.gameObject.AddComponent<FormationView>().Initialize(Side.Plan, "PLAN Task Force");
             _formationMarkers["US Task Force"] = _playerMarker;
             _formationMarkers["PLAN Task Force"] = _enemyMarker;
+            _formationMarkerShipCounts["US Task Force"] = 2;
+            _formationMarkerShipCounts["PLAN Task Force"] = 2;
             var previewObject = new GameObject("Movement Step Preview");
             _movementPathPreview = previewObject.AddComponent<LineRenderer>();
             _movementPathPreview.useWorldSpace = true;
@@ -881,13 +910,28 @@ namespace Harpoon.Runtime
                 var localForce = _game.State.ForceFor(LocalSide);
                 var movable = CanLocalAct() && _game.State.Phase == ActivationPhase.PlayerMove && !isLand &&
                               localForce.MovementRemaining > 0 && localForce.Position.IsAdjacentTo(pair.Key);
+                var deployable = _placingPlanDeployment && IsLegalPlanDeployment(pair.Key);
+                var convoyDestination = _game.State.Scenario.HasUsDestination &&
+                    pair.Key == _game.State.Scenario.UsDestination;
                 pair.Value.GetComponent<Renderer>().material.color = isLand
                     ? hovered ? new Color(0.7f, 0.66f, 0.3f)
                     : terrain == TerrainType.NavalBase ? new Color(0.34f, 0.4f, 0.24f) : new Color(0.42f, 0.43f, 0.22f)
+                    : deployable ? (hovered ? new Color(0.8f, 0.32f, 0.92f) : new Color(0.38f, 0.12f, 0.52f))
+                    : convoyDestination ? (hovered ? new Color(0.3f, 1f, 0.62f) : new Color(0.05f, 0.55f, 0.34f))
                     : hovered ? new Color(0.12f, 0.72f, 0.8f)
                     : movable ? new Color(0.04f, 0.48f, 0.58f) : new Color(0.025f, 0.25f, 0.37f);
             }
             UpdateMovementPreview();
+        }
+
+        private bool IsLegalPlanDeployment(HexCoord hex)
+        {
+            if (_game.State.Scenario.PlanDeploymentMinimumDistance <= 0 ||
+                !_game.State.Map.IsNavigable(hex, Side.Plan)) return false;
+            var subic = _game.State.Map.Bases.First(item => item.Id == "us-subic").Position;
+            var taipei = _game.State.Map.Bases.First(item => item.Id == "us-taipei").Position;
+            return hex.DistanceTo(subic) > _game.State.Scenario.PlanDeploymentMinimumDistance &&
+                   hex.DistanceTo(taipei) > _game.State.Scenario.PlanDeploymentMinimumDistance;
         }
 
         private void UpdateMovementPreview()
@@ -929,23 +973,34 @@ namespace Harpoon.Runtime
             if (_game == null || _playerMarker == null) return;
             foreach (var force in _game.State.Forces)
             {
+                var markerShipCount = Mathf.Clamp(force.ActiveUnits.Count(), 1, 4);
+                if (_formationMarkers.TryGetValue(force.Id, out var staleMarker) &&
+                    (!_formationMarkerShipCounts.TryGetValue(force.Id, out var priorCount) ||
+                     priorCount != markerShipCount))
+                {
+                    Destroy(staleMarker.gameObject);
+                    _formationMarkers.Remove(force.Id);
+                }
                 if (!_formationMarkers.TryGetValue(force.Id, out var marker))
                 {
                     var color = force.Side == Side.UsNavy
                         ? new Color(0.08f, 0.46f, 0.95f) : new Color(0.9f, 0.12f, 0.08f);
-                    marker = VisualFactory.CreateFormation(force.Id, color, force.Side == Side.Plan);
+                    var amphibious = force.Units.Any(unit => unit.Definition.DisplayName.Contains("LPD") ||
+                        unit.Definition.DisplayName.Contains("Merchant"));
+                    marker = VisualFactory.CreateFormation(force.Id, color, amphibious, markerShipCount);
                     marker.gameObject.AddComponent<FormationView>().Initialize(force.Side, force.Id);
                     _formationMarkers[force.Id] = marker;
+                    _formationMarkerShipCounts[force.Id] = markerShipCount;
                 }
+                var knownContact = force.Side == LocalSide || !_game.State.DetectionRulesEnabled ||
+                    _game.State.Detection.IsDetected(LocalSide, force.Id);
                 marker.position = WorldPosition(force.Position) + Vector3.up * (force.IsDestroyed ? 0.38f : 0.75f);
-                marker.gameObject.SetActive(true);
+                marker.gameObject.SetActive(knownContact);
                 var selected = force.Id == _selectedFormationId;
                 var active = force.Id == _game.State.ActiveFormationId;
                 marker.localScale = Vector3.one * (selected ? 1.18f : active ? 1.1f : 0.92f);
                 var formationView = marker.GetComponent<FormationView>();
-                var knownContact = force.Side != LocalSide && (!_game.State.DetectionRulesEnabled ||
-                    _game.State.Detection.IsDetected(LocalSide, force.Id));
-                formationView?.SetSensorState(force.RadarRadiating, knownContact);
+                formationView?.SetSensorState(force.RadarRadiating, knownContact && force.Side != LocalSide);
                 formationView?.SetTacticalState(IsLegalAttackTarget(force), active, selected);
                 var totalHull = Mathf.Max(1, force.Units.Sum(unit => unit.Definition.Hull));
                 var damageFraction = force.Units.Sum(unit => unit.HullDamage) / (float)totalHull;
@@ -971,6 +1026,19 @@ namespace Harpoon.Runtime
             var guns = range == 0 && (attacker.ActiveUnits.Any(unit => unit.EffectiveGuns > 0) ||
                 target.ActiveUnits.Any(unit => unit.EffectiveGuns > 0));
             return missile || guns;
+        }
+
+        private bool IsFormationVisibleToLocal(TaskForceState force) => force.Side == LocalSide ||
+            !_game.State.DetectionRulesEnabled || _game.State.Detection.IsDetected(LocalSide, force.Id) ||
+            _game.State.IsGameOver;
+
+        private IEnumerable<string> VisibleEventLog()
+        {
+            if (!_game.State.DetectionRulesEnabled || _game.State.IsGameOver) return _game.State.Log;
+            var hiddenNames = _game.State.Forces.Where(force => force.Side != LocalSide &&
+                !_game.State.Detection.IsDetected(LocalSide, force.Id)).Select(force => force.Id).ToArray();
+            return _game.State.Log.Where(entry => hiddenNames.All(name => !entry.Contains(name)) &&
+                !entry.Contains(OpposingSide(LocalSide).ToString()));
         }
 
         private void SelectFormation(Side side)
@@ -1294,7 +1362,8 @@ namespace Harpoon.Runtime
             Time.timeScale = paused ? 0f : 1f;
         }
 
-        private string SavePath => Path.Combine(Application.persistentDataPath, "Saves", "scenario-1-save.json");
+        private string SavePath => Path.Combine(Application.persistentDataPath, "Saves",
+            $"{_game?.State.Scenario?.Id ?? _selectedScenario.Id}-save.json");
 
         private void SaveMatch()
         {
@@ -1318,15 +1387,18 @@ namespace Harpoon.Runtime
             {
                 if (!File.Exists(SavePath))
                 {
-                    _saveStatus = "No Scenario 1 save exists yet.";
+                    _saveStatus = $"No {_selectedScenario.Name} save exists yet.";
                     _status = _saveStatus;
                     return;
                 }
                 var snapshot = JsonUtility.FromJson<ScenarioOneSnapshot>(File.ReadAllText(SavePath));
+                var scenario = FirstIslandChainScenarios.Get(snapshot.scenarioId) ??
+                    throw new InvalidOperationException($"Unknown saved scenario '{snapshot.scenarioId}'.");
                 _detectionTestMode = snapshot.detectionRulesEnabled;
                 var loaded = ScenarioOneGame.Replay(snapshot.seed, snapshot.commands, null,
-                    snapshot.detectionRulesEnabled, _sessionMode != SessionMode.SinglePlayer);
+                    snapshot.detectionRulesEnabled, _sessionMode != SessionMode.SinglePlayer, scenario);
                 _game = loaded;
+                _selectedScenario = scenario;
                 _game.AttackResolved += OnAttackResolved;
                 _game.CommandProcessed += OnCommandProcessed;
                 _matchSeed = _game.Seed;
@@ -1398,13 +1470,21 @@ namespace Harpoon.Runtime
         private void DrawScenarioControls()
         {
             var score = _game.CurrentScore();
-            GUILayout.Label("Damage the opposing merchant / amphibious ship.", _cardStatStyle);
+            var scoringMode = _game.State.Scenario.ScoringMode;
+            GUILayout.Label(_game.State.Scenario.VictoryText, _cardStatStyle);
             var oldColor = GUI.color;
             GUI.color = new Color(0.28f, 0.78f, 1f);
-            GUILayout.Label($"OBJECTIVE DAMAGE    US {score.UsObjectiveDamage}   -   PLAN {score.PlanObjectiveDamage}",
+            var scoreTitle = scoringMode == ScenarioScoringMode.ConvoyArrival ? "CONVOY STATUS" :
+                scoringMode == ScenarioScoringMode.TotalHullHits ? "HULL HITS INFLICTED" :
+                scoringMode == ScenarioScoringMode.GunfireHullHits ? "GUNFIRE HITS" : "OBJECTIVE DAMAGE";
+            var scoreText = scoringMode == ScenarioScoringMode.ConvoyArrival
+                ? $"{scoreTitle}    ARRIVED {score.UsObjectiveDamage}   ·   LOST {score.PlanObjectiveDamage}"
+                : $"{scoreTitle}    US {score.UsObjectiveDamage}   -   PLAN {score.PlanObjectiveDamage}";
+            GUILayout.Label(scoreText,
                 _cardHeaderStyle);
             GUI.color = oldColor;
-            GUILayout.Label($"Escort tie-break: US {score.UsTieBreakDamage}   -   PLAN {score.PlanTieBreakDamage}", _cardStatStyle);
+            if (scoringMode == ScenarioScoringMode.ObjectiveThenEscort)
+                GUILayout.Label($"Escort tie-break: US {score.UsTieBreakDamage}   -   PLAN {score.PlanTieBreakDamage}", _cardStatStyle);
             if (!_game.State.IsGameOver)
             {
                 GUILayout.BeginHorizontal();
@@ -1496,6 +1576,42 @@ namespace Harpoon.Runtime
 
         private void DrawSystemControls()
         {
+            GUILayout.Label("INTRODUCTORY SCENARIO", _cardStatStyle);
+            GUILayout.BeginHorizontal();
+            foreach (var scenario in FirstIslandChainScenarios.Introductory)
+            {
+                var priorScenarioColor = GUI.backgroundColor;
+                if (scenario.Id == _game.State.Scenario.Id)
+                    GUI.backgroundColor = new Color(0.12f, 0.58f, 0.78f);
+                GUI.enabled = !IsClientSession;
+                var scenarioLabel = scenario.Id == "fic-01" ? "1 BASHI" : scenario.Id == "fic-02"
+                    ? "2 FLAGSHIP" : scenario.Id == "fic-03" ? "3 GUN DUEL" : "4 PICKET";
+                if (GUILayout.Button(scenarioLabel, _buttonStyle))
+                {
+                    _selectedScenario = scenario;
+                    _publicSessionName = $"Harpoon {scenario.Name}";
+                    Restart();
+                    _showBriefing = true;
+                }
+                GUI.enabled = true;
+                GUI.backgroundColor = priorScenarioColor;
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Label(_game.State.Scenario.Name.ToUpperInvariant(), _cardHeaderStyle);
+            if (_game.State.Scenario.PlanDeploymentMinimumDistance > 0 &&
+                _game.State.Phase == ActivationPhase.AwaitingChit && _game.State.MovementCup.FirstDrawPending)
+            {
+                var mayDeploy = _sessionMode == SessionMode.HotSeat || LocalSide == Side.Plan;
+                GUI.enabled = mayDeploy;
+                var priorDeployColor = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(0.52f, 0.18f, 0.68f);
+                if (GUILayout.Button(_placingPlanDeployment ? "CANCEL PLAN DEPLOYMENT" : "PLACE PLAN PICKET ON MAP", _buttonStyle))
+                    _placingPlanDeployment = !_placingPlanDeployment;
+                GUI.backgroundColor = priorDeployColor;
+                GUI.enabled = true;
+                if (!mayDeploy) GUILayout.Label("Solo PLAN deployment is seeded and hidden.", _cardStatStyle);
+            }
+            GUILayout.Space(7f);
             GUILayout.Label($"INSTALLED VERSION   {Application.version}", _cardStatStyle);
             var versionColor = GUI.color;
             GUI.color = _availableUpdate?.UpdateAvailable == true
@@ -1630,20 +1746,29 @@ namespace Harpoon.Runtime
             GUI.Box(rect, GUIContent.none);
             GUILayout.BeginArea(new Rect(rect.x + 28f, rect.y + 24f, rect.width - 56f, rect.height - 48f));
             GUILayout.Label("OPERATIONAL BRIEFING", _titleStyle);
-            GUILayout.Label("CONTACT OFF THE BASHI CHANNEL", _debugHeaderStyle);
+            GUILayout.Label(_game.State.Scenario.Name.ToUpperInvariant(), _debugHeaderStyle);
             GUILayout.Label(_game.State.Scenario?.Briefing ?? FirstIslandChainScenarios.ContactOffBashiChannel.Briefing, _labelStyle);
             GUILayout.Space(10f);
             GUILayout.Label("MISSION", _cardHeaderStyle);
-            GUILayout.Label("Inflict more hull damage on the opposing objective ship: the US Merchant Ship or PLAN Type 071. Escort damage is consulted only if objective damage is tied; equality after that is a draw.", _labelStyle);
-            GUILayout.Label("No turn limit is printed. The engagement ends through a sunk objective, destroyed force, fixed result, concession, disengagement, or mutual agreement to score.", _cardStatStyle);
+            GUILayout.Label(_game.State.Scenario.VictoryText, _labelStyle);
+            GUILayout.Label(_game.State.Scenario.ScoringMode == ScenarioScoringMode.TotalHullHits
+                ? "All hull hits against every opposing warship count. Equality is a draw. No turn limit is printed."
+                : _game.State.Scenario.ScoringMode == ScenarioScoringMode.GunfireHullHits
+                    ? "Only hull hits caused by naval gunfire count. Missile damage still degrades ships but scores nothing. Equality is a draw."
+                    : _game.State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival
+                        ? "Reach the green Taipei / Zuoying destination with a merchant afloat, or destroy the PLAN picket. Both merchants sunk is a PLAN victory."
+                    : "Escort damage is the tie-break after objective damage; equality after both comparisons is a draw. No turn limit is printed.",
+                _cardStatStyle);
             GUILayout.Space(10f);
-            GUILayout.Label("CAPTAIN'S RULES - SCENARIO 1 QUICK REFERENCE", _cardHeaderStyle);
+            GUILayout.Label($"CAPTAIN'S RULES - {_game.State.Scenario.Subtitle} QUICK REFERENCE", _cardHeaderStyle);
             GUILayout.Label("1. Draw a named movement chit. That formation declares speed, limited by its slowest ship.\n" +
                 "2. Move one highlighted adjacent sea hex at a time. An attack opportunity exists after every entered hex.\n" +
                 "3. SSM range: short 1 hex, long 3 hexes. Missile ammunition is expended permanently.\n" +
                 "4. Defenses resolve LR SAM, assigned SR SAM, self-only point defense, then impacts.\n" +
                 "5. Same-hex forces may enter naval gunfire. Choose firing/screened ships, targets, and break-off decisions explicitly.\n" +
-                "6. Scenario 1 omits detection. Detection Test Mode in F3 exposes the general SSR/ESM/visual rules.", _labelStyle);
+                (_game.State.Scenario.DetectionRulesEnabled
+                    ? "6. Detection is mandatory: declare SSR, use ESM against adjacent radiators, and search visually in the same hex."
+                    : "6. Introductory Scenarios 1-3 omit detection. Detection Test Mode in F3 exposes the general SSR/ESM/visual rules."), _labelStyle);
             GUILayout.Space(10f);
             GUILayout.Label("VISUAL LANGUAGE", _cardHeaderStyle);
             GUILayout.Label("Cyan hex: legal next movement step   |   Red pulsing ring: legal attack target\n" +
@@ -1661,7 +1786,7 @@ namespace Harpoon.Runtime
             GUI.Box(rect, GUIContent.none);
             GUILayout.BeginArea(new Rect(rect.x + 28f, rect.y + 24f, rect.width - 56f, rect.height - 48f));
             GUILayout.Label("ACTION PAUSED", _titleStyle);
-            GUILayout.Label($"Scenario 1 - seed {_game.Seed}", _cardStatStyle);
+            GUILayout.Label($"{_game.State.Scenario.Name} - seed {_game.Seed}", _cardStatStyle);
             if (GUILayout.Button("RESUME", _buttonStyle)) SetPaused(false);
             if (GUILayout.Button("BRIEFING / RULES  [F1]", _buttonStyle)) { SetPaused(false); _showBriefing = true; }
             GUI.enabled = !IsClientSession;
@@ -1750,7 +1875,8 @@ namespace Harpoon.Runtime
                 GUILayout.BeginVertical(GUI.skin.box);
                 foreach (var force in _game.State.Forces)
                 {
-                    DrawForce(force);
+                    if (IsFormationVisibleToLocal(force)) DrawForce(force);
+                    else GUILayout.Label($"UNDETECTED {SideLabel(force.Side).ToUpperInvariant()} CONTACT", _cardStatStyle);
                     GUILayout.Space(3f);
                 }
                 GUILayout.EndVertical();
@@ -1779,14 +1905,15 @@ namespace Harpoon.Runtime
                 GUILayout.EndVertical();
             }
 
-            var latestEvent = _game.State.Log.LastOrDefault() ?? "No events";
+            var visibleLog = VisibleEventLog().ToArray();
+            var latestEvent = visibleLog.LastOrDefault() ?? "No visible events";
             if (latestEvent.Length > 25) latestEvent = latestEvent.Substring(0, 25) + "...";
             if (DrawSectionHeader("EVENT LOG", latestEvent, new Color(0.18f, 0.48f, 0.44f), _showEventSection))
                 _showEventSection = !_showEventSection;
             if (_showEventSection)
             {
                 GUILayout.BeginVertical(GUI.skin.box);
-                foreach (var entry in _game.State.Log.Skip(System.Math.Max(0, _game.State.Log.Count - 9)))
+                foreach (var entry in visibleLog.Skip(System.Math.Max(0, visibleLog.Length - 9)))
                     GUILayout.Label("• " + entry, _cardStatStyle);
                 GUILayout.EndVertical();
             }
@@ -1830,8 +1957,14 @@ namespace Harpoon.Runtime
             GUILayout.Label(_game.State.Result, _titleStyle);
             GUILayout.Label($"SCENARIO COMPLETE - {_game.State.EndReason}", _cardHeaderStyle);
             var score = _game.CurrentScore();
-            GUILayout.Label($"Objective damage   US {score.UsObjectiveDamage}   |   PLAN {score.PlanObjectiveDamage}", _labelStyle);
-            GUILayout.Label($"Escort tie-break   US {score.UsTieBreakDamage}   |   PLAN {score.PlanTieBreakDamage}", _cardStatStyle);
+            if (_game.State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival)
+                GUILayout.Label($"Convoy result   arrived {score.UsObjectiveDamage}   |   merchants lost {score.PlanObjectiveDamage}", _labelStyle);
+            else
+            {
+                GUILayout.Label($"Score   US {score.UsObjectiveDamage}   |   PLAN {score.PlanObjectiveDamage}", _labelStyle);
+                if (_game.State.Scenario.ScoringMode == ScenarioScoringMode.ObjectiveThenEscort)
+                    GUILayout.Label($"Escort tie-break   US {score.UsTieBreakDamage}   |   PLAN {score.PlanTieBreakDamage}", _cardStatStyle);
+            }
             GUILayout.Label($"Seed {_game.Seed} - full deterministic record available in Debug Trace", _cardStatStyle);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("EXPORT MATCH", _buttonStyle)) ExportMatchLog();
@@ -2505,6 +2638,15 @@ namespace Harpoon.Runtime
             GUI.color = oldColor;
 
             GUILayout.BeginArea(new Rect(left + 16f, 38f, width - 32f, height - 28f));
+            if (_game.State.DetectionRulesEnabled && !_game.State.IsGameOver)
+            {
+                GUILayout.Label("AUTHORITATIVE TRACE SEALED", _debugHeaderStyle);
+                GUILayout.Label("Scenario 4 contains hidden positions and formation state. The complete transaction trace becomes available after the scenario ends.", _labelStyle);
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button("CLOSE", _buttonStyle)) _showDebug = false;
+                GUILayout.EndArea();
+                return;
+            }
             GUILayout.BeginHorizontal();
             GUILayout.Label("RULES TRANSACTION TRACE", _debugHeaderStyle);
             GUILayout.FlexibleSpace();
@@ -2526,7 +2668,7 @@ namespace Harpoon.Runtime
                 Restart();
                 _status = _detectionTestMode
                     ? "Detection Test Mode enabled: declare radar before speed and establish contact before attacking."
-                    : "Scenario 1 detection exemption restored.";
+                    : $"{_game.State.Scenario.Name} detection exemption restored.";
             }
             GUI.enabled = true;
             GUILayout.Space(7f);
@@ -2636,6 +2778,14 @@ namespace Harpoon.Runtime
             GUILayout.Label($"{unit.Definition.Role} · {DamageStateLabel(unit)}", _cardStatStyle);
             GUILayout.Space(3);
             GUILayout.Label($"HULL   {HullBoxes(unit)}   {unit.HullRemaining}/{unit.Definition.Hull}", _cardStatStyle);
+            if (_game.State.Scenario.ScoringMode == ScenarioScoringMode.GunfireHullHits)
+            {
+                var priorCreditColor = GUI.color;
+                GUI.color = unit.GunfireHullDamage > 0
+                    ? new Color(1f, 0.62f, 0.22f) : new Color(0.58f, 0.66f, 0.72f);
+                GUILayout.Label($"GUNFIRE SCORE CREDIT   {unit.GunfireHullDamage}", _cardStatStyle);
+                GUI.color = priorCreditColor;
+            }
             GUILayout.Label($"THRESHOLDS   HALF {unit.HalfDamageThreshold} HIT{(unit.HalfDamageThreshold == 1 ? "" : "S")} · TWO-THIRDS {unit.TwoThirdsDamageThreshold}", _cardStatStyle);
             GUILayout.Label($"ASR {EffectiveStat(unit.EffectiveAirSearchRadar, unit.Definition.AirSearchRadar)}    " +
                 $"SSR {EffectiveStat(unit.EffectiveSurfaceSearchRadar, unit.Definition.SurfaceSearchRadar)}    " +

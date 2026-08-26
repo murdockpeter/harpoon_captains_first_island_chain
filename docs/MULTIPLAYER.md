@@ -6,7 +6,7 @@ The host chooses US Navy or PLAN and owns the canonical rules state, random seed
 dice, transaction log, and victory result. The joining player is assigned the
 opposing side. A joining player sends side-bearing requested commands; only the host
 validates and applies them. Commands claiming the wrong side are rejected. The host
-then broadcasts a complete Scenario 1 snapshot.
+then broadcasts a selected-scenario snapshot. Its scenario ID switches clients to the host's order of battle automatically. Scenarios 1–3 are public-information learning games; Scenario 4 omits undetected opposing positions, units, paths, commands, contacts, logs, and rules transactions.
 
 Chat messages and soundboard cue IDs share the TCP connection but never enter the
 rules command stream. Soundboard phrases are spoken by the local Windows speech

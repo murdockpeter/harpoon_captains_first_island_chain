@@ -123,9 +123,12 @@ namespace Harpoon.Editor
             ValidateNavalGunfire();
             ValidateShipDamageAndModernPlatforms();
             ValidateScenarioOneRelease();
+            ValidateScenarioTwoRelease();
+            ValidateScenarioThreeRelease();
+            ValidateScenarioFourRelease();
 
             ValidateLoopbackTransport();
-            Debug.Log("HARPOON RULE VALIDATION PASSED (MVP 0.1 Sections 1-10 including data-driven Scenario 1, legal stopping/scoring, seed replay, hot-seat flow, and TCP loopback).");
+            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-4 including hidden contacts, convoy arrival, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
         }
 
         public static void BuildWindowsPlayer()
@@ -344,6 +347,84 @@ namespace Harpoon.Editor
             seededMirror.ApplySnapshot(seeded.CaptureSnapshot());
             Require(seededMirror.Seed == 918273,
                 "The selected deterministic seed must survive snapshot export and multiplayer restore.");
+        }
+
+        private static void ValidateScenarioTwoRelease()
+        {
+            var definition = FirstIslandChainScenarios.FlagshipDuel;
+            var state = ScenarioOne.Create(false, definition);
+            Require(state.Scenario == definition && state.MaximumTurns == 0 &&
+                    state.Player.Position == new HexCoord(12, 13) &&
+                    state.Enemy.Position == new HexCoord(5, 10) &&
+                    state.Player.Units.Select(unit => unit.Definition.Id).SequenceEqual(new[]
+                    {
+                        "us-burke-iia-1", "us-burke-iia-2", "us-ticonderoga", "us-san-antonio"
+                    }) && state.Enemy.Units.Single().Definition.Id == "plan-type-055",
+                "Scenario 2 must load its exact modern order of battle and printed hex references.");
+
+            var game = new ScenarioOneGame(2202, null, true, false, null, definition);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Flagship Group";
+            snapshot.phase = ActivationPhase.PlayerAction;
+            snapshot.units.Single(unit => unit.id == "plan-type-055").hullDamage = 2;
+            snapshot.units.Single(unit => unit.id == "us-burke-iia-1").hullDamage = 1;
+            snapshot.units.Single(unit => unit.id == "us-san-antonio").hullDamage = 2;
+            game.ApplySnapshot(snapshot);
+            Require(game.CurrentScore().UsObjectiveDamage == 2 &&
+                    game.CurrentScore().PlanObjectiveDamage == 3 &&
+                    game.Execute(new GameCommand(GameCommandType.Disengage, Side.UsNavy,
+                        game.State.Revision)).Accepted && game.State.Result == "PLAN VICTORY",
+                "Scenario 2 must aggregate hull hits across every opposing warship and score deterministically.");
+        }
+
+        private static void ValidateScenarioThreeRelease()
+        {
+            var definition = FirstIslandChainScenarios.CloseAboard;
+            var state = ScenarioOne.Create(false, definition);
+            Require(state.Scenario == definition && state.Player.Position == new HexCoord(13, 13) &&
+                    state.Enemy.Position == new HexCoord(10, 10) && state.Player.Units.Count == 2 &&
+                    state.Enemy.Units.Count == 3 &&
+                    state.Player.Units.Select(unit => unit.Definition.Id).SequenceEqual(new[]
+                        { "us-burke-iia", "us-constellation" }) &&
+                    state.Enemy.Units.Select(unit => unit.Definition.Id).SequenceEqual(new[]
+                        { "plan-type-056a-1", "plan-type-056a-2", "plan-type-056a-3" }),
+                "Scenario 3 must load its exact modern order of battle and printed hex references.");
+
+            var game = new ScenarioOneGame(3303, null, true, false, null, definition);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Close Action Group";
+            snapshot.phase = ActivationPhase.PlayerAction;
+            var plan = snapshot.units.Single(unit => unit.id == "plan-type-056a-1");
+            plan.hullDamage = 1;
+            plan.gunfireHullDamage = 0;
+            var us = snapshot.units.Single(unit => unit.id == "us-constellation");
+            us.hullDamage = 1;
+            us.gunfireHullDamage = 1;
+            game.ApplySnapshot(snapshot);
+            Require(game.CurrentScore().UsObjectiveDamage == 0 &&
+                    game.CurrentScore().PlanObjectiveDamage == 1,
+                "Scenario 3 must exclude missile damage and preserve gunfire damage in its score.");
+        }
+
+        private static void ValidateScenarioFourRelease()
+        {
+            var definition = FirstIslandChainScenarios.PicketLine;
+            var game = new ScenarioOneGame(4404, null, true, false, null, definition);
+            Require(game.State.DetectionRulesEnabled && game.State.Player.Position == new HexCoord(7, 16) &&
+                    game.State.Player.Units.Count == 5 && game.State.Enemy.Units.Count == 3,
+                "Scenario 4 must load the full Subic convoy and PLAN picket with detection enabled.");
+            var hidden = game.CaptureSnapshotFor(Side.UsNavy);
+            Require(hidden.formations.Single(item => item.side == Side.Plan).column == 0 &&
+                    hidden.formations.Single(item => item.side == Side.Plan).unitIds.Length == 0 &&
+                    hidden.units.All(item => !item.id.StartsWith("plan-")) && hidden.transactions.Length == 0,
+                "Scenario 4 must redact every undetected PLAN position, unit, and transaction from the US snapshot.");
+            Require(!game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.Plan,
+                    game.State.Revision, new HexCoord(10, 15), formationId: "PLAN Picket Group")).Accepted &&
+                    game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.Plan,
+                    game.State.Revision, new HexCoord(15, 10), formationId: "PLAN Picket Group")).Accepted,
+                "Scenario 4 PLAN deployment must enforce both four-hex exclusion zones.");
         }
 
         private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,

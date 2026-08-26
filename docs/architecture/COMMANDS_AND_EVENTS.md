@@ -10,7 +10,7 @@ The rules simulation lives in `Harpoon.Core`, which has no Unity engine referenc
 4. An accepted command mutates `GameState`, advances its revision once, enters the command log, and emits ordered `RuleEvent` records tied to the command ID.
 5. Solo AI, local UI, direct TCP, and public Relay all use this same boundary. Multiplayer clients submit commands; the host alone executes them and returns a projected snapshot.
 
-Commands for later rules families already have protocol identities. When a command is not part of Scenario 1, it returns `UnsupportedCommand` instead of silently inventing behavior.
+Commands for later rules families already have protocol identities. When a command is not part of the selected scenario, it returns `UnsupportedCommand` instead of silently inventing behavior.
 
 ## Events and replay
 
@@ -20,4 +20,4 @@ Commands for later rules families already have protocol identities. When a comma
 
 ## Information boundaries
 
-`SideGameView` always includes a side's own formation details. An unknown opposing formation exposes no position, unit list, or formation identity. Scenario 1 passes `opponentKnown: true` because its setup explicitly omits detection; later scenarios can use the same projection boundary for hidden contacts and dummy forces.
+`SideGameView` always includes a side's own formation details. An unknown opposing formation exposes no position, unit list, or formation identity. Scenarios 1–3 pass `opponentKnown: true` because they precede detection; later scenarios use the same projection boundary for hidden contacts and dummy forces.

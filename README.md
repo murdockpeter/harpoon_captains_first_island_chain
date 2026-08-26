@@ -6,7 +6,7 @@ MVP 0.1 release scope and rule interpretations are recorded in [`docs/RELEASE_NO
 
 ## Current playable slice
 
-Scenario 1, **Contact off the Bashi Channel**, is playable as the US Navy against a simple PLAN opponent. It includes:
+Scenarios 1–4 are playable from the **Match & System** scenario selector. The first three teach surface missiles, larger formations, and gunfire. Scenario 4, **Picket Line**, adds concealed deployment, mandatory detection, convoy movement from Subic Bay, and arrival at Taipei / Zuoying. They include:
 
 - a 15 × 20 three-dimensional hex map at 60 nautical miles per hex;
 - Captain's Edition task-force speed and random movement-chit initiative;
@@ -15,7 +15,7 @@ Scenario 1, **Contact off the Bashi Channel**, is playable as the US Navy agains
 - staged defensive pairing, defender-directed long-range SAM, pair-limited short-range SAM, self-only point defense, and counterattacks;
 - staged same-hex naval gunfire with speed-based engage/evade, firing and screened ships, explicit rollback targeting, strongest-battery order, and multi-round break-off decisions;
 - exact hull-1-through-6 damage thresholds, mission kills, carrier launch restrictions, sinking, and objective-ship victory scoring across the supplement's modern platform database;
-- data-driven Scenario 1 setup, exact objective scoring, hot-seat play, selectable deterministic seeds, and exportable command/event traces;
+- data-driven scenario setup and scoring, hot-seat play, selectable deterministic seeds, scenario-specific saves, and exportable command/event traces;
 - deterministic rules code with Edit Mode tests.
 
 Formation cards can be inspected from the right-side panel by selecting the US Navy or PLAN tab, or by clicking either 3D formation on the map.
@@ -24,13 +24,13 @@ Close action has its own orange combat ribbon and command panel. Gun attacks use
 
 Damage is shown using effective—not merely printed—card values, with `printed→effective` reductions, amber/red card states, pulsing damage rings, smoke, persistent wreck markers, and a distinct sinking effect. See [`docs/rules/SHIP_DAMAGE.md`](docs/rules/SHIP_DAMAGE.md).
 
-Scenario 1 officially omits detection. To exercise the general Section 5 rules on the Scenario 1 board, press **F3** and enable **Detection Test Mode**. This solo-only mode requires an SSR silent/radiating declaration before speed and prohibits attacks until the target has been detected.
+Scenarios 1–3 precede the detection learning scenario and omit detection. To exercise Section 5 early on those boards, press **F3** and enable **Detection Test Mode**. Scenario 4 enables detection authoritatively and seals the complete debug trace until game end.
 
 Run `play.cmd` from the project root to build and launch the Windows game in one step. Alternatively, open the project in Unity `6000.2.12f1`, open `Assets/Main.unity`, and press Play. Click a highlighted sea hex to move, then attack or end the activation. Use WASD/arrow keys to pan, the mouse wheel to zoom, and right-drag or Q/E to orbit the camera. Press Escape or use **Exit Game** to quit.
 
 Use **Hot-seat 1 vs 1** for two players on one computer. The command panel shows which side is active. The scenario panel can restart with a typed or random seed, request mutual scoring, or disengage and score. **Debug Trace** can copy or export the complete seed, snapshot, command log, event history, and rules transactions.
 
-Press **F1** for the operational briefing and Scenario 1 quick reference. Press **P** or Escape to pause; the pause menu provides deterministic save/load and confirmed restart/exit controls.
+Press **F1** for the selected scenario's operational briefing and quick reference. Press **P** or Escape to pause; the pause menu provides deterministic save/load and confirmed restart/exit controls.
 
 Release validation is also one command: `release-check.cmd`. Use `test.cmd` for the standalone .NET core suite or `smoke.cmd` for only the Windows build/player smoke gate. Each command returns a nonzero exit code when its gate fails.
 
@@ -44,6 +44,6 @@ The supplied PDFs remain in `rules/` as design references. Their original text a
 
 ## Multiplayer
 
-Scenario 1 includes host-authoritative one-versus-one play through either direct IP
+Scenarios 1–4 include host-authoritative one-versus-one play through either direct IP
 or encrypted Unity Relay, with join codes, public discovery, chat, and soundboard
-cues. See [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) for setup and testing.
+cues. Scenario 4 redacts undetected opposing state from network clients. See [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) for setup and testing.

@@ -30,6 +30,8 @@ This explicit exposed-versus-screened target choice implements gun rollback: a p
 
 Each gun factor rolls one D6 on the Guns combat-table column. Hull damage is applied before the next firing ship acts.
 
+Damage retains its source as authoritative state. `GunfireHullDamage` increases only by hull boxes actually marked by `GunCombatResolver`; missile damage can degrade or sink a ship but never enters a gunfire-only scenario score. This provenance survives snapshots, networking, saves, and deterministic replay.
+
 After every eligible ship has had its opportunity, both sides choose break off or continue:
 
 - if both choose break off, the engagement ends;

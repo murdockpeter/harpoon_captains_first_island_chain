@@ -1,12 +1,12 @@
 # Surface detection
 
-Section 5 implements the surface-detection procedure from Captain's Rules page 8 and the compressed supplement page 4. Scenario 1 continues to use its printed learning-game exemption; the same board can run the general subsystem in solo **Detection Test Mode** from the F3 debug panel.
+Section 5 implements the surface-detection procedure from Captain's Rules page 8 and the compressed supplement page 4. Introductory Scenarios 1–3 precede the detection scenario and use the learning-game exemption; any current board can run the general subsystem in solo **Detection Test Mode** from the F3 debug panel.
 
 ## Contact state
 
 Each side keeps its own contact record for every opposing formation. Friendly task forces share successful detections immediately.
 
-- `Undetected`: the openly moved task-force counter is visible, but whether it represents real surface ships and all ship details remain unknown; attacks are prohibited.
+- `Undetected`: current position and ship details are hidden; attacks are prohibited.
 - `Located`: a sensor has supplied a last-known position without classified contents. This is available for later sensor types that locate without classification.
 - `Classified`: position and formation contents are known; the formation may be attacked if otherwise legal.
 - `LostContact`: the last-known position is retained, current position and contents are hidden, and attacks are prohibited again.
@@ -31,6 +31,6 @@ Entering an enemy base hex automatically establishes visual contact even at Nigh
 
 ## Information and presentation
 
-Side-private projections expose friendly formations completely and classified enemy contacts completely. Undetected/lost counters retain their openly visible board position but expose no ship contents. In Detection Test Mode the runtime replaces undetected status summaries with an unknown-contact label and hides formation cards until classification. Cyan pulsing rings indicate radiating radar; amber rings mark known enemy contacts. Sensor declarations, rolls, failures, detections, and rejected attacks are recorded in the rules-debug trace.
+Side-private projections expose friendly formations completely and classified enemy contacts completely. Undetected formations expose neither current position nor contents; lost contacts retain only their last-known position. Scenario 4 additionally redacts opposing commands, paths, contacts, logs, and rules transactions from network snapshots. Cyan pulsing rings indicate radiating radar; amber rings mark known enemy contacts. The authoritative debug trace is sealed during a hidden-information match and becomes available at game end.
 
-Detection Test Mode is intentionally solo-only until a scenario that uses hidden contacts supplies a redacted authoritative multiplayer snapshot schema. Scenario 1 multiplayer remains fully public because its rules explicitly omit detection.
+Scenario 4 supplies a redacted authoritative multiplayer snapshot schema, so hidden contacts are supported over direct IP and Relay. Scenarios 1–3 remain fully public because those learning scenarios omit detection.

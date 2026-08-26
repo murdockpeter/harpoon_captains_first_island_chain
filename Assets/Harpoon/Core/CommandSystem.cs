@@ -14,6 +14,7 @@ namespace Harpoon.Core
     public enum GameCommandType
     {
         DrawMovementChit,
+        DeployFormation,
         SplitTaskForce,
         DeclareSpeed,
         Move,
@@ -49,6 +50,7 @@ namespace Harpoon.Core
         MovementIncomplete,
         MovementExhausted,
         CupNotReady,
+        DeploymentUnavailable,
         SplitWindowClosed,
         InvalidFormation,
         InvalidUnitSelection,
@@ -359,9 +361,8 @@ namespace Harpoon.Core
             Id = isKnown ? force.Id : $"CONTACT {force.Side}";
             Side = force.Side;
             IsKnown = isKnown;
-            // Task-force counters move openly on the board; detection controls whether the
-            // counter represents real surface ships and whether its contents can be examined.
-            Position = force.Position;
+            Position = isKnown ? force.Position : contact != null && contact.Level == ContactLevel.LostContact
+                ? contact.LastKnownPosition : default;
             DeclaredSpeed = isKnown ? force.DeclaredSpeed : -1;
             MovementPointsSpent = isKnown ? force.MovementPointsSpent : 0;
             MovementRemaining = isKnown ? force.MovementRemaining : 0;

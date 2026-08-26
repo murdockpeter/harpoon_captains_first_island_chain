@@ -203,7 +203,7 @@ namespace Harpoon.Core
                 var hullBefore = target.HullRemaining;
                 var hullHits = RollHits($"SSM impact {target.Definition.DisplayName}",
                     surviving, CombatTableColumn.BombsAndSsm);
-                var damage = target.ApplyDamage(hullHits);
+                var damage = target.ApplyDamage(hullHits, DamageSource.Missile);
                 report.HullHits += hullHits;
                 report.Strikes.Add(new MissileStrikeReport(target.Definition.Id, beforeDefense,
                     removedByPd, surviving, hullHits, damage.CurrentLevel, target.IsSunk));

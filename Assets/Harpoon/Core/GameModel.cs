@@ -6,6 +6,7 @@ namespace Harpoon.Core
 {
     public enum Side { UsNavy, Plan }
     public enum UnitRole { Escort, Objective }
+    public enum DamageSource { Other, Missile, Gunfire, Torpedo, Bomb }
     public enum ShipDamageLevel { Operational, HalfDamage, TwoThirdsDamage, Sunk }
     public enum ActivationPhase { AwaitingChit, DeclareSpeed, PlayerMove, PlayerAction, MissileCombat, GunCombat, GameOver }
 
@@ -107,6 +108,7 @@ namespace Harpoon.Core
     {
         public UnitDefinition Definition { get; }
         public int HullDamage { get; private set; }
+        public int GunfireHullDamage { get; private set; }
         public int ShortMissilesRemaining { get; private set; }
         public int LongMissilesRemaining { get; private set; }
         public bool IsSunk => HullDamage >= Definition.Hull;
@@ -153,13 +155,15 @@ namespace Harpoon.Core
         public int AvailableShortSsm => WeaponsDisabled || IsSunk ? 0 : ShortMissilesRemaining;
         public int AvailableLongSsm => HasHalfDamage || IsSunk ? 0 : LongMissilesRemaining;
 
-        public DamageApplication ApplyDamage(int hits)
+        public DamageApplication ApplyDamage(int hits, DamageSource source = DamageSource.Other)
         {
             if (hits < 0) throw new ArgumentOutOfRangeException(nameof(hits));
             var before = HullRemaining;
             var previousLevel = DamageLevel;
             HullDamage = Math.Min(Definition.Hull, HullDamage + hits);
-            return new DamageApplication(hits, before - HullRemaining, before, HullRemaining,
+            var applied = before - HullRemaining;
+            if (source == DamageSource.Gunfire) GunfireHullDamage += applied;
+            return new DamageApplication(hits, applied, before, HullRemaining,
                 previousLevel, DamageLevel);
         }
 
@@ -201,9 +205,11 @@ namespace Harpoon.Core
             return true;
         }
 
-        internal void Restore(int hullDamage, int shortMissiles, int longMissiles)
+        internal void Restore(int hullDamage, int shortMissiles, int longMissiles,
+            int gunfireHullDamage = 0)
         {
             HullDamage = Math.Max(0, Math.Min(Definition.Hull, hullDamage));
+            GunfireHullDamage = Math.Max(0, Math.Min(HullDamage, gunfireHullDamage));
             ShortMissilesRemaining = Math.Max(0, shortMissiles);
             LongMissilesRemaining = Math.Max(0, longMissiles);
         }
@@ -224,8 +230,9 @@ namespace Harpoon.Core
         public IReadOnlyList<HexCoord> MovementPath => _movementPath;
         public IReadOnlyList<UnitState> Units => _units;
         public IReadOnlyList<DefensePairData> DefensePairs => _defensePairs;
+        public bool HasArrived { get; private set; }
         public IEnumerable<UnitState> ActiveUnits => _units.Where(unit => !unit.IsSunk);
-        public bool IsDestroyed => _units.All(unit => unit.IsSunk);
+        public bool IsDestroyed => _units.Count > 0 && _units.All(unit => unit.IsSunk);
         public UnitState Objective => _units.FirstOrDefault(unit => unit.Definition.Role == UnitRole.Objective);
         private bool _radarRadiating;
         public bool RadarRadiating => _radarRadiating && CanRadiateRadar;
@@ -289,6 +296,7 @@ namespace Harpoon.Core
         }
 
         public void MoveTo(HexCoord destination) => Position = destination;
+        public void MarkArrived() => HasArrived = true;
 
         public TaskForceState SplitOff(string newId, IEnumerable<string> unitIds)
         {
@@ -319,6 +327,8 @@ namespace Harpoon.Core
             _radarRadiating = radarRadiating;
             RadarDeclaredThisActivation = radarDeclared;
         }
+
+        internal void RestoreArrival(bool arrived) => HasArrived = arrived;
     }
 
     public sealed class GameState

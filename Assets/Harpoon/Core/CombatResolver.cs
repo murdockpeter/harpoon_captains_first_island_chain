@@ -134,7 +134,7 @@ namespace Harpoon.Core
             var hullHits = RollHits(surviving,
                 roll => CombatTables.Hits(CombatTableColumn.BombsAndSsm, roll));
             var hullBefore = target.HullRemaining;
-            var damage = target.ApplyDamage(hullHits);
+            var damage = target.ApplyDamage(hullHits, DamageSource.Missile);
             Trace("DAMAGE", $"{target.Definition.DisplayName}: hits={hullHits}, hull {hullBefore}->{target.HullRemaining}, " +
                   $"state {damage.PreviousLevel}->{damage.CurrentLevel}, sunk={target.IsSunk}.");
             return new AttackReport

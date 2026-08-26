@@ -190,26 +190,26 @@ Each scenario is both playable content and the acceptance test for a new rules f
 
 ## Scenario 2 — Flagship Duel: larger surface formations
 
-- [ ] Support more than one escort/screening pair per task force.
-- [ ] Implement player-controlled ship pairing and re-pairing at legal times.
-- [ ] Implement multi-target missile allocation and rollback at formation scale.
-- [ ] Enter and verify the Scenario 2 order of battle, setup, and victory conditions.
-- [ ] Add deterministic Scenario 2 acceptance tests.
+- [x] Support more than one escort/screening pair per task force.
+- [x] Implement player-controlled ship pairing and re-pairing at legal times.
+- [x] Implement multi-target missile allocation and rollback at formation scale.
+- [x] Enter and verify the Scenario 2 order of battle, setup, and victory conditions.
+- [x] Add deterministic Scenario 2 acceptance tests.
 
 ## Scenario 3 — Close Aboard: complete gun combat
 
-- [ ] Complete every naval-gunfire and break-off rule from section 7.
-- [ ] Enter and verify the Scenario 3 order of battle, setup, and victory conditions.
-- [ ] Score only hull hits caused by gunfire where required.
-- [ ] Add deterministic Scenario 3 acceptance tests.
+- [x] Complete every naval-gunfire and break-off rule from section 7.
+- [x] Enter and verify the Scenario 3 order of battle, setup, and victory conditions.
+- [x] Score only hull hits caused by gunfire where required.
+- [x] Add deterministic Scenario 3 acceptance tests.
 
 ## Scenario 4 — Picket Line: detection and convoy movement
 
-- [ ] Complete radar, ESM, visual search, contact loss, and hidden task-force presentation.
-- [ ] Support destination/base arrival objectives.
-- [ ] Support convoy protection and multiple merchant ships.
-- [ ] Enter and verify the Scenario 4 setup and reconcile its printed victory wording with its listed forces.
-- [ ] Add deterministic Scenario 4 acceptance tests.
+- [x] Complete radar, ESM, visual search, contact loss, and hidden task-force presentation.
+- [x] Support destination/base arrival objectives.
+- [x] Support convoy protection and multiple merchant ships.
+- [x] Enter and verify the Scenario 4 setup and reconcile its printed victory wording with its listed forces.
+- [x] Add deterministic Scenario 4 acceptance tests.
 
 ## Scenario 5 — Ghost Fleet: dummy units
 

@@ -19,12 +19,27 @@ namespace Harpoon.Runtime
             return material;
         }
 
-        public static Transform CreateFormation(string name, Color sideColor, bool amphibiousFormation)
+        public static Transform CreateFormation(string name, Color sideColor, bool amphibiousFormation,
+            int shipCount = 2)
         {
             var root = new GameObject(name).transform;
-            CreateShip(root, new Vector3(-0.15f, 0f, -0.38f), 0.7f, sideColor, false);
-            CreateShip(root, new Vector3(0.2f, 0f, 0.42f), amphibiousFormation ? 0.95f : 1.05f,
-                Color.Lerp(sideColor, Color.gray, 0.35f), amphibiousFormation);
+            shipCount = Mathf.Clamp(shipCount, 1, 4);
+            var positions = shipCount == 1
+                ? new[] { Vector3.zero }
+                : shipCount == 2
+                    ? new[] { new Vector3(-0.15f, 0f, -0.38f), new Vector3(0.2f, 0f, 0.42f) }
+                    : new[]
+                    {
+                        new Vector3(-0.42f, 0f, -0.34f), new Vector3(0.38f, 0f, -0.28f),
+                        new Vector3(-0.28f, 0f, 0.42f), new Vector3(0.48f, 0f, 0.38f)
+                    };
+            var scale = shipCount >= 3 ? 0.62f : shipCount == 2 ? 0.78f : 1.05f;
+            for (var i = 0; i < shipCount; i++)
+            {
+                var amphibious = amphibiousFormation && i == shipCount - 1;
+                CreateShip(root, positions[i], amphibious ? scale * 1.1f : scale,
+                    Color.Lerp(sideColor, Color.gray, i * 0.08f), amphibious);
+            }
             var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             ring.name = "Side Indicator";
             ring.transform.SetParent(root);
@@ -74,6 +89,11 @@ namespace Harpoon.Runtime
                 new Color(0.54f, 0.58f, 0.6f));
             AddBox(ship, "Bridge", new Vector3(amphibious ? -0.38f : 0.05f, 0.57f, 0f),
                 new Vector3(0.24f, 0.14f, amphibious ? 0.42f : 0.26f), new Color(0.68f, 0.72f, 0.73f));
+
+            AddBox(ship, "Wake Port", new Vector3(-0.78f, -0.12f, 0.12f),
+                new Vector3(0.72f, 0.015f, 0.055f), new Color(0.62f, 0.86f, 0.96f, 0.72f));
+            AddBox(ship, "Wake Starboard", new Vector3(-0.78f, -0.12f, -0.12f),
+                new Vector3(0.72f, 0.015f, 0.055f), new Color(0.62f, 0.86f, 0.96f, 0.72f));
 
             var mast = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             mast.name = "Mast";

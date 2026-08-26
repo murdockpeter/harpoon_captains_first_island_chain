@@ -166,7 +166,7 @@ namespace Harpoon.Core
                     $"; Guns={(result == 0 ? "M" : result == 1 ? "H" : "2H")}.");
             }
             var before = target.HullRemaining;
-            var damage = target.ApplyDamage(hits);
+            var damage = target.ApplyDamage(hits, DamageSource.Gunfire);
             _trace?.Invoke("DAMAGE", $"{target.Definition.DisplayName}: gun hits={hits}, hull " +
                 $"{before}->{target.HullRemaining}, state {damage.PreviousLevel}->{damage.CurrentLevel}, " +
                 $"sunk={target.IsSunk}.");

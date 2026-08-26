@@ -34,6 +34,36 @@ Modern unit cards and the optional EA-18G rule necessarily come from the supplem
 | Scenario 1 victory and tie-break | First Island Chain p. 25; analogous original scenario on Briefing p. 4 | `ScenarioOneGame.CurrentScore`, `EndByScore`, `CompareScore` | deterministic US/PLAN/draw/escort-tie-break tests | Complete; escort damage never enters the primary score |
 | Scenario stopping condition | No explicit limit in either Scenario 1 text | `CheckGameOver`, `Disengage`, `RequestScoring`, `Concede`; unlimited `MaximumTurns = 0` | objective sink, fixed result, force destruction, mutual score, disengagement tests | Complete for Scenario 1 |
 
+## Scenario 2 coverage
+
+| Rule/data | Authoritative source | Current code | Automated evidence | Status |
+|---|---|---|---|---|
+| Type 055 versus two Burke IIAs, Ticonderoga, and San Antonio | First Island Chain p. 25; cards pp. 15–16, 18 | `FirstIslandChainScenarios.FlagshipDuel` and `ModernPlatformDatabase` | exact ID, platform, side, count, and printed-coordinate checks | Complete |
+| Multiple defensive/screening pairs | Captain's Rules pp. 5–7 | `DefensePairData`, `TaskForceState`, staged defense and gun arrangement commands | two-pair formation deployment test | Complete |
+| Formation-scale split fire and rollback | Captain's Rules pp. 4–7 | `MissileEngagement`, explicit allocations, defensive pairing, LR/SR removal assignment | two-salvo/two-target Scenario 2 route plus general table tests | Complete |
+| Total warship hull-hit victory | First Island Chain p. 25 | `ScenarioScoringMode.TotalHullHits`, `CurrentScore`, `CheckGameOver` | multi-ship damage aggregation and final-score route | Complete |
+| Printed setup wording conflict | First Island Chain p. 25 | exact coordinates `0510` and `1213` retained | setup validation | The phrase “three hexes southeast” conflicts with those coordinates under the map topology; explicit hex references take precedence |
+
+## Scenario 3 coverage
+
+| Rule/data | Authoritative source | Current code | Automated evidence | Status |
+|---|---|---|---|---|
+| Three Type 056As versus Burke IIA and Constellation | First Island Chain p. 25; cards pp. 15, 18 | `FirstIslandChainScenarios.CloseAboard` and `ModernPlatformDatabase` | exact ID, platform, side, count, and printed-coordinate checks | Complete |
+| Full gun engagement, firing formation, rollback, and break-off | Captain's Rules p. 7 | `GunEngagement`, `GunCombatResolver`, staged gun commands | section 7 matrix plus Scenario 3 same-hex command route | Complete |
+| Gunfire-only hull-hit victory | First Island Chain p. 25 | `DamageSource`, `UnitState.GunfireHullDamage`, `ScenarioScoringMode.GunfireHullHits` | missile exclusion, legal gun hit, snapshot, final scoring tests | Complete |
+| Printed setup wording conflict | First Island Chain p. 25 | exact coordinates `1010` and `1313` retained | setup validation | “Three hexes southeast” conflicts with the explicit coordinates under the established axial topology; explicit hex references take precedence |
+
+## Scenario 4 coverage
+
+| Rule/data | Authoritative source | Current code | Automated evidence | Status |
+|---|---|---|---|---|
+| Five-ship Subic convoy and three-ship PLAN picket | First Island Chain p. 25; cards pp. 15, 18, 21 | `FirstIslandChainScenarios.PicketLine` | exact platforms, counts, roles, and base setup | Complete |
+| PLAN free deployment outside two exclusion zones | First Island Chain p. 25 | `DeployFormation`, seeded solo setup, map placement UI | legal/illegal boundary tests | Complete |
+| Mandatory SSR, ESM, visual search, and attack gating | Captain's Rules pp. 8–9 | detection command/resolver pipeline | Section 5 matrix and Scenario 4 projection tests | Complete |
+| Side-private hidden task force | Captain's Rules pp. 8–9 | `SideGameView`, redacted side snapshots, sealed trace/UI | undetected versus classified snapshot tests | Complete |
+| Convoy destination and multiple merchants | First Island Chain p. 25 | arrival state, `ConvoyArrival` scoring, Taipei destination | deterministic arrival route | Complete |
+| Victory wording conflict | First Island Chain p. 25 | arrival-or-destroy versus both-merchants-sunk ruling | scoring route and specification | Resolved and documented |
+
 ## Rules-family source index
 
 | Rules family | Captain's Rules | Supplement |
