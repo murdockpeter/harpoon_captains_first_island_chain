@@ -25,10 +25,41 @@ namespace Harpoon.Core
     public sealed class AttackReport
     {
         public bool Fired { get; internal set; }
+        public bool IsGunfire { get; internal set; }
+        public string SourceUnitId { get; internal set; } = string.Empty;
+        public string TargetUnitId { get; internal set; } = string.Empty;
+        public bool TargetWasScreened { get; internal set; }
+        public bool CausedDamageThreshold { get; internal set; }
+        public bool SankAnyShip { get; internal set; }
         public int AttackFactors { get; internal set; }
         public int InterceptedFactors { get; internal set; }
         public int HullHits { get; internal set; }
         public string Summary { get; internal set; } = string.Empty;
+        public List<MissileStrikeReport> Strikes { get; } = new List<MissileStrikeReport>();
+    }
+
+    public sealed class MissileStrikeReport
+    {
+        public string TargetUnitId { get; }
+        public int FactorsBeforePointDefense { get; }
+        public int PointDefenseIntercepts { get; }
+        public int SurvivingFactors { get; }
+        public int HullHits { get; }
+        public ShipDamageLevel DamageLevel { get; }
+        public bool Sunk { get; }
+
+        public MissileStrikeReport(string targetUnitId, int factorsBeforePointDefense,
+            int pointDefenseIntercepts, int survivingFactors, int hullHits,
+            ShipDamageLevel damageLevel = ShipDamageLevel.Operational, bool sunk = false)
+        {
+            TargetUnitId = targetUnitId ?? string.Empty;
+            FactorsBeforePointDefense = factorsBeforePointDefense;
+            PointDefenseIntercepts = pointDefenseIntercepts;
+            SurvivingFactors = survivingFactors;
+            HullHits = hullHits;
+            DamageLevel = damageLevel;
+            Sunk = sunk;
+        }
     }
 
     public sealed class CombatResolver
@@ -60,7 +91,8 @@ namespace Harpoon.Core
                       $"SR {shortBefore}->{unit.ShortMissilesRemaining}, LR {longBefore}->{unit.LongMissilesRemaining}.");
             }
             if (missileFactors > 0) return ResolveMissiles(attacker, defender, target, missileFactors, range);
-            if (range == 0) return ResolveGuns(attacker, target);
+            if (range == 0) return NoAttackTraced(
+                "Gunfire requires the staged same-hex GunEngagement procedure.");
             return NoAttackTraced("No weapons are in range.");
         }
 
@@ -102,36 +134,19 @@ namespace Harpoon.Core
             var hullHits = RollHits(surviving,
                 roll => CombatTables.Hits(CombatTableColumn.BombsAndSsm, roll));
             var hullBefore = target.HullRemaining;
-            target.ApplyDamage(hullHits);
+            var damage = target.ApplyDamage(hullHits);
             Trace("DAMAGE", $"{target.Definition.DisplayName}: hits={hullHits}, hull {hullBefore}->{target.HullRemaining}, " +
-                  $"sunk={target.IsSunk}.");
+                  $"state {damage.PreviousLevel}->{damage.CurrentLevel}, sunk={target.IsSunk}.");
             return new AttackReport
             {
                 Fired = true,
                 AttackFactors = missileFactors,
                 InterceptedFactors = intercepted,
                 HullHits = hullHits,
+                CausedDamageThreshold = damage.CrossedThreshold,
+                SankAnyShip = damage.SunkNow,
                 Summary = $"{attacker.Side} fired {missileFactors} missile factor(s) at {range} hex(es): " +
                           $"{intercepted} intercepted, {hullHits} hull hit(s) on {target.Definition.DisplayName}."
-            };
-        }
-
-        private AttackReport ResolveGuns(TaskForceState attacker, UnitState target)
-        {
-            var gunFactors = attacker.ActiveUnits.Sum(unit => unit.EffectiveGuns);
-            if (gunFactors == 0) return NoAttackTraced("No guns remain operational.");
-            var hullHits = RollHits(gunFactors, roll => CombatTables.Hits(CombatTableColumn.Guns, roll));
-            var hullBefore = target.HullRemaining;
-            target.ApplyDamage(hullHits);
-            Trace("DAMAGE", $"{target.Definition.DisplayName}: gun hits={hullHits}, hull " +
-                  $"{hullBefore}->{target.HullRemaining}, sunk={target.IsSunk}.");
-            return new AttackReport
-            {
-                Fired = true,
-                AttackFactors = gunFactors,
-                HullHits = hullHits,
-                Summary = $"{attacker.Side} fired {gunFactors} gun factor(s): " +
-                          $"{hullHits} hull hit(s) on {target.Definition.DisplayName}."
             };
         }
 

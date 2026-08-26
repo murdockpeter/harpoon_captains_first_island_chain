@@ -33,6 +33,15 @@ namespace Harpoon.Runtime
         private bool _showDebug;
         private bool _detectionTestMode;
         private Vector2 _debugScroll;
+        private Vector2 _commandPanelScroll;
+        private Vector2 _formationPanelScroll;
+        private readonly Dictionary<string, int[]> _missileDraft = new Dictionary<string, int[]>();
+        private readonly List<DefensePairData> _defensePairDraft = new List<DefensePairData>();
+        private readonly Dictionary<string, int> _longRangeRemovalDraft = new Dictionary<string, int>();
+        private readonly Dictionary<string, string> _shortRangeDefenseDraft = new Dictionary<string, string>();
+        private readonly List<GunPairData> _gunPairDraft = new List<GunPairData>();
+        private string _pairSelection = string.Empty;
+        private string _combatDraftMarker = string.Empty;
         private int _lastDebugCount;
         private readonly MultiplayerNetwork _network = new MultiplayerNetwork();
         private readonly PublicRelayNetwork _publicNetwork = new PublicRelayNetwork();
@@ -65,6 +74,8 @@ namespace Harpoon.Runtime
         private AudioClip _actionClip;
         private AudioClip _rejectClip;
         private AudioClip _chitClip;
+        private AudioClip _gunClip;
+        private AudioClip _sinkingClip;
         private float _chitBannerUntil;
         private string _chitBanner = string.Empty;
         private object _speechVoice;
@@ -138,6 +149,9 @@ namespace Harpoon.Runtime
             _selectedFormationId = _game.State.Forces.First(force => force.Side == LocalSide).Id;
             _status = "Draw the first movement chit to begin the turn.";
             _debugScroll = Vector2.zero;
+            _commandPanelScroll = Vector2.zero;
+            _formationPanelScroll = Vector2.zero;
+            ResetCombatDrafts();
             _lastDebugCount = 0;
             RefreshViews();
             if (IsHostSession && NetworkConnected) BroadcastSnapshot();
@@ -272,6 +286,32 @@ namespace Harpoon.Runtime
                 : result.Summary;
             RefreshViews();
             if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void SubmitCombatCommand(GameCommand command, string sentStatus)
+        {
+            if (IsClientSession)
+            {
+                _pendingCommands[command.Id] = command;
+                NetworkSend(new NetworkMessage { kind = "command", command = command.ToData() });
+                _status = sentStatus;
+                return;
+            }
+            var result = _game.Execute(command);
+            _status = result.Summary;
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void ResetCombatDrafts()
+        {
+            _missileDraft.Clear();
+            _defensePairDraft.Clear();
+            _longRangeRemovalDraft.Clear();
+            _shortRangeDefenseDraft.Clear();
+            _gunPairDraft.Clear();
+            _pairSelection = string.Empty;
+            _combatDraftMarker = string.Empty;
         }
 
         private void StartHosting()
@@ -488,7 +528,8 @@ namespace Harpoon.Runtime
             BroadcastSnapshot();
         }
 
-        private void SendCommand(GameCommandType type, HexCoord coordinate = default, int declaredSpeed = 0)
+        private void SendCommand(GameCommandType type, HexCoord coordinate = default, int declaredSpeed = 0,
+            string targetId = null)
         {
             if (!NetworkConnected)
             {
@@ -496,7 +537,8 @@ namespace Harpoon.Runtime
                 return;
             }
             var command = new GameCommand(type, LocalSide, _game.State.Revision, coordinate,
-                declaredSpeed: declaredSpeed, formationId: _game.State.ActiveFormationId);
+                declaredSpeed: declaredSpeed, targetId: targetId,
+                formationId: _game.State.ActiveFormationId);
             _pendingCommands[command.Id] = command;
             NetworkSend(new NetworkMessage
             {
@@ -605,6 +647,22 @@ namespace Harpoon.Runtime
                 var click = Mathf.Sin(time * Mathf.PI * 2f * (210f + time * 520f));
                 var rattle = Mathf.Sin(time * 4733f) * Mathf.Sin(time * 1901f);
                 return (click * 0.24f + rattle * 0.08f) * Mathf.Exp(-time * 4f);
+            });
+            _gunClip = CreateProceduralClip("Naval gunfire", 0.72f, time =>
+            {
+                var first = Mathf.Exp(-time * 22f);
+                var secondTime = Mathf.Max(0f, time - 0.24f);
+                var second = time >= 0.24f ? Mathf.Exp(-secondTime * 24f) : 0f;
+                var blast = Mathf.Sin(time * 11311f) * Mathf.Sin(time * 4729f);
+                var concussion = Mathf.Sin(time * Mathf.PI * 2f * 46f);
+                return (blast * 0.38f + concussion * 0.34f) * (first + second * 0.72f);
+            });
+            _sinkingClip = CreateProceduralClip("Ship sinking", 1.35f, time =>
+            {
+                var rumble = Mathf.Sin(time * Mathf.PI * 2f * 34f) * 0.34f +
+                             Mathf.Sin(time * Mathf.PI * 2f * 51f) * 0.2f;
+                var fracture = Mathf.Sin(time * 6781f) * Mathf.Sin(time * 2317f) * 0.16f;
+                return (rumble + fracture) * Mathf.Exp(-time * 2.1f);
             });
         }
 
@@ -842,8 +900,8 @@ namespace Harpoon.Runtime
                     marker.gameObject.AddComponent<FormationView>().Initialize(force.Side, force.Id);
                     _formationMarkers[force.Id] = marker;
                 }
-                marker.position = WorldPosition(force.Position) + Vector3.up * 0.75f;
-                marker.gameObject.SetActive(!force.IsDestroyed);
+                marker.position = WorldPosition(force.Position) + Vector3.up * (force.IsDestroyed ? 0.38f : 0.75f);
+                marker.gameObject.SetActive(true);
                 var selected = force.Id == _selectedFormationId;
                 var active = force.Id == _game.State.ActiveFormationId;
                 marker.localScale = Vector3.one * (selected ? 1.18f : active ? 1.1f : 0.92f);
@@ -851,6 +909,10 @@ namespace Harpoon.Runtime
                 var knownContact = force.Side != LocalSide && (!_game.State.DetectionRulesEnabled ||
                     _game.State.Detection.IsDetected(LocalSide, force.Id));
                 formationView?.SetSensorState(force.RadarRadiating, knownContact);
+                var totalHull = Mathf.Max(1, force.Units.Sum(unit => unit.Definition.Hull));
+                var damageFraction = force.Units.Sum(unit => unit.HullDamage) / (float)totalHull;
+                formationView?.SetDamageState(damageFraction,
+                    force.ActiveUnits.Any(unit => unit.HasTwoThirdsDamage), force.IsDestroyed);
             }
             foreach (var pair in _formationMarkers)
                 if (_game.State.Formation(pair.Key) == null) pair.Value.gameObject.SetActive(false);
@@ -864,6 +926,8 @@ namespace Harpoon.Runtime
 
         private void SelectFormation(Side side, string formationId)
         {
+            if (_selectedFormation != side || _selectedFormationId != formationId)
+                _formationPanelScroll = Vector2.zero;
             _selectedFormation = side;
             _selectedFormationId = string.IsNullOrEmpty(formationId)
                 ? _game.State.Forces.First(force => force.Side == side).Id : formationId;
@@ -873,20 +937,84 @@ namespace Harpoon.Runtime
 
         private void OnAttackResolved(Side attacker, AttackReport report)
         {
-            PlayGameSound(_attackClip);
-            var attackingForce = _game.State.ActiveForce ?? _game.State.ForceFor(attacker);
-            var defendingForce = _game.State.ForceFor(attacker == Side.UsNavy ? Side.Plan : Side.UsNavy);
+            if (report.IsGunfire) PlayGameSound(_gunClip, 0.9f);
+            else PlayGameSound(_attackClip);
+            var engagement = _game.State.PendingMissileCombat;
+            var attackingForce = engagement != null
+                ? _game.State.Formation(engagement.AttackerFormationId) : _game.State.ForceFor(attacker);
+            var defendingForce = engagement != null
+                ? _game.State.Formation(engagement.DefenderFormationId)
+                : _game.State.ForceFor(attacker == Side.UsNavy ? Side.Plan : Side.UsNavy);
             var origin = _formationMarkers.TryGetValue(attackingForce.Id, out var attackingMarker)
                 ? attackingMarker.position : WorldPosition(attackingForce.Position);
             var target = _formationMarkers.TryGetValue(defendingForce.Id, out var defendingMarker)
                 ? defendingMarker.position : WorldPosition(defendingForce.Position);
-            StartCoroutine(PlayAttackEffect(origin, target, report));
+            if (report.IsGunfire)
+            {
+                var lateral = attacker == Side.UsNavy ? Vector3.left : Vector3.right;
+                StartCoroutine(PlayGunfireEffect(origin + lateral * 0.85f,
+                    target - lateral * 0.85f, report));
+            }
+            else StartCoroutine(PlayAttackEffect(origin, target, report));
+        }
+
+        private IEnumerator PlayGunfireEffect(Vector3 origin, Vector3 target, AttackReport report)
+        {
+            var muzzle = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            muzzle.name = "Gun Muzzle Flash";
+            muzzle.transform.position = origin + Vector3.up * 0.8f;
+            muzzle.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(
+                new Color(1f, 0.68f, 0.08f), 0.1f, 0.1f);
+            var rounds = new List<GameObject>();
+            var count = Mathf.Clamp(report.AttackFactors, 1, 4);
+            for (var index = 0; index < count; index++)
+            {
+                var tracer = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                tracer.name = "Naval Gun Tracer";
+                tracer.transform.localScale = new Vector3(0.07f, 0.07f, 0.24f);
+                tracer.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(
+                    new Color(1f, 0.38f + index * 0.08f, 0.04f), 0f, 0.05f);
+                rounds.Add(tracer);
+            }
+            const float duration = 0.42f;
+            for (var elapsed = 0f; elapsed < duration; elapsed += Time.deltaTime)
+            {
+                var t = Mathf.Clamp01(elapsed / duration);
+                muzzle.transform.localScale = Vector3.one * Mathf.Lerp(0.55f, 0.02f, t);
+                for (var index = 0; index < rounds.Count; index++)
+                {
+                    var delayed = Mathf.Clamp01(t * 1.35f - index * 0.09f);
+                    rounds[index].transform.position = Vector3.Lerp(origin, target, delayed) +
+                        Vector3.up * (0.65f + Mathf.Sin(delayed * Mathf.PI) * (0.45f + index * 0.08f));
+                }
+                yield return null;
+            }
+            Destroy(muzzle);
+            foreach (var round in rounds) Destroy(round);
+            if (report.HullHits <= 0) yield break;
+            PlayGameSound(_impactClip, 0.65f);
+            var smoke = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            smoke.name = "Gunfire Impact Smoke";
+            smoke.transform.position = target + Vector3.up * 0.7f;
+            smoke.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(
+                new Color(0.25f, 0.22f, 0.18f), 0f, 0.55f);
+            for (var elapsed = 0f; elapsed < 0.6f; elapsed += Time.deltaTime)
+            {
+                smoke.transform.position += Vector3.up * Time.deltaTime * 0.35f;
+                smoke.transform.localScale = Vector3.one * (0.12f + elapsed * 0.9f);
+                yield return null;
+            }
+            Destroy(smoke);
+            if (report.SankAnyShip) yield return PlaySinkingEffect(target);
         }
 
         private IEnumerator PlayAttackEffect(Vector3 origin, Vector3 target, AttackReport report)
         {
             var count = Mathf.Clamp(report.AttackFactors, 1, 4);
             var missiles = new GameObject[count];
+            var defenseBursts = new List<GameObject>();
+            var interceptedVisuals = report.AttackFactors <= 0 ? 0 : Mathf.Clamp(
+                Mathf.RoundToInt(count * report.InterceptedFactors / (float)report.AttackFactors), 0, count);
             for (var i = 0; i < count; i++)
             {
                 missiles[i] = VisualFactory.CreateMissile(new Color(1f, 0.3f + i * 0.08f, 0.05f));
@@ -894,6 +1022,7 @@ namespace Harpoon.Runtime
             }
             const float duration = 0.9f;
             var elapsed = 0f;
+            var interceptionsShown = false;
             while (elapsed < duration)
             {
                 elapsed += Time.deltaTime;
@@ -905,9 +1034,28 @@ namespace Harpoon.Runtime
                     missiles[i].transform.position = Vector3.Lerp(origin, target, t) + offset +
                                                      Vector3.up * (0.8f + Mathf.Sin(t * Mathf.PI) * 4f);
                 }
+                if (!interceptionsShown && t >= 0.62f)
+                {
+                    interceptionsShown = true;
+                    for (var i = 0; i < interceptedVisuals; i++)
+                    {
+                        if (missiles[i] == null) continue;
+                        var interceptBurst = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                        interceptBurst.name = "SAM Intercept";
+                        interceptBurst.transform.position = missiles[i].transform.position;
+                        interceptBurst.transform.localScale = Vector3.one * 0.22f;
+                        interceptBurst.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(
+                            new Color(0.1f, 0.82f, 1f), 0f, 0.15f);
+                        defenseBursts.Add(interceptBurst);
+                        Destroy(missiles[i]);
+                    }
+                }
+                foreach (var defenseBurst in defenseBursts)
+                    if (defenseBurst != null) defenseBurst.transform.localScale += Vector3.one * (Time.deltaTime * 1.8f);
                 yield return null;
             }
             foreach (var missile in missiles) if (missile != null) Destroy(missile);
+            foreach (var defenseBurst in defenseBursts) if (defenseBurst != null) Destroy(defenseBurst);
             if (report.HullHits <= 0) yield break;
             PlayGameSound(_impactClip);
             var burst = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -920,6 +1068,45 @@ namespace Harpoon.Runtime
                 yield return null;
             }
             Destroy(burst);
+            if (report.SankAnyShip) yield return PlaySinkingEffect(target);
+        }
+
+        private IEnumerator PlaySinkingEffect(Vector3 target)
+        {
+            PlayGameSound(_sinkingClip, 0.95f);
+            var rings = new List<GameObject>();
+            for (var index = 0; index < 3; index++)
+            {
+                var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                ring.name = "Sinking Water Ring";
+                ring.transform.position = target + Vector3.up * (0.05f + index * 0.025f);
+                ring.transform.localScale = new Vector3(0.15f, 0.012f, 0.15f);
+                ring.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(
+                    new Color(0.38f, 0.78f, 0.9f), 0f, 0.6f);
+                rings.Add(ring);
+            }
+            var column = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            column.name = "Sinking Steam Column";
+            column.transform.position = target + Vector3.up * 0.45f;
+            column.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(
+                new Color(0.42f, 0.45f, 0.44f), 0f, 0.1f);
+            const float duration = 1.15f;
+            for (var elapsed = 0f; elapsed < duration; elapsed += Time.deltaTime)
+            {
+                var t = Mathf.Clamp01(elapsed / duration);
+                for (var index = 0; index < rings.Count; index++)
+                {
+                    var delayed = Mathf.Clamp01(t * 1.35f - index * 0.18f);
+                    rings[index].transform.localScale = new Vector3(0.15f + delayed * 1.65f,
+                        0.012f, 0.15f + delayed * 1.65f);
+                }
+                column.transform.localScale = new Vector3(0.25f + t * 0.75f,
+                    0.35f + Mathf.Sin(t * Mathf.PI) * 1.8f, 0.25f + t * 0.75f);
+                column.transform.position += Vector3.up * Time.deltaTime * 0.28f;
+                yield return null;
+            }
+            foreach (var ring in rings) Destroy(ring);
+            Destroy(column);
         }
 
         private void OnCommandProcessed(GameCommand command, CommandResult result)
@@ -1019,8 +1206,8 @@ namespace Harpoon.Runtime
 
         private bool IsPointerOverPanel()
         {
-            var overLeft = Input.mousePosition.x < 390f && Input.mousePosition.y > Screen.height - 670f;
-            var overRight = Input.mousePosition.x > Screen.width - 410f && Input.mousePosition.y > Screen.height - 680f;
+            var overLeft = Input.mousePosition.x < 390f && Input.mousePosition.y > 18f;
+            var overRight = Input.mousePosition.x > Screen.width - 410f && Input.mousePosition.y > 18f;
             var overDebug = _showDebug && Input.mousePosition.x > 406f &&
                             Input.mousePosition.x < Screen.width - 406f &&
                             Input.mousePosition.y > 24f && Input.mousePosition.y < Screen.height - 24f;
@@ -1034,8 +1221,10 @@ namespace Harpoon.Runtime
         {
             if (_game == null) return;
             EnsureStyles();
-            GUI.Box(new Rect(18, 18, 370, 650), GUIContent.none);
-            GUILayout.BeginArea(new Rect(34, 30, 338, 622));
+            var commandPanelHeight = Mathf.Max(300f, Screen.height - 36f);
+            GUI.Box(new Rect(18, 18, 370, commandPanelHeight), GUIContent.none);
+            GUILayout.BeginArea(new Rect(28, 28, 350, commandPanelHeight - 20f));
+            _commandPanelScroll = GUILayout.BeginScrollView(_commandPanelScroll, false, true);
             GUILayout.Label("HARPOON", _titleStyle);
             GUILayout.Label(_sessionMode == SessionMode.SinglePlayer
                 ? "SOLO - US NAVY"
@@ -1062,16 +1251,23 @@ namespace Harpoon.Runtime
             GUI.enabled = CanLocalAct() && actionPhase && !_game.State.PlayerHasAttacked && hasDetectedTarget;
             if (GUILayout.Button("ATTACK", _buttonStyle))
             {
+                var selectedTarget = _game.State.Formation(_selectedFormationId);
+                var targetFormationId = selectedTarget != null && selectedTarget.Side != LocalSide
+                    ? selectedTarget.Id : null;
                 if (IsClientSession)
                 {
-                    SendCommand(GameCommandType.Attack);
+                    SendCommand(GameCommandType.Attack, targetId: targetFormationId);
                     _status = "Attack command sent to host.";
                 }
                 else
                 {
                     var commandResult = _game.Execute(new GameCommand(GameCommandType.Attack,
-                        LocalSide, _game.State.Revision));
-                    _status = commandResult.Summary;
+                        LocalSide, _game.State.Revision, targetId: targetFormationId));
+                    _status = commandResult.Accepted && _game.State.Phase == ActivationPhase.MissileCombat
+                        ? "Missile engagement opened. Allocate factors to targets."
+                        : commandResult.Accepted && _game.State.Phase == ActivationPhase.GunCombat
+                            ? "Close action opened. Resolve the gun engagement."
+                            : commandResult.Summary;
                     RefreshViews();
                     if (IsHostSession) BroadcastSnapshot();
                 }
@@ -1111,10 +1307,13 @@ namespace Harpoon.Runtime
             GUILayout.Label("EVENT LOG", _labelStyle);
             foreach (var entry in _game.State.Log.Skip(System.Math.Max(0, _game.State.Log.Count - 7)))
                 GUILayout.Label("• " + entry, _labelStyle);
+            GUILayout.EndScrollView();
             GUILayout.EndArea();
             DrawFormationCards();
             DrawActivationRibbon();
             DrawChitBanner();
+            DrawMissileCombatRibbon();
+            DrawGunCombatRibbon();
             if (_sessionMode != SessionMode.SinglePlayer) DrawChatAndSoundboard();
             if (_showMultiplayer) DrawMultiplayerLobby();
             if (_showDebug) DrawDebugPanel();
@@ -1133,6 +1332,16 @@ namespace Harpoon.Runtime
 
         private void DrawSpeedDeclaration()
         {
+            if (_game.State.Phase == ActivationPhase.MissileCombat)
+            {
+                DrawMissileCombatDecision();
+                return;
+            }
+            if (_game.State.Phase == ActivationPhase.GunCombat)
+            {
+                DrawGunCombatDecision();
+                return;
+            }
             if (_game.State.Phase == ActivationPhase.AwaitingChit)
             {
                 GUILayout.Label($"MOVEMENT CUP  ·  {_game.State.MovementCup.Remaining.Count} CHITS", _cardHeaderStyle);
@@ -1141,17 +1350,15 @@ namespace Harpoon.Runtime
                     force.Side == LocalSide && force.Units.Count > 1);
                 if (splittable != null)
                 {
-                    GUILayout.BeginHorizontal();
                     GUI.enabled = _sessionMode == SessionMode.SinglePlayer || NetworkConnected;
                     foreach (var unit in splittable.Units.ToArray())
                     {
                         var selectedUnit = unit;
-                        if (GUILayout.Button("SPLIT " + ShortUnitName(unit.Definition.DisplayName),
+                        if (GUILayout.Button("SPLIT: " + unit.Definition.DisplayName.ToUpperInvariant(),
                                 _buttonStyle))
                             SplitLocalFormation(splittable, selectedUnit);
                     }
                     GUI.enabled = true;
-                    GUILayout.EndHorizontal();
                 }
                 GUI.enabled = _sessionMode == SessionMode.SinglePlayer || NetworkConnected;
                 if (GUILayout.Button("DRAW FIRST CHIT", _buttonStyle)) DrawLocalMovementChit();
@@ -1219,6 +1426,357 @@ namespace Harpoon.Runtime
             GUILayout.EndHorizontal();
         }
 
+        private void DrawMissileCombatDecision()
+        {
+            var engagement = _game.State.PendingMissileCombat;
+            if (engagement == null)
+            {
+                GUILayout.Label("MISSILE EXCHANGE SYNCHRONIZING", _cardHeaderStyle);
+                return;
+            }
+            var marker = engagement.AttackerFormationId + "|" + engagement.DefenderFormationId + "|" +
+                         engagement.IsCounterattack + "|" + engagement.Phase;
+            if (_combatDraftMarker != marker)
+            {
+                _missileDraft.Clear();
+                _defensePairDraft.Clear();
+                _longRangeRemovalDraft.Clear();
+                _shortRangeDefenseDraft.Clear();
+                _pairSelection = string.Empty;
+                _combatDraftMarker = marker;
+            }
+            GUILayout.Label("MISSILE COMBAT  ·  " + CombatStageLabel(engagement.Phase), _cardHeaderStyle);
+            GUILayout.Label($"{engagement.AttackerFormationId} → {engagement.DefenderFormationId}", _cardStatStyle);
+            GUILayout.Label($"RAID {engagement.RemainingFactors}/{engagement.InitialFactors} FACTORS  ·  DECISION {SideLabel(engagement.DecisionSide)}",
+                _cardStatStyle);
+            if (engagement.DecisionSide != LocalSide)
+            {
+                GUILayout.Label("Waiting for the opponent's combat decision…", _labelStyle);
+                return;
+            }
+            switch (engagement.Phase)
+            {
+                case MissileCombatPhase.AllocateFire:
+                    DrawMissileAllocation(engagement);
+                    break;
+                case MissileCombatPhase.DefensiveDeployment:
+                    DrawDefensiveDeployment(engagement);
+                    break;
+                case MissileCombatPhase.LongRangeRemoval:
+                    DrawLongRangeRemovals(engagement);
+                    break;
+                case MissileCombatPhase.ShortRangeDefense:
+                    DrawShortRangeDefense(engagement);
+                    break;
+                case MissileCombatPhase.CounterattackDecision:
+                    DrawCounterattackDecision(engagement);
+                    break;
+            }
+        }
+
+        private void DrawGunCombatDecision()
+        {
+            var engagement = _game.State.PendingGunCombat;
+            if (engagement == null)
+            {
+                GUILayout.Label("GUN ENGAGEMENT SYNCHRONIZING", _cardHeaderStyle);
+                return;
+            }
+            var marker = "GUN|" + engagement.Round + "|" + engagement.Phase + "|" + engagement.DecisionSide;
+            if (_combatDraftMarker != marker)
+            {
+                _gunPairDraft.Clear();
+                _combatDraftMarker = marker;
+            }
+            GUILayout.Label($"NAVAL GUNFIRE  ·  ROUND {engagement.Round}", _cardHeaderStyle);
+            GUILayout.Label($"{engagement.AttackerFormationId} ↔ {engagement.DefenderFormationId}", _cardStatStyle);
+            GUILayout.Label("SAME HEX  ·  STRONGEST BATTERY FIRES FIRST", _cardStatStyle);
+            if (engagement.DecisionSide != LocalSide)
+            {
+                GUILayout.Label("Waiting for the opponent's gunfire decision…", _labelStyle);
+                return;
+            }
+            switch (engagement.Phase)
+            {
+                case GunCombatPhase.EngageDecision:
+                    GUILayout.Label("Your force is faster. Evade cleanly, or turn and accept close action.", _labelStyle);
+                    GUILayout.BeginHorizontal();
+                    GunDecisionButton("EVADE", true);
+                    GunDecisionButton("ENGAGE", false);
+                    GUILayout.EndHorizontal();
+                    break;
+                case GunCombatPhase.ArrangeAttacker:
+                case GunCombatPhase.ArrangeDefender:
+                    DrawGunArrangement();
+                    break;
+                case GunCombatPhase.Firing:
+                    DrawGunTargeting(engagement);
+                    break;
+                case GunCombatPhase.BreakOffAttacker:
+                case GunCombatPhase.BreakOffDefender:
+                    GUILayout.Label("All eligible firing ships have acted. Choose whether to disengage or fight another round.", _labelStyle);
+                    GUILayout.BeginHorizontal();
+                    GunDecisionButton("BREAK OFF", true);
+                    GunDecisionButton("CONTINUE", false);
+                    GUILayout.EndHorizontal();
+                    break;
+            }
+        }
+
+        private void DrawGunArrangement()
+        {
+            var engagement = _game.State.PendingGunCombat;
+            var attacker = _game.State.Formation(engagement.AttackerFormationId);
+            var force = attacker.Side == LocalSide ? attacker :
+                _game.State.Formation(engagement.DefenderFormationId);
+            if (_gunPairDraft.Count == 0)
+                _gunPairDraft.AddRange(ScenarioOneGame.DefaultGunPairs(force));
+            GUILayout.Label("Choose the firing ship on top of each pair. Its mate is screened and is harder to hit.", _labelStyle);
+            foreach (var pair in _gunPairDraft)
+            {
+                var firing = force.Units.First(unit => unit.Definition.Id == pair.firingUnitId);
+                var screened = force.Units.FirstOrDefault(unit => unit.Definition.Id == pair.screenedUnitId);
+                GUILayout.BeginVertical(GUI.skin.box);
+                GUILayout.Label($"FIRING  {firing.Definition.DisplayName.ToUpperInvariant()}  ·  GUNS {firing.EffectiveGuns}", _cardHeaderStyle);
+                GUILayout.Label(screened == null
+                    ? "UNPAIRED SHIP"
+                    : $"SCREENED  {screened.Definition.DisplayName.ToUpperInvariant()}  ·  GUNS {screened.EffectiveGuns}", _cardStatStyle);
+                GUI.enabled = CanLocalAct() && screened != null && screened.EffectiveGuns > 0;
+                if (GUILayout.Button("SWAP FIRING SHIP", _buttonStyle))
+                {
+                    var oldFiring = pair.firingUnitId;
+                    pair.firingUnitId = pair.screenedUnitId;
+                    pair.screenedUnitId = oldFiring;
+                }
+                GUI.enabled = true;
+                GUILayout.EndVertical();
+            }
+            GUI.enabled = CanLocalAct();
+            if (GUILayout.Button("LOCK FIRING FORMATION", _buttonStyle))
+                SubmitCombatCommand(new GameCommand(GameCommandType.ArrangeGunfire, LocalSide,
+                    _game.State.Revision, gunPairs: _gunPairDraft.ToArray()),
+                    "Gunfire formation sent to host.");
+            GUI.enabled = true;
+        }
+
+        private void DrawGunTargeting(GunEngagement engagement)
+        {
+            if (engagement.FiringIndex >= engagement.FiringOrder.Count) return;
+            var shooterId = engagement.FiringOrder[engagement.FiringIndex];
+            var attacker = _game.State.Formation(engagement.AttackerFormationId);
+            var force = attacker.Side == LocalSide ? attacker :
+                _game.State.Formation(engagement.DefenderFormationId);
+            var shooter = force.Units.First(unit => unit.Definition.Id == shooterId);
+            var targets = attacker.Side == LocalSide
+                ? _game.State.Formation(engagement.DefenderFormationId) : attacker;
+            GUILayout.Label($"NOW FIRING  ·  {shooter.Definition.DisplayName.ToUpperInvariant()}  ·  {shooter.EffectiveGuns} DICE", _cardHeaderStyle);
+            GUILayout.Label($"SHOT {engagement.FiringIndex + 1}/{engagement.FiringOrder.Count}", _cardStatStyle);
+            foreach (var target in targets.ActiveUnits)
+            {
+                var screened = engagement.IsScreened(target.Definition.Id);
+                GUI.enabled = CanLocalAct();
+                var label = $"FIRE AT {target.Definition.DisplayName.ToUpperInvariant()}" +
+                            (screened ? "  ·  SCREENED −1" : "  ·  EXPOSED");
+                if (GUILayout.Button(label, _buttonStyle))
+                    SubmitCombatCommand(new GameCommand(GameCommandType.FireGuns, LocalSide,
+                        _game.State.Revision, targetId: target.Definition.Id,
+                        sourceUnitId: shooter.Definition.Id), "Gun target sent to host.");
+                GUI.enabled = true;
+            }
+        }
+
+        private void GunDecisionButton(string label, bool enabled)
+        {
+            GUI.enabled = CanLocalAct();
+            if (GUILayout.Button(label, _buttonStyle))
+                SubmitCombatCommand(new GameCommand(GameCommandType.BreakOff, LocalSide,
+                    _game.State.Revision, enabled: enabled), "Gun engagement decision sent to host.");
+            GUI.enabled = true;
+        }
+
+        private void DrawMissileAllocation(MissileEngagement engagement)
+        {
+            var attacker = _game.State.Formation(engagement.AttackerFormationId);
+            var defender = _game.State.Formation(engagement.DefenderFormationId);
+            var range = attacker.Position.DistanceTo(defender.Position);
+            foreach (var source in attacker.ActiveUnits.Where(unit => unit.AvailableShortSsm > 0 || unit.AvailableLongSsm > 0))
+            {
+                GUILayout.Label($"{ShortUnitName(source.Definition.DisplayName)}  ·  AVAILABLE SR {source.AvailableShortSsm} / LR {source.AvailableLongSsm}",
+                    _cardStatStyle);
+                foreach (var target in defender.ActiveUnits)
+                {
+                    var key = source.Definition.Id + "|" + target.Definition.Id;
+                    if (!_missileDraft.TryGetValue(key, out var factors))
+                        _missileDraft[key] = factors = new int[2];
+                    var usedShort = _missileDraft.Where(item => item.Key.StartsWith(source.Definition.Id + "|"))
+                        .Sum(item => item.Value[0]);
+                    var usedLong = _missileDraft.Where(item => item.Key.StartsWith(source.Definition.Id + "|"))
+                        .Sum(item => item.Value[1]);
+                    GUILayout.Label("TARGET: " + ShortUnitName(target.Definition.DisplayName), _cardStatStyle);
+                    GUILayout.BeginHorizontal();
+                    GUI.enabled = factors[0] > 0;
+                    if (GUILayout.Button("−", _buttonStyle, GUILayout.Width(34f))) factors[0]--;
+                    GUI.enabled = CanLocalAct() && range <= 1 && usedShort < source.AvailableShortSsm;
+                    if (GUILayout.Button($"SR {factors[0]}  +", _buttonStyle)) factors[0]++;
+                    GUI.enabled = factors[1] > 0;
+                    if (GUILayout.Button("−", _buttonStyle, GUILayout.Width(34f))) factors[1]--;
+                    GUI.enabled = CanLocalAct() && range <= 3 && usedLong < source.AvailableLongSsm;
+                    if (GUILayout.Button($"LR {factors[1]}  +", _buttonStyle)) factors[1]++;
+                    GUI.enabled = true;
+                    GUILayout.EndHorizontal();
+                }
+            }
+            var allocations = _missileDraft.Where(item => item.Value[0] + item.Value[1] > 0)
+                .Select((item, index) =>
+                {
+                    var ids = item.Key.Split('|');
+                    return new MissileAllocationData
+                    {
+                        id = $"SALVO-{_game.State.Revision}-{index + 1}",
+                        sourceUnitId = ids[0],
+                        targetUnitId = ids[1],
+                        shortFactors = item.Value[0],
+                        longFactors = item.Value[1]
+                    };
+                }).ToArray();
+            GUI.enabled = CanLocalAct() && allocations.Length > 0;
+            if (GUILayout.Button($"LAUNCH {allocations.Sum(item => item.shortFactors + item.longFactors)} ALLOCATED FACTOR(S)", _buttonStyle))
+                SubmitCombatCommand(new GameCommand(GameCommandType.AllocateMissileFire, LocalSide,
+                    _game.State.Revision, missileAllocations: allocations), "Missile allocation sent to host.");
+            GUI.enabled = true;
+        }
+
+        private void DrawDefensiveDeployment(MissileEngagement engagement)
+        {
+            var defender = _game.State.Formation(engagement.DefenderFormationId);
+            GUILayout.Label("Select two ships to form each mutual-defense pair. An odd ship may remain unpaired.", _cardStatStyle);
+            foreach (var pair in _defensePairDraft)
+                GUILayout.Label($"PAIR: {UnitName(defender, pair.firstUnitId)} + {UnitName(defender, pair.secondUnitId)}", _cardStatStyle);
+            var paired = new HashSet<string>(_defensePairDraft.SelectMany(pair =>
+                new[] { pair.firstUnitId, pair.secondUnitId }));
+            foreach (var ship in defender.ActiveUnits.Where(unit => !paired.Contains(unit.Definition.Id)))
+            {
+                var selected = _pairSelection == ship.Definition.Id;
+                var oldColor = GUI.backgroundColor;
+                if (selected) GUI.backgroundColor = new Color(0.95f, 0.72f, 0.18f);
+                if (GUILayout.Button((selected ? "SELECTED: " : "PAIR: ") + ship.Definition.DisplayName.ToUpperInvariant(), _buttonStyle))
+                {
+                    if (string.IsNullOrEmpty(_pairSelection)) _pairSelection = ship.Definition.Id;
+                    else if (_pairSelection != ship.Definition.Id)
+                    {
+                        _defensePairDraft.Add(new DefensePairData
+                        {
+                            firstUnitId = _pairSelection,
+                            secondUnitId = ship.Definition.Id
+                        });
+                        _pairSelection = string.Empty;
+                    }
+                }
+                GUI.backgroundColor = oldColor;
+            }
+            GUILayout.BeginHorizontal();
+            GUI.enabled = _defensePairDraft.Count > 0 || !string.IsNullOrEmpty(_pairSelection);
+            if (GUILayout.Button("CLEAR PAIRS", _buttonStyle))
+            {
+                _defensePairDraft.Clear();
+                _pairSelection = string.Empty;
+            }
+            GUI.enabled = CanLocalAct();
+            if (GUILayout.Button("DEPLOY DEFENSE", _buttonStyle))
+                SubmitCombatCommand(new GameCommand(GameCommandType.Defend, LocalSide,
+                    _game.State.Revision, defensePairs: _defensePairDraft.ToArray()), "Defensive deployment sent to host.");
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+        }
+
+        private void DrawLongRangeRemovals(MissileEngagement engagement)
+        {
+            GUILayout.Label($"Long-range SAM scored {engagement.LongRangeHits} removal(s). Choose which salvos lose factors.", _cardStatStyle);
+            foreach (var salvo in engagement.Salvos.Where(item => item.RemainingFactors > 0))
+            {
+                if (!_longRangeRemovalDraft.ContainsKey(salvo.Id)) _longRangeRemovalDraft[salvo.Id] = 0;
+                GUILayout.Label($"{salvo.Id} → {salvo.TargetUnitId}  ·  {salvo.RemainingFactors} factor(s)", _cardStatStyle);
+                GUILayout.BeginHorizontal();
+                GUI.enabled = _longRangeRemovalDraft[salvo.Id] > 0;
+                if (GUILayout.Button("−", _buttonStyle, GUILayout.Width(42f))) _longRangeRemovalDraft[salvo.Id]--;
+                GUILayout.Label($"REMOVE {_longRangeRemovalDraft[salvo.Id]}", _cardHeaderStyle);
+                var assigned = _longRangeRemovalDraft.Values.Sum();
+                GUI.enabled = assigned < engagement.LongRangeHits &&
+                              _longRangeRemovalDraft[salvo.Id] < salvo.RemainingFactors;
+                if (GUILayout.Button("+", _buttonStyle, GUILayout.Width(42f))) _longRangeRemovalDraft[salvo.Id]++;
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+            var total = _longRangeRemovalDraft.Values.Sum();
+            GUI.enabled = CanLocalAct() && total == engagement.LongRangeHits;
+            if (GUILayout.Button($"CONFIRM LR SAM REMOVALS  {total}/{engagement.LongRangeHits}", _buttonStyle))
+                SubmitCombatCommand(new GameCommand(GameCommandType.Defend, LocalSide,
+                    _game.State.Revision, missileReductions: _longRangeRemovalDraft.Where(item => item.Value > 0)
+                    .Select(item => new MissileReductionData { salvoId = item.Key, factors = item.Value }).ToArray()),
+                    "Long-range SAM removals sent to host.");
+            GUI.enabled = true;
+        }
+
+        private void DrawShortRangeDefense(MissileEngagement engagement)
+        {
+            var defender = _game.State.Formation(engagement.DefenderFormationId);
+            GUILayout.Label("Assign each short-range SAM battery to one salvo attacking itself or its pair-mate.", _cardStatStyle);
+            foreach (var ship in defender.ActiveUnits.Where(unit => unit.EffectiveShortSam > 0))
+            {
+                var mate = engagement.PairMate(ship.Definition.Id);
+                var legal = engagement.Salvos.Where(salvo => salvo.RemainingFactors > 0 &&
+                    (salvo.TargetUnitId == ship.Definition.Id || salvo.TargetUnitId == mate)).ToArray();
+                if (legal.Length == 0) continue;
+                GUILayout.Label($"{ShortUnitName(ship.Definition.DisplayName)}  ·  SR SAM {ship.EffectiveShortSam}", _cardStatStyle);
+                foreach (var salvo in legal)
+                {
+                    var selected = _shortRangeDefenseDraft.TryGetValue(ship.Definition.Id, out var salvoId) && salvoId == salvo.Id;
+                    var oldColor = GUI.backgroundColor;
+                    if (selected) GUI.backgroundColor = new Color(0.18f, 0.78f, 0.92f);
+                    if (GUILayout.Button($"{(selected ? "ASSIGNED" : "ENGAGE")} {salvo.Id} → {salvo.TargetUnitId}", _buttonStyle))
+                        _shortRangeDefenseDraft[ship.Definition.Id] = salvo.Id;
+                    GUI.backgroundColor = oldColor;
+                }
+            }
+            GUI.enabled = CanLocalAct();
+            if (GUILayout.Button("FIRE SHORT-RANGE SAM / RESOLVE RAID", _buttonStyle))
+                SubmitCombatCommand(new GameCommand(GameCommandType.Defend, LocalSide,
+                    _game.State.Revision, shortRangeDefenses: _shortRangeDefenseDraft.Select(item =>
+                    new ShortRangeDefenseData { defendingUnitId = item.Key, salvoId = item.Value }).ToArray()),
+                    "Short-range defense assignments sent to host.");
+            GUI.enabled = true;
+        }
+
+        private void DrawCounterattackDecision(MissileEngagement engagement)
+        {
+            GUILayout.Label("The non-moving force may launch its missile counterattack now, before the moving formation resumes.", _cardStatStyle);
+            GUILayout.BeginHorizontal();
+            GUI.enabled = CanLocalAct();
+            if (GUILayout.Button("COUNTERATTACK", _buttonStyle))
+                SubmitCombatCommand(new GameCommand(GameCommandType.Counterattack, LocalSide,
+                    _game.State.Revision, enabled: true), "Counterattack decision sent to host.");
+            if (GUILayout.Button("DECLINE", _buttonStyle))
+                SubmitCombatCommand(new GameCommand(GameCommandType.Counterattack, LocalSide,
+                    _game.State.Revision, enabled: false), "Counterattack declined.");
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+        }
+
+        private static string UnitName(TaskForceState force, string unitId) => force.Units
+            .FirstOrDefault(unit => unit.Definition.Id == unitId)?.Definition.DisplayName ?? unitId;
+
+        private static string CombatStageLabel(MissileCombatPhase phase)
+        {
+            switch (phase)
+            {
+                case MissileCombatPhase.AllocateFire: return "1 / ALLOCATE FIRE";
+                case MissileCombatPhase.DefensiveDeployment: return "2 / DEPLOY & LR SAM";
+                case MissileCombatPhase.LongRangeRemoval: return "3 / ASSIGN LR HITS";
+                case MissileCombatPhase.ShortRangeDefense: return "4 / SR SAM, PD & IMPACT";
+                default: return "COUNTERATTACK DECISION";
+            }
+        }
+
         private static string ShortUnitName(string name)
         {
             if (string.IsNullOrEmpty(name)) return "UNIT";
@@ -1265,6 +1823,44 @@ namespace Harpoon.Runtime
             GUI.color = oldColor;
             GUI.Label(new Rect(left + 10f, top + 8f, width - 20f, 28f), "CHIT DRAWN", _activationStyle);
             GUI.Label(new Rect(left + 10f, top + 34f, width - 20f, 24f), _chitBanner, _activationStyle);
+        }
+
+        private void DrawMissileCombatRibbon()
+        {
+            var engagement = _game.State.PendingMissileCombat;
+            if (_game.State.Phase != ActivationPhase.MissileCombat || engagement == null) return;
+            const float width = 470f;
+            const float height = 58f;
+            var left = (Screen.width - width) * 0.5f;
+            const float top = 158f;
+            var oldColor = GUI.color;
+            GUI.color = new Color(0.45f, 0.08f, 0.06f, 0.93f);
+            GUI.Box(new Rect(left, top, width, height), GUIContent.none);
+            GUI.color = oldColor;
+            GUI.Label(new Rect(left + 8f, top + 5f, width - 16f, 24f),
+                "MISSILE EXCHANGE  ·  " + CombatStageLabel(engagement.Phase), _activationStyle);
+            GUI.Label(new Rect(left + 8f, top + 31f, width - 16f, 20f),
+                $"{engagement.AttackerFormationId} → {engagement.DefenderFormationId}  ·  RAID {engagement.RemainingFactors}/{engagement.InitialFactors}",
+                _cardStatStyle);
+        }
+
+        private void DrawGunCombatRibbon()
+        {
+            var engagement = _game.State.PendingGunCombat;
+            if (_game.State.Phase != ActivationPhase.GunCombat || engagement == null) return;
+            const float width = 500f;
+            const float height = 62f;
+            var left = (Screen.width - width) * 0.5f;
+            const float top = 158f;
+            var oldColor = GUI.color;
+            GUI.color = new Color(0.78f, 0.29f, 0.035f, 0.94f);
+            GUI.Box(new Rect(left, top, width, height), GUIContent.none);
+            GUI.color = oldColor;
+            GUI.Label(new Rect(left + 8f, top + 5f, width - 16f, 25f),
+                $"CLOSE ACTION  ·  GUNFIRE ROUND {engagement.Round}", _activationStyle);
+            GUI.Label(new Rect(left + 8f, top + 32f, width - 16f, 21f),
+                $"{engagement.AttackerFormationId} ↔ {engagement.DefenderFormationId}  ·  {engagement.Phase}",
+                _cardStatStyle);
         }
 
         private void DrawMultiplayerLobby()
@@ -1437,14 +2033,18 @@ namespace Harpoon.Runtime
         private void DrawFormationCards()
         {
             var panelWidth = 384f;
-            GUI.Box(new Rect(Screen.width - panelWidth - 18f, 18f, panelWidth, 650f), GUIContent.none);
-            GUILayout.BeginArea(new Rect(Screen.width - panelWidth - 2f, 30f, panelWidth - 32f, 626f));
+            var availableHeight = Mathf.Max(300f, Screen.height - 36f);
+            var panelHeight = _sessionMode == SessionMode.SinglePlayer
+                ? availableHeight : Mathf.Min(644f, availableHeight);
+            GUI.Box(new Rect(Screen.width - panelWidth - 18f, 18f, panelWidth, panelHeight), GUIContent.none);
+            GUILayout.BeginArea(new Rect(Screen.width - panelWidth - 8f, 28f, panelWidth - 20f, panelHeight - 20f));
             GUILayout.Label("FORMATION CARDS", _titleStyle);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("US NAVY", _buttonStyle)) SelectFormation(Side.UsNavy);
             if (GUILayout.Button("PLAN", _buttonStyle)) SelectFormation(Side.Plan);
             GUILayout.EndHorizontal();
             GUILayout.Space(8);
+            _formationPanelScroll = GUILayout.BeginScrollView(_formationPanelScroll, false, true);
 
             var sideForces = _game.State.Forces.Where(candidate => candidate.Side == _selectedFormation &&
                 (!_game.State.DetectionRulesEnabled || candidate.Side == LocalSide ||
@@ -1453,8 +2053,8 @@ namespace Harpoon.Runtime
             {
                 GUILayout.Label("NO DETECTED CONTACTS", _cardHeaderStyle);
                 GUILayout.Label("Radiate SSR in the same hex, use ESM against an adjacent radiating enemy, or conduct a daytime visual search in its hex.", _cardStatStyle);
-                GUILayout.FlexibleSpace();
                 GUILayout.Label("Enemy formation cards remain hidden until classified.", _labelStyle);
+                GUILayout.EndScrollView();
                 GUILayout.EndArea();
                 return;
             }
@@ -1495,27 +2095,59 @@ namespace Harpoon.Runtime
             _cardHeaderStyle.normal.textColor = previousHeaderColor;
 
             foreach (var unit in force.Units) DrawUnitCard(unit, sideColor);
-            GUILayout.FlexibleSpace();
             GUILayout.Label("Click either 3D formation or use the tabs above.", _labelStyle);
+            GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
 
         private void DrawUnitCard(UnitState unit, Color sideColor)
         {
+            var previousBackground = GUI.backgroundColor;
+            GUI.backgroundColor = unit.IsSunk ? new Color(0.32f, 0.12f, 0.1f)
+                : unit.HasTwoThirdsDamage ? new Color(0.48f, 0.16f, 0.08f)
+                : unit.HasHalfDamage ? new Color(0.5f, 0.34f, 0.08f) : previousBackground;
             GUILayout.BeginVertical(GUI.skin.box);
+            GUI.backgroundColor = previousBackground;
             var oldColor = _cardHeaderStyle.normal.textColor;
             _cardHeaderStyle.normal.textColor = unit.IsSunk ? Color.gray : sideColor;
             GUILayout.Label(unit.Definition.DisplayName.ToUpperInvariant(), _cardHeaderStyle);
             _cardHeaderStyle.normal.textColor = oldColor;
-            GUILayout.Label($"{unit.Definition.Role} · {(unit.IsSunk ? "SUNK" : unit.WeaponsDisabled ? "MISSION KILL" : "OPERATIONAL")}", _cardStatStyle);
+            GUILayout.Label($"{unit.Definition.Role} · {DamageStateLabel(unit)}", _cardStatStyle);
             GUILayout.Space(3);
             GUILayout.Label($"HULL   {HullBoxes(unit)}   {unit.HullRemaining}/{unit.Definition.Hull}", _cardStatStyle);
-            GUILayout.Label($"ASR {unit.Definition.AirSearchRadar}    SSR {unit.Definition.SurfaceSearchRadar}    SON {unit.Definition.Sonar}    ASW {unit.Definition.AntiSubmarineWarfare}", _cardStatStyle);
-            GUILayout.Label($"SAM {unit.Definition.ShortSam}-{unit.Definition.LongSam}    PD {unit.Definition.PointDefense}    GUNS {unit.Definition.Guns}", _cardStatStyle);
-            GUILayout.Label($"SSM {unit.Definition.ShortSsm}-{unit.Definition.LongSsm}    SPEED {unit.EffectiveSpeed}/{unit.Definition.Speed}", _cardStatStyle);
-            GUILayout.Label($"MISSILES REMAINING   SR {unit.ShortMissilesRemaining} · LR {unit.LongMissilesRemaining}", _cardStatStyle);
+            GUILayout.Label($"THRESHOLDS   HALF {unit.HalfDamageThreshold} HIT{(unit.HalfDamageThreshold == 1 ? "" : "S")} · TWO-THIRDS {unit.TwoThirdsDamageThreshold}", _cardStatStyle);
+            GUILayout.Label($"ASR {EffectiveStat(unit.EffectiveAirSearchRadar, unit.Definition.AirSearchRadar)}    " +
+                $"SSR {EffectiveStat(unit.EffectiveSurfaceSearchRadar, unit.Definition.SurfaceSearchRadar)}    " +
+                $"SON {EffectiveStat(unit.EffectiveSonar, unit.Definition.Sonar)}    " +
+                $"ASW {EffectiveStat(unit.EffectiveAntiSubmarineWarfare, unit.Definition.AntiSubmarineWarfare)}", _cardStatStyle);
+            GUILayout.Label($"SAM {EffectiveStat(unit.EffectiveShortSam, unit.Definition.ShortSam)}-" +
+                $"{EffectiveStat(unit.EffectiveLongSam, unit.Definition.LongSam)}    " +
+                $"PD {EffectiveStat(unit.EffectivePointDefense, unit.Definition.PointDefense)}    " +
+                $"GUNS {EffectiveStat(unit.EffectiveGuns, unit.Definition.Guns)}", _cardStatStyle);
+            GUILayout.Label($"SSM {unit.AvailableShortSsm}-{unit.AvailableLongSsm} AVAILABLE    " +
+                $"SPEED {EffectiveStat(unit.EffectiveSpeed, unit.Definition.Speed)}", _cardStatStyle);
+            GUILayout.Label($"MISSILE BOXES   SR {unit.ShortMissilesRemaining} · LR {unit.LongMissilesRemaining}", _cardStatStyle);
+            if (unit.Definition.Torpedoes > 0)
+                GUILayout.Label($"TORPEDOES   {EffectiveStat(unit.EffectiveTorpedoes, unit.Definition.Torpedoes)}", _cardStatStyle);
+            if (unit.Definition.IsAircraftCarrier)
+                GUILayout.Label("AIRCRAFT LAUNCH   " + (unit.CanLaunchAircraft ? "READY" : "PROHIBITED BY DAMAGE"),
+                    _cardStatStyle);
             GUILayout.EndVertical();
             GUILayout.Space(6);
+        }
+
+        private static string EffectiveStat(int effective, int printed) =>
+            effective == printed ? printed.ToString() : printed + "→" + effective;
+
+        private static string DamageStateLabel(UnitState unit)
+        {
+            switch (unit.DamageLevel)
+            {
+                case ShipDamageLevel.HalfDamage: return "HALF DAMAGE · DEGRADED";
+                case ShipDamageLevel.TwoThirdsDamage: return "TWO-THIRDS DAMAGE · MISSION KILL";
+                case ShipDamageLevel.Sunk: return "SUNK · ALL CAPABILITIES LOST";
+                default: return "OPERATIONAL";
+            }
         }
 
         private static string HullBoxes(UnitState unit)
@@ -1538,7 +2170,7 @@ namespace Harpoon.Runtime
             }
             GUILayout.Label($"{force.Id} · HEX {force.Position}{activity}", _labelStyle);
             foreach (var unit in force.Units)
-                GUILayout.Label($"  {unit.Definition.DisplayName}: {unit.HullRemaining}/{unit.Definition.Hull} hull", _labelStyle);
+                GUILayout.Label($"  {unit.Definition.DisplayName}: {unit.HullRemaining}/{unit.Definition.Hull} hull · {DamageStateLabel(unit)}", _labelStyle);
         }
 
         private static string ShortFormationName(string formationId)

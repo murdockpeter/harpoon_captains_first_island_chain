@@ -23,6 +23,8 @@ namespace Harpoon.Core
         Attack,
         Defend,
         Counterattack,
+        ArrangeGunfire,
+        FireGuns,
         BreakOff,
         EndActivation,
         Concede
@@ -53,6 +55,14 @@ namespace Harpoon.Core
         SensorUnavailable,
         TargetUndetected,
         NoDetectionOpportunity,
+        NoPendingCombat,
+        InvalidAllocation,
+        InsufficientAmmunition,
+        InvalidDefense,
+        InvalidGunPairing,
+        InvalidGunTarget,
+        BreakOffUnavailable,
+        CounterattackUnavailable,
         NoLegalWeapon,
         AlreadyActed,
         InvalidPayload,
@@ -83,6 +93,44 @@ namespace Harpoon.Core
     }
 
     [Serializable]
+    public sealed class MissileAllocationData
+    {
+        public string id;
+        public string sourceUnitId;
+        public string targetUnitId;
+        public int shortFactors;
+        public int longFactors;
+    }
+
+    [Serializable]
+    public sealed class DefensePairData
+    {
+        public string firstUnitId;
+        public string secondUnitId;
+    }
+
+    [Serializable]
+    public sealed class MissileReductionData
+    {
+        public string salvoId;
+        public int factors;
+    }
+
+    [Serializable]
+    public sealed class ShortRangeDefenseData
+    {
+        public string defendingUnitId;
+        public string salvoId;
+    }
+
+    [Serializable]
+    public sealed class GunPairData
+    {
+        public string firingUnitId;
+        public string screenedUnitId;
+    }
+
+    [Serializable]
     public sealed class GameCommandData
     {
         public string id;
@@ -94,11 +142,17 @@ namespace Harpoon.Core
         public int declaredSpeed;
         public int factors;
         public string targetId;
+        public string sourceUnitId;
         public bool enabled;
         public string formationId;
         public string newFormationId;
         public string[] unitIds;
         public string searchMode;
+        public MissileAllocationData[] missileAllocations;
+        public DefensePairData[] defensePairs;
+        public MissileReductionData[] missileReductions;
+        public ShortRangeDefenseData[] shortRangeDefenses;
+        public GunPairData[] gunPairs;
     }
 
     public sealed class GameCommand
@@ -111,17 +165,27 @@ namespace Harpoon.Core
         public int DeclaredSpeed { get; }
         public int Factors { get; }
         public string TargetId { get; }
+        public string SourceUnitId { get; }
         public bool Enabled { get; }
         public string FormationId { get; }
         public string NewFormationId { get; }
         public IReadOnlyList<string> UnitIds { get; }
         public string SearchMode { get; }
+        public IReadOnlyList<MissileAllocationData> MissileAllocations { get; }
+        public IReadOnlyList<DefensePairData> DefensePairs { get; }
+        public IReadOnlyList<MissileReductionData> MissileReductions { get; }
+        public IReadOnlyList<ShortRangeDefenseData> ShortRangeDefenses { get; }
+        public IReadOnlyList<GunPairData> GunPairs { get; }
 
         public GameCommand(GameCommandType type, Side actor, int expectedRevision,
             HexCoord destination = default, int declaredSpeed = 0, int factors = 0,
             string targetId = null, bool enabled = false, string id = null,
             string formationId = null, string newFormationId = null, IEnumerable<string> unitIds = null,
-            string searchMode = null)
+            string searchMode = null, IEnumerable<MissileAllocationData> missileAllocations = null,
+            IEnumerable<DefensePairData> defensePairs = null,
+            IEnumerable<MissileReductionData> missileReductions = null,
+            IEnumerable<ShortRangeDefenseData> shortRangeDefenses = null,
+            string sourceUnitId = null, IEnumerable<GunPairData> gunPairs = null)
         {
             Id = string.IsNullOrWhiteSpace(id) ? Guid.NewGuid().ToString("N") : id;
             Type = type;
@@ -131,11 +195,17 @@ namespace Harpoon.Core
             DeclaredSpeed = declaredSpeed;
             Factors = factors;
             TargetId = targetId ?? string.Empty;
+            SourceUnitId = sourceUnitId ?? string.Empty;
             Enabled = enabled;
             FormationId = formationId ?? string.Empty;
             NewFormationId = newFormationId ?? string.Empty;
             UnitIds = (unitIds ?? Array.Empty<string>()).ToArray();
             SearchMode = searchMode ?? string.Empty;
+            MissileAllocations = (missileAllocations ?? Array.Empty<MissileAllocationData>()).ToArray();
+            DefensePairs = (defensePairs ?? Array.Empty<DefensePairData>()).ToArray();
+            MissileReductions = (missileReductions ?? Array.Empty<MissileReductionData>()).ToArray();
+            ShortRangeDefenses = (shortRangeDefenses ?? Array.Empty<ShortRangeDefenseData>()).ToArray();
+            GunPairs = (gunPairs ?? Array.Empty<GunPairData>()).ToArray();
         }
 
         public GameCommandData ToData() => new GameCommandData
@@ -149,11 +219,17 @@ namespace Harpoon.Core
             declaredSpeed = DeclaredSpeed,
             factors = Factors,
             targetId = TargetId,
+            sourceUnitId = SourceUnitId,
             enabled = Enabled,
             formationId = FormationId,
             newFormationId = NewFormationId,
             unitIds = UnitIds.ToArray(),
-            searchMode = SearchMode
+            searchMode = SearchMode,
+            missileAllocations = MissileAllocations.ToArray(),
+            defensePairs = DefensePairs.ToArray(),
+            missileReductions = MissileReductions.ToArray(),
+            shortRangeDefenses = ShortRangeDefenses.ToArray()
+            ,gunPairs = GunPairs.ToArray()
         };
 
         public static GameCommand FromData(GameCommandData data)
@@ -162,7 +238,9 @@ namespace Harpoon.Core
             return new GameCommand(data.type, data.actor, data.expectedRevision,
                 new HexCoord(data.column, data.row), data.declaredSpeed, data.factors,
                 data.targetId, data.enabled, data.id, data.formationId,
-                data.newFormationId, data.unitIds, data.searchMode);
+                data.newFormationId, data.unitIds, data.searchMode, data.missileAllocations,
+                data.defensePairs, data.missileReductions, data.shortRangeDefenses,
+                data.sourceUnitId, data.gunPairs);
         }
     }
 
@@ -237,6 +315,10 @@ namespace Harpoon.Core
         public string Id { get; }
         public string Name { get; }
         public int HullRemaining { get; }
+        public int HullDamage { get; }
+        public ShipDamageLevel DamageLevel { get; }
+        public int EffectiveSpeed { get; }
+        public bool IsSunk { get; }
         public int ShortMissiles { get; }
         public int LongMissiles { get; }
 
@@ -245,6 +327,10 @@ namespace Harpoon.Core
             Id = unit.Definition.Id;
             Name = unit.Definition.DisplayName;
             HullRemaining = unit.HullRemaining;
+            HullDamage = unit.HullDamage;
+            DamageLevel = unit.DamageLevel;
+            EffectiveSpeed = unit.EffectiveSpeed;
+            IsSunk = unit.IsSunk;
             ShortMissiles = unit.ShortMissilesRemaining;
             LongMissiles = unit.LongMissilesRemaining;
         }

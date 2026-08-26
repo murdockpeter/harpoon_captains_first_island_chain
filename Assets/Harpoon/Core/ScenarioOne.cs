@@ -56,6 +56,7 @@ namespace Harpoon.Core
         public string[] unitIds;
         public bool radarRadiating;
         public bool radarDeclared;
+        public DefensePairData[] defensePairs;
     }
 
     [Serializable]
@@ -92,6 +93,8 @@ namespace Harpoon.Core
         public MovementChitData[] drawnChits;
         public FormationSnapshot[] formations;
         public ContactSnapshotData[] contacts;
+        public MissileEngagementData missileCombat;
+        public GunEngagementData gunCombat;
     }
 
     public static class ScenarioOne
@@ -100,14 +103,14 @@ namespace Harpoon.Core
 
         public static GameState Create(bool detectionRulesEnabled = false)
         {
-            var burke = new UnitDefinition("us-burke-iia", "Arleigh Burke Flight IIA", Side.UsNavy,
-                UnitRole.Escort, 3, 8, 4, 2, 1, 2, 3, 2, 2, 1, 4, 5);
-            var merchant = new UnitDefinition("us-merchant", "Merchant Ship", Side.UsNavy,
-                UnitRole.Objective, 0, 0, 0, 0, 0, 0, 2, 4, 0, 1, 0, 0, esmEquipped: false);
-            var type054A = new UnitDefinition("plan-type-054a", "Type 054A Frigate", Side.Plan,
-                UnitRole.Escort, 3, 0, 3, 2, 0, 1, 2, 1, 1, 1, 3, 3);
-            var type071 = new UnitDefinition("plan-type-071", "Type 071 LPD", Side.Plan,
-                UnitRole.Objective, 0, 0, 2, 0, 0, 1, 2, 3, 1, 1, 0, 1);
+            var burke = ModernPlatformDatabase.Get("us-burke-iia")
+                .CreateUnit(Side.UsNavy, UnitRole.Escort);
+            var merchant = ModernPlatformDatabase.Get("generic-merchant")
+                .CreateUnit(Side.UsNavy, UnitRole.Objective, "us-merchant", esmEquippedOverride: false);
+            var type054A = ModernPlatformDatabase.Get("plan-type-054a")
+                .CreateUnit(Side.Plan, UnitRole.Escort);
+            var type071 = ModernPlatformDatabase.Get("plan-type-071")
+                .CreateUnit(Side.Plan, UnitRole.Objective);
 
             var us = new TaskForceState("US Task Force", Side.UsNavy, new HexCoord(7, 13),
                 new[] { new UnitState(burke), new UnitState(merchant) });
@@ -129,6 +132,8 @@ namespace Harpoon.Core
         private readonly IDieRoller _dice;
         private readonly CombatResolver _combat;
         private readonly DetectionResolver _detection;
+        private readonly MissileCombatResolver _missileCombat;
+        private readonly GunCombatResolver _gunCombat;
         private readonly Func<HexCoord, bool> _isNavigable;
         private readonly bool _manualOpponent;
         private bool _isActivatingEnemy;
@@ -152,6 +157,8 @@ namespace Harpoon.Core
             State.MovementCup = new MovementChitCup(random as IRandomSource ?? new SeededDieRoller(seed));
             _combat = new CombatResolver(_dice, Trace);
             _detection = new DetectionResolver(_dice, Trace);
+            _missileCombat = new MissileCombatResolver(_dice, Trace);
+            _gunCombat = new GunCombatResolver(_dice, Trace);
             BeginTurn();
         }
 
@@ -195,6 +202,24 @@ namespace Harpoon.Core
                     case GameCommandType.Attack:
                         attackReport = AttackInternal(command.Actor, out violation);
                         accepted = violation == null;
+                        break;
+                    case GameCommandType.AllocateMissileFire:
+                        accepted = AllocateMissileFireInternal(command, out violation);
+                        break;
+                    case GameCommandType.Defend:
+                        accepted = DefendMissileAttackInternal(command, out violation, out attackReport);
+                        break;
+                    case GameCommandType.Counterattack:
+                        accepted = CounterattackInternal(command, out violation);
+                        break;
+                    case GameCommandType.ArrangeGunfire:
+                        accepted = ArrangeGunfireInternal(command, out violation);
+                        break;
+                    case GameCommandType.FireGuns:
+                        accepted = FireGunsInternal(command, out violation, out attackReport);
+                        break;
+                    case GameCommandType.BreakOff:
+                        accepted = BreakOffInternal(command, out violation);
                         break;
                     case GameCommandType.Search:
                         accepted = SearchInternal(command, out violation);
@@ -605,17 +630,599 @@ namespace Harpoon.Core
                 Trace("REJECTED", $"{attacker.Id} attack on undetected {defender.Id}: {violation.Message}");
                 return null;
             }
-            var report = _combat.Attack(attacker, defender);
-            State.PlayerHasAttacked = report.Fired;
-            AddLog(report.Summary);
-            if (!report.Fired)
+            var range = attacker.Position.DistanceTo(defender.Position);
+            if (!CanFireMissiles(attacker, range))
             {
-                violation = new RuleViolation(RuleViolationCode.NoLegalWeapon, report.Summary);
+                if (range == 0)
+                {
+                    if (!attacker.ActiveUnits.Any(unit => unit.EffectiveGuns > 0) &&
+                        !defender.ActiveUnits.Any(unit => unit.EffectiveGuns > 0))
+                    {
+                        violation = new RuleViolation(RuleViolationCode.NoLegalWeapon,
+                            "Neither force has an operational gun battery.");
+                        return null;
+                    }
+                    State.PlayerHasAttacked = true;
+                    BeginGunCombat(attacker, defender, side, State.ActiveFormationId, State.Phase);
+                    return null;
+                }
+                violation = new RuleViolation(RuleViolationCode.NoLegalWeapon,
+                    "No unexpended surface-to-surface missile factor is in range.");
+                Trace("REJECTED", violation.Message);
+                return null;
+            }
+            var returnPhase = State.Phase;
+            State.PendingMissileCombat = new MissileEngagement(attacker.Id, defender.Id,
+                side, State.ActiveFormationId, returnPhase) { DecisionSide = side };
+            State.Phase = ActivationPhase.MissileCombat;
+            Trace("COMBAT", $"{attacker.Id} opened a missile attack on {defender.Id} at range {range}; " +
+                "awaiting explicit fire allocation.");
+            AddLog($"{attacker.Id} is allocating SSM fire against {defender.Id}.");
+            return null;
+        }
+
+        private bool AllocateMissileFireInternal(GameCommand command, out RuleViolation violation)
+        {
+            violation = null;
+            var engagement = State.PendingMissileCombat;
+            if (!ValidateMissileDecision(command, MissileCombatPhase.AllocateFire, out violation)) return false;
+            var attacker = State.Formation(engagement.AttackerFormationId);
+            var defender = State.Formation(engagement.DefenderFormationId);
+            var range = attacker.Position.DistanceTo(defender.Position);
+            var allocations = command.MissileAllocations ?? Array.Empty<MissileAllocationData>();
+            if (allocations.Count == 0)
+                return RejectMissile(RuleViolationCode.InvalidAllocation,
+                    "Allocate at least one missile factor.", "missileAllocations", out violation);
+
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            var sourceTotals = new Dictionary<string, int[]>(StringComparer.Ordinal);
+            foreach (var allocation in allocations)
+            {
+                var source = attacker.Units.FirstOrDefault(unit => unit.Definition.Id == allocation.sourceUnitId && !unit.IsSunk);
+                var target = defender.Units.FirstOrDefault(unit => unit.Definition.Id == allocation.targetUnitId && !unit.IsSunk);
+                if (source == null || target == null || string.IsNullOrWhiteSpace(allocation.id) ||
+                    !ids.Add(allocation.id) || allocation.shortFactors < 0 || allocation.longFactors < 0 ||
+                    allocation.shortFactors + allocation.longFactors <= 0 ||
+                    (allocation.shortFactors > 0 && range > 1) || (allocation.longFactors > 0 && range > 3))
+                    return RejectMissile(RuleViolationCode.InvalidAllocation,
+                        "Every salvo needs a unique ID, a legal source and target, positive in-range factors, and no negative values.",
+                        "missileAllocations", out violation);
+                if (!sourceTotals.TryGetValue(source.Definition.Id, out var totals))
+                    sourceTotals[source.Definition.Id] = totals = new int[2];
+                totals[0] += allocation.shortFactors;
+                totals[1] += allocation.longFactors;
+            }
+            foreach (var item in sourceTotals)
+            {
+                var source = attacker.Units.First(unit => unit.Definition.Id == item.Key);
+                if (item.Value[0] > source.AvailableShortSsm || item.Value[1] > source.AvailableLongSsm)
+                    return RejectMissile(RuleViolationCode.InsufficientAmmunition,
+                        $"{source.Definition.DisplayName} cannot fire SR {item.Value[0]} / LR {item.Value[1]}; " +
+                        $"available SR {source.AvailableShortSsm} / LR {source.AvailableLongSsm}.",
+                        "missileAllocations", out violation);
+            }
+
+            foreach (var item in sourceTotals)
+            {
+                var source = attacker.Units.First(unit => unit.Definition.Id == item.Key);
+                var shortBefore = source.ShortMissilesRemaining;
+                var longBefore = source.LongMissilesRemaining;
+                source.TryCommitMissiles(item.Value[0], item.Value[1]);
+                Trace("AMMUNITION", $"{source.Definition.DisplayName}: committed SR {item.Value[0]}, LR {item.Value[1]}; " +
+                    $"SR {shortBefore}->{source.ShortMissilesRemaining}, LR {longBefore}->{source.LongMissilesRemaining}.");
+            }
+            engagement.SetSalvos(allocations.Select(item => new MissileSalvo(item.id,
+                item.sourceUnitId, item.targetUnitId, item.shortFactors, item.longFactors)));
+            State.PlayerHasAttacked = true;
+            engagement.Phase = MissileCombatPhase.DefensiveDeployment;
+            engagement.DecisionSide = defender.Side;
+            State.ActiveSide = defender.Side;
+            Trace("COMBAT", $"{attacker.Id} launched {engagement.InitialFactors} factor(s) in " +
+                $"{engagement.Salvos.Count} allocated salvo(s); {defender.Id} must deploy its defensive pairs.");
+            return true;
+        }
+
+        private bool DefendMissileAttackInternal(GameCommand command, out RuleViolation violation,
+            out AttackReport report)
+        {
+            report = null;
+            violation = null;
+            var engagement = State.PendingMissileCombat;
+            if (engagement == null || State.Phase != ActivationPhase.MissileCombat ||
+                engagement.DecisionSide != command.Actor)
+                return RejectMissile(RuleViolationCode.NoPendingCombat,
+                    "No missile-defense decision is waiting for this side.", "actor", out violation);
+            switch (engagement.Phase)
+            {
+                case MissileCombatPhase.DefensiveDeployment:
+                    return DeployMissileDefense(command, engagement, out violation);
+                case MissileCombatPhase.LongRangeRemoval:
+                    return ApplyLongRangeRemovals(command, engagement, out violation);
+                case MissileCombatPhase.ShortRangeDefense:
+                    return ApplyShortRangeDefense(command, engagement, out violation, out report);
+                default:
+                    return RejectMissile(RuleViolationCode.WrongPhase,
+                        "The pending missile raid is not waiting for a defense command.", "phase", out violation);
+            }
+        }
+
+        private bool DeployMissileDefense(GameCommand command, MissileEngagement engagement,
+            out RuleViolation violation)
+        {
+            violation = null;
+            var defender = State.Formation(engagement.DefenderFormationId);
+            var activeIds = new HashSet<string>(defender.ActiveUnits.Select(unit => unit.Definition.Id));
+            var used = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var pair in command.DefensePairs ?? Array.Empty<DefensePairData>())
+                if (pair == null || pair.firstUnitId == pair.secondUnitId ||
+                    !activeIds.Contains(pair.firstUnitId) || !activeIds.Contains(pair.secondUnitId) ||
+                    !used.Add(pair.firstUnitId) || !used.Add(pair.secondUnitId))
+                    return RejectMissile(RuleViolationCode.InvalidDefense,
+                        "Defensive pairs must contain two different operational ships, each used at most once.",
+                        "defensePairs", out violation);
+            engagement.SetDefensePairs(command.DefensePairs);
+            defender.SetDefensePairs(command.DefensePairs);
+            var longRangeDice = defender.ActiveUnits.Sum(unit => unit.EffectiveLongSam);
+            engagement.LongRangeHits = Math.Min(engagement.RemainingFactors,
+                _missileCombat.RollDefense("Formation LR SAM", longRangeDice, CombatTableColumn.Sam));
+            Trace("DEFENSE", $"{defender.Id} deployed {engagement.DefensePairs.Count} pair(s); " +
+                $"LR SAM dice={longRangeDice}, removals available={engagement.LongRangeHits}.");
+            engagement.Phase = engagement.LongRangeHits > 0
+                ? MissileCombatPhase.LongRangeRemoval : MissileCombatPhase.ShortRangeDefense;
+            return true;
+        }
+
+        private bool ApplyLongRangeRemovals(GameCommand command, MissileEngagement engagement,
+            out RuleViolation violation)
+        {
+            violation = null;
+            var reductions = command.MissileReductions ?? Array.Empty<MissileReductionData>();
+            var grouped = reductions.GroupBy(item => item.salvoId)
+                .ToDictionary(group => group.Key, group => group.Sum(item => item.factors), StringComparer.Ordinal);
+            if (grouped.Values.Any(value => value < 0) || grouped.Values.Sum() != engagement.LongRangeHits)
+                return RejectMissile(RuleViolationCode.InvalidDefense,
+                    $"Assign exactly {engagement.LongRangeHits} long-range SAM removal(s).",
+                    "missileReductions", out violation);
+            foreach (var item in grouped)
+            {
+                var salvo = engagement.Salvos.FirstOrDefault(candidate => candidate.Id == item.Key);
+                if (salvo == null || item.Value > salvo.RemainingFactors)
+                    return RejectMissile(RuleViolationCode.InvalidDefense,
+                        "Long-range SAM removals cannot exceed an existing salvo's remaining factors.",
+                        "missileReductions", out violation);
+            }
+            foreach (var item in grouped)
+            {
+                engagement.Salvos.First(salvo => salvo.Id == item.Key).Remove(item.Value);
+                Trace("DEFENSE", $"LR SAM removed {item.Value} factor(s) from salvo {item.Key}.");
+            }
+            engagement.LongRangeHits = 0;
+            engagement.Phase = MissileCombatPhase.ShortRangeDefense;
+            return true;
+        }
+
+        private bool ApplyShortRangeDefense(GameCommand command, MissileEngagement engagement,
+            out RuleViolation violation, out AttackReport report)
+        {
+            violation = null;
+            report = null;
+            var defender = State.Formation(engagement.DefenderFormationId);
+            var usedDefenders = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var assignment in command.ShortRangeDefenses ?? Array.Empty<ShortRangeDefenseData>())
+            {
+                var ship = defender.ActiveUnits.FirstOrDefault(unit => unit.Definition.Id == assignment.defendingUnitId);
+                var salvo = engagement.Salvos.FirstOrDefault(item => item.Id == assignment.salvoId && item.RemainingFactors > 0);
+                var pairMate = engagement.PairMate(assignment.defendingUnitId);
+                if (ship == null || ship.EffectiveShortSam <= 0 || salvo == null ||
+                    (salvo.TargetUnitId != ship.Definition.Id && salvo.TargetUnitId != pairMate) ||
+                    !usedDefenders.Add(ship.Definition.Id))
+                    return RejectMissile(RuleViolationCode.InvalidDefense,
+                        "Each operational short-range SAM battery may engage one salvo attacking itself or its pair-mate.",
+                        "shortRangeDefenses", out violation);
+            }
+            foreach (var assignment in command.ShortRangeDefenses ?? Array.Empty<ShortRangeDefenseData>())
+            {
+                var ship = defender.Units.First(unit => unit.Definition.Id == assignment.defendingUnitId);
+                var salvo = engagement.Salvos.First(item => item.Id == assignment.salvoId);
+                var hits = _missileCombat.RollDefense($"SR SAM {ship.Definition.DisplayName}",
+                    ship.EffectiveShortSam, CombatTableColumn.Sam);
+                var removed = salvo.Remove(hits);
+                Trace("DEFENSE", $"{ship.Definition.DisplayName} SR SAM engaged salvo {salvo.Id}; " +
+                    $"removed={removed}, salvo remaining={salvo.RemainingFactors}.");
+            }
+            report = ResolveMissileRaid(engagement);
+            return true;
+        }
+
+        private AttackReport ResolveMissileRaid(MissileEngagement engagement)
+        {
+            var attacker = State.Formation(engagement.AttackerFormationId);
+            var defender = State.Formation(engagement.DefenderFormationId);
+            var report = _missileCombat.ResolvePointDefenseAndImpacts(engagement, defender);
+            AddLog(report.Summary);
+            Trace("COMBAT", $"{attacker.Id} raid resolved against {defender.Id}: {report.Summary}");
+            AttackResolved?.Invoke(attacker.Side, report);
+            PruneDestroyedMovementChits();
+            CheckGameOver();
+            if (State.IsGameOver)
+            {
+                State.PendingMissileCombat = null;
                 return report;
             }
-            if (report.Fired) AttackResolved?.Invoke(side, report);
-            CheckGameOver();
+            if (!engagement.IsCounterattack && CanCounterattack(defender, attacker))
+            {
+                engagement.Phase = MissileCombatPhase.CounterattackDecision;
+                engagement.DecisionSide = defender.Side;
+                State.ActiveSide = defender.Side;
+                Trace("COMBAT", $"{defender.Id} may counterattack {attacker.Id} before movement resumes.");
+            }
+            else FinishMissileCombat(engagement);
             return report;
+        }
+
+        private bool CounterattackInternal(GameCommand command, out RuleViolation violation)
+        {
+            violation = null;
+            var engagement = State.PendingMissileCombat;
+            if (engagement == null || engagement.Phase != MissileCombatPhase.CounterattackDecision ||
+                engagement.DecisionSide != command.Actor)
+                return RejectMissile(RuleViolationCode.CounterattackUnavailable,
+                    "No counterattack decision is waiting for this side.", "actor", out violation);
+            var counterattacker = State.Formation(engagement.DefenderFormationId);
+            var target = State.Formation(engagement.AttackerFormationId);
+            if (!command.Enabled)
+            {
+                Trace("COMBAT", $"{counterattacker.Id} declined its counterattack.");
+                FinishMissileCombat(engagement);
+                return true;
+            }
+            if (!CanCounterattack(counterattacker, target))
+                return RejectMissile(RuleViolationCode.CounterattackUnavailable,
+                    "The non-moving force has no legal detected missile target or in-range ammunition.",
+                    "enabled", out violation);
+            State.PendingMissileCombat = new MissileEngagement(counterattacker.Id, target.Id,
+                engagement.MovementOwnerSide, engagement.MovementOwnerFormationId,
+                engagement.ReturnPhase, true) { DecisionSide = counterattacker.Side };
+            State.ActiveSide = counterattacker.Side;
+            Trace("COMBAT", $"{counterattacker.Id} elected to counterattack {target.Id}; awaiting fire allocation.");
+            return true;
+        }
+
+        private bool ValidateMissileDecision(GameCommand command, MissileCombatPhase expected,
+            out RuleViolation violation)
+        {
+            violation = null;
+            var engagement = State.PendingMissileCombat;
+            if (engagement == null || State.Phase != ActivationPhase.MissileCombat)
+                return RejectMissile(RuleViolationCode.NoPendingCombat,
+                    "No missile engagement is pending.", "phase", out violation);
+            if (engagement.DecisionSide != command.Actor)
+                return RejectMissile(RuleViolationCode.WrongSide,
+                    $"The missile decision belongs to {engagement.DecisionSide}.", "actor", out violation);
+            if (engagement.Phase != expected)
+                return RejectMissile(RuleViolationCode.WrongPhase,
+                    $"The missile engagement is waiting for {engagement.Phase}.", "phase", out violation);
+            return true;
+        }
+
+        private bool RejectMissile(RuleViolationCode code, string message, string field,
+            out RuleViolation violation)
+        {
+            violation = new RuleViolation(code, message, field);
+            Trace("REJECTED", message);
+            return false;
+        }
+
+        private bool CanCounterattack(TaskForceState attacker, TaskForceState target)
+        {
+            var range = attacker.Position.DistanceTo(target.Position);
+            return CanFireMissiles(attacker, range) && (!State.DetectionRulesEnabled ||
+                State.Detection.IsDetected(attacker.Side, target.Id));
+        }
+
+        private static bool CanFireMissiles(TaskForceState force, int range) => force.ActiveUnits.Any(unit =>
+            (range <= 1 && unit.AvailableShortSsm > 0) || (range <= 3 && unit.AvailableLongSsm > 0));
+
+        private void FinishMissileCombat(MissileEngagement engagement)
+        {
+            State.PendingMissileCombat = null;
+            var movingForce = State.Formation(engagement.MovementOwnerFormationId);
+            var opponent = State.Forces.FirstOrDefault(force => force.Side != engagement.MovementOwnerSide &&
+                movingForce != null && force.Position.Equals(movingForce.Position) && !force.IsDestroyed);
+            if (movingForce != null && opponent != null &&
+                (movingForce.ActiveUnits.Any(unit => unit.EffectiveGuns > 0) ||
+                 opponent.ActiveUnits.Any(unit => unit.EffectiveGuns > 0)))
+            {
+                BeginGunCombat(movingForce, opponent, engagement.MovementOwnerSide,
+                    engagement.MovementOwnerFormationId, engagement.ReturnPhase);
+                return;
+            }
+            State.ActiveSide = engagement.MovementOwnerSide;
+            State.ActiveFormationId = engagement.MovementOwnerFormationId;
+            State.Phase = engagement.ReturnPhase;
+            Trace("COMBAT", $"Missile exchange complete; {State.ActiveFormationId} resumes its activation.");
+        }
+
+        private void BeginGunCombat(TaskForceState attacker, TaskForceState defender,
+            Side movementOwnerSide, string movementOwnerFormationId, ActivationPhase returnPhase)
+        {
+            var engagement = new GunEngagement(attacker.Id, defender.Id, movementOwnerSide,
+                movementOwnerFormationId, returnPhase);
+            State.PendingGunCombat = engagement;
+            State.Phase = ActivationPhase.GunCombat;
+            State.ActiveSide = defender.Side;
+            var attackerSpeed = attacker.EffectiveSpeed;
+            var defenderSpeed = defender.EffectiveSpeed;
+            Trace("GUNFIRE", $"{attacker.Id} entered {defender.Id}'s hex; effective speeds " +
+                $"{attackerSpeed} vs {defenderSpeed}.");
+            if (defenderSpeed > attackerSpeed)
+            {
+                engagement.Phase = GunCombatPhase.EngageDecision;
+                engagement.DecisionSide = defender.Side;
+                AddLog($"{defender.Id} is faster and may evade or accept gunfire.");
+                return;
+            }
+            if (defenderSpeed == attackerSpeed)
+            {
+                var roll = _dice.RollD6();
+                Trace("DIE", $"Equal-speed engagement: D6={roll}; attacker engages on 1-3.");
+                if (!GunCombatRules.InitialEngagementSucceeds(attackerSpeed, defenderSpeed, roll))
+                {
+                    AddLog($"{attacker.Id} failed to maneuver into a gun engagement (rolled {roll}).");
+                    FinishGunCombat("Equal-speed defender evaded the initial engagement.");
+                    return;
+                }
+            }
+            StartGunArrangement(engagement);
+        }
+
+        private void StartGunArrangement(GunEngagement engagement)
+        {
+            var attacker = State.Formation(engagement.AttackerFormationId);
+            engagement.Phase = GunCombatPhase.ArrangeAttacker;
+            engagement.DecisionSide = attacker.Side;
+            State.ActiveSide = attacker.Side;
+            AddLog($"Gunfire round {engagement.Round}: {attacker.Id} must nominate its firing ships and screens.");
+        }
+
+        private bool ArrangeGunfireInternal(GameCommand command, out RuleViolation violation)
+        {
+            violation = null;
+            var engagement = State.PendingGunCombat;
+            if (engagement == null || State.Phase != ActivationPhase.GunCombat ||
+                engagement.DecisionSide != command.Actor ||
+                (engagement.Phase != GunCombatPhase.ArrangeAttacker &&
+                 engagement.Phase != GunCombatPhase.ArrangeDefender))
+                return RejectGun(RuleViolationCode.NoPendingCombat,
+                    "No gunfire arrangement is waiting for this side.", "actor", out violation);
+            var attacker = State.Formation(engagement.AttackerFormationId);
+            var defender = State.Formation(engagement.DefenderFormationId);
+            var force = command.Actor == attacker.Side ? attacker : defender;
+            var active = new HashSet<string>(force.ActiveUnits.Select(unit => unit.Definition.Id), StringComparer.Ordinal);
+            var used = new HashSet<string>(StringComparer.Ordinal);
+            var pairs = command.GunPairs ?? Array.Empty<GunPairData>();
+            foreach (var pair in pairs)
+            {
+                if (pair == null || string.IsNullOrWhiteSpace(pair.firingUnitId) ||
+                    !active.Contains(pair.firingUnitId) || !used.Add(pair.firingUnitId) ||
+                    (!string.IsNullOrWhiteSpace(pair.screenedUnitId) &&
+                     (!active.Contains(pair.screenedUnitId) || !used.Add(pair.screenedUnitId) ||
+                      pair.screenedUnitId == pair.firingUnitId)))
+                    return RejectGun(RuleViolationCode.InvalidGunPairing,
+                        "Each operational ship must appear once; every group needs one nominated firing ship and at most one screened ship.",
+                        "gunPairs", out violation);
+            }
+            if (!used.SetEquals(active))
+                return RejectGun(RuleViolationCode.InvalidGunPairing,
+                    "The firing formation must account for every operational ship exactly once.",
+                    "gunPairs", out violation);
+            if (!MatchesExistingScreen(force.DefensePairs, pairs))
+                return RejectGun(RuleViolationCode.InvalidGunPairing,
+                    "Ships paired during the missile exchange must retain the same formation for gunfire.",
+                    "gunPairs", out violation);
+
+            engagement.SetPairs(command.Actor, pairs, attacker.Side);
+            Trace("GUNFIRE", $"{force.Id} arranged {pairs.Count} firing group(s): " +
+                string.Join(", ", pairs.Select(pair => pair.firingUnitId +
+                    (string.IsNullOrWhiteSpace(pair.screenedUnitId) ? string.Empty : $" screens {pair.screenedUnitId}"))));
+            if (engagement.Phase == GunCombatPhase.ArrangeAttacker)
+            {
+                engagement.Phase = GunCombatPhase.ArrangeDefender;
+                engagement.DecisionSide = defender.Side;
+                State.ActiveSide = defender.Side;
+            }
+            else BeginGunFiring(engagement);
+            return true;
+        }
+
+        private static bool MatchesExistingScreen(IReadOnlyList<DefensePairData> existing,
+            IReadOnlyList<GunPairData> proposed)
+        {
+            if (existing == null || existing.Count == 0) return true;
+            var active = new HashSet<string>(proposed.SelectMany(item => new[]
+                { item.firingUnitId, item.screenedUnitId }).Where(id => !string.IsNullOrWhiteSpace(id)),
+                StringComparer.Ordinal);
+            foreach (var pair in existing)
+            {
+                if (!active.Contains(pair.firstUnitId) || !active.Contains(pair.secondUnitId)) continue;
+                var proposedPair = proposed.FirstOrDefault(item =>
+                    (item.firingUnitId == pair.firstUnitId && item.screenedUnitId == pair.secondUnitId) ||
+                    (item.firingUnitId == pair.secondUnitId && item.screenedUnitId == pair.firstUnitId));
+                if (proposedPair == null) return false;
+            }
+            return true;
+        }
+
+        private void BeginGunFiring(GunEngagement engagement)
+        {
+            var attacker = State.Formation(engagement.AttackerFormationId);
+            var defender = State.Formation(engagement.DefenderFormationId);
+            var shooters = engagement.AttackerPairs.Concat(engagement.DefenderPairs)
+                .Select(pair => attacker.Units.Concat(defender.Units)
+                    .First(unit => unit.Definition.Id == pair.firingUnitId))
+                .Where(unit => !unit.IsSunk && unit.EffectiveGuns > 0).ToList();
+            var order = new List<string>();
+            foreach (var group in shooters.GroupBy(unit => unit.EffectiveGuns).OrderByDescending(group => group.Key))
+            {
+                var tied = group.ToList();
+                while (tied.Count > 0)
+                {
+                    var index = tied.Count == 1 ? 0 : _dice.RollD6() % tied.Count;
+                    if (tied.Count > 1)
+                        Trace("DIE", $"Equal gun factor initiative ({group.Key}): tie roll selected {tied[index].Definition.DisplayName}.");
+                    order.Add(tied[index].Definition.Id);
+                    tied.RemoveAt(index);
+                }
+            }
+            engagement.SetFiringOrder(order);
+            engagement.Phase = GunCombatPhase.Firing;
+            AdvanceGunFiring(engagement);
+        }
+
+        private void AdvanceGunFiring(GunEngagement engagement)
+        {
+            var allUnits = State.Forces.SelectMany(force => force.Units).ToDictionary(unit => unit.Definition.Id);
+            while (engagement.FiringIndex < engagement.FiringOrder.Count &&
+                   (!allUnits.TryGetValue(engagement.FiringOrder[engagement.FiringIndex], out var next) ||
+                    next.IsSunk || next.EffectiveGuns <= 0))
+                engagement.FiringIndex++;
+            if (engagement.FiringIndex >= engagement.FiringOrder.Count)
+            {
+                var attacker = State.Formation(engagement.AttackerFormationId);
+                engagement.Phase = GunCombatPhase.BreakOffAttacker;
+                engagement.DecisionSide = attacker.Side;
+                State.ActiveSide = attacker.Side;
+                Trace("GUNFIRE", $"Gunfire round {engagement.Round} complete; requesting break-off choices.");
+                return;
+            }
+            var shooter = allUnits[engagement.FiringOrder[engagement.FiringIndex]];
+            var owner = State.Forces.First(force => force.Units.Contains(shooter));
+            engagement.DecisionSide = owner.Side;
+            State.ActiveSide = owner.Side;
+        }
+
+        private bool FireGunsInternal(GameCommand command, out RuleViolation violation, out AttackReport report)
+        {
+            violation = null;
+            report = null;
+            var engagement = State.PendingGunCombat;
+            if (engagement == null || engagement.Phase != GunCombatPhase.Firing ||
+                engagement.DecisionSide != command.Actor ||
+                engagement.FiringIndex >= engagement.FiringOrder.Count)
+                return RejectGun(RuleViolationCode.NoPendingCombat,
+                    "No gun attack is waiting for this side.", "actor", out violation);
+            var expectedShooter = engagement.FiringOrder[engagement.FiringIndex];
+            if (command.SourceUnitId != expectedShooter)
+                return RejectGun(RuleViolationCode.InvalidGunTarget,
+                    $"{expectedShooter} has the next shot by gun-factor order.", "sourceUnitId", out violation);
+            var attacker = State.Formation(engagement.AttackerFormationId);
+            var defender = State.Formation(engagement.DefenderFormationId);
+            var shooterForce = command.Actor == attacker.Side ? attacker : defender;
+            var targetForce = command.Actor == attacker.Side ? defender : attacker;
+            var shooter = shooterForce.ActiveUnits.FirstOrDefault(unit => unit.Definition.Id == command.SourceUnitId);
+            var target = targetForce.ActiveUnits.FirstOrDefault(unit => unit.Definition.Id == command.TargetId);
+            if (shooter == null || target == null)
+                return RejectGun(RuleViolationCode.InvalidGunTarget,
+                    "The firing and target ships must both be operational and in the same hex.", "targetId", out violation);
+            report = _gunCombat.Fire(shooter, target, engagement.IsScreened(target.Definition.Id));
+            AddLog(report.Summary);
+            AttackResolved?.Invoke(command.Actor, report);
+            engagement.FiringIndex++;
+            PruneDestroyedMovementChits();
+            CheckGameOver();
+            if (State.IsGameOver) State.PendingGunCombat = null;
+            else AdvanceGunFiring(engagement);
+            return true;
+        }
+
+        private bool BreakOffInternal(GameCommand command, out RuleViolation violation)
+        {
+            violation = null;
+            var engagement = State.PendingGunCombat;
+            if (engagement == null || engagement.DecisionSide != command.Actor)
+                return RejectGun(RuleViolationCode.BreakOffUnavailable,
+                    "No engage/evade or break-off decision is waiting for this side.", "actor", out violation);
+            var attacker = State.Formation(engagement.AttackerFormationId);
+            var defender = State.Formation(engagement.DefenderFormationId);
+            if (engagement.Phase == GunCombatPhase.EngageDecision)
+            {
+                if (command.Actor != defender.Side || defender.EffectiveSpeed <= attacker.EffectiveSpeed)
+                    return RejectGun(RuleViolationCode.BreakOffUnavailable,
+                        "Only a faster defending force may choose to evade the initial engagement.", "enabled", out violation);
+                if (command.Enabled) FinishGunCombat($"{defender.Id} used superior speed to evade gunfire.");
+                else StartGunArrangement(engagement);
+                return true;
+            }
+            if (engagement.Phase != GunCombatPhase.BreakOffAttacker &&
+                engagement.Phase != GunCombatPhase.BreakOffDefender)
+                return RejectGun(RuleViolationCode.BreakOffUnavailable,
+                    "Break-off choices occur after every firing ship has acted.", "phase", out violation);
+            if (command.Actor == attacker.Side) engagement.AttackerBreakOff = command.Enabled ? 1 : 0;
+            else engagement.DefenderBreakOff = command.Enabled ? 1 : 0;
+            Trace("GUNFIRE", $"{command.Actor} chose {(command.Enabled ? "break off" : "continue")} after round {engagement.Round}.");
+            if (engagement.Phase == GunCombatPhase.BreakOffAttacker)
+            {
+                engagement.Phase = GunCombatPhase.BreakOffDefender;
+                engagement.DecisionSide = defender.Side;
+                State.ActiveSide = defender.Side;
+                return true;
+            }
+            ResolveBreakOff(engagement, attacker, defender);
+            return true;
+        }
+
+        private void ResolveBreakOff(GunEngagement engagement, TaskForceState attacker, TaskForceState defender)
+        {
+            var attackerChoice = engagement.AttackerBreakOff == 1;
+            var defenderChoice = engagement.DefenderBreakOff == 1;
+            if (attackerChoice && defenderChoice)
+            {
+                FinishGunCombat("Both forces agreed to break off.");
+                return;
+            }
+            if (attackerChoice || defenderChoice)
+            {
+                var leaving = attackerChoice ? attacker : defender;
+                var other = attackerChoice ? defender : attacker;
+                if (leaving.EffectiveSpeed > other.EffectiveSpeed)
+                {
+                    FinishGunCombat($"{leaving.Id} broke off automatically using superior speed.");
+                    return;
+                }
+                var threshold = GunCombatRules.BreakOffThreshold(leaving.EffectiveSpeed, other.EffectiveSpeed);
+                var roll = _dice.RollD6();
+                Trace("DIE", $"{leaving.Id} break-off: D6={roll}; succeeds on 1-{threshold}.");
+                if (GunCombatRules.BreakOffSucceeds(leaving.EffectiveSpeed, other.EffectiveSpeed, roll))
+                {
+                    FinishGunCombat($"{leaving.Id} successfully broke off (rolled {roll}).");
+                    return;
+                }
+            }
+            engagement.Round++;
+            engagement.AttackerBreakOff = -1;
+            engagement.DefenderBreakOff = -1;
+            BeginGunFiring(engagement);
+            AddLog($"Neither force escaped; gunfire continues with round {engagement.Round}.");
+        }
+
+        private void FinishGunCombat(string reason)
+        {
+            var engagement = State.PendingGunCombat;
+            if (engagement == null) return;
+            State.PendingGunCombat = null;
+            State.ActiveSide = engagement.MovementOwnerSide;
+            State.ActiveFormationId = engagement.MovementOwnerFormationId;
+            State.Phase = engagement.ReturnPhase;
+            Trace("GUNFIRE", reason + $" {State.ActiveFormationId} resumes its activation.");
+            AddLog(reason);
+        }
+
+        private bool RejectGun(RuleViolationCode code, string message, string field,
+            out RuleViolation violation)
+        {
+            violation = new RuleViolation(code, message, field);
+            Trace("REJECTED", message);
+            return false;
         }
 
         public void EndPlayerActivation()
@@ -694,6 +1301,20 @@ namespace Harpoon.Core
                 while (!State.IsGameOver && State.ActiveSide == Side.Plan &&
                        State.Phase != ActivationPhase.AwaitingChit)
                 {
+                    if (State.Phase == ActivationPhase.MissileCombat)
+                    {
+                        if (State.PendingMissileCombat == null ||
+                            State.PendingMissileCombat.DecisionSide != Side.Plan) break;
+                        ExecutePlanMissileDecision();
+                        continue;
+                    }
+                    if (State.Phase == ActivationPhase.GunCombat)
+                    {
+                        if (State.PendingGunCombat == null ||
+                            State.PendingGunCombat.DecisionSide != Side.Plan) break;
+                        ExecutePlanGunDecision();
+                        continue;
+                    }
                     var enemyForce = State.ActiveForce ?? State.Enemy;
                     if (State.Phase == ActivationPhase.DeclareSpeed)
                     {
@@ -725,11 +1346,187 @@ namespace Harpoon.Core
                         !State.PlayerHasAttacked && (!State.DetectionRulesEnabled ||
                         State.Detection.IsDetected(Side.Plan, State.Player.Id)))
                         Execute(new GameCommand(GameCommandType.Attack, Side.Plan, State.Revision));
-                    if (!State.IsGameOver && State.ActiveSide == Side.Plan)
+                    if (!State.IsGameOver && State.ActiveSide == Side.Plan &&
+                        State.Phase != ActivationPhase.MissileCombat &&
+                        State.Phase != ActivationPhase.GunCombat)
                         Execute(new GameCommand(GameCommandType.EndActivation, Side.Plan, State.Revision));
                 }
             }
             finally { _isActivatingEnemy = false; }
+        }
+
+        private void ExecutePlanMissileDecision()
+        {
+            var engagement = State.PendingMissileCombat;
+            if (engagement == null) return;
+            var attacker = State.Formation(engagement.AttackerFormationId);
+            var defender = State.Formation(engagement.DefenderFormationId);
+            switch (engagement.Phase)
+            {
+                case MissileCombatPhase.AllocateFire:
+                {
+                    var range = attacker.Position.DistanceTo(defender.Position);
+                    var target = defender.Objective != null && !defender.Objective.IsSunk
+                        ? defender.Objective : defender.ActiveUnits.First();
+                    var allocations = attacker.ActiveUnits.Select((unit, index) => new MissileAllocationData
+                    {
+                        id = $"PLAN-{State.Revision}-{index + 1}",
+                        sourceUnitId = unit.Definition.Id,
+                        targetUnitId = target.Definition.Id,
+                        shortFactors = range <= 1 ? unit.AvailableShortSsm : 0,
+                        longFactors = range <= 3 ? unit.AvailableLongSsm : 0
+                    }).Where(item => item.shortFactors + item.longFactors > 0).ToArray();
+                    Execute(new GameCommand(GameCommandType.AllocateMissileFire, Side.Plan,
+                        State.Revision, missileAllocations: allocations));
+                    break;
+                }
+                case MissileCombatPhase.DefensiveDeployment:
+                    Execute(new GameCommand(GameCommandType.Defend, Side.Plan, State.Revision,
+                        defensePairs: DefaultDefensePairs(defender)));
+                    break;
+                case MissileCombatPhase.LongRangeRemoval:
+                {
+                    var remaining = engagement.LongRangeHits;
+                    var reductions = new List<MissileReductionData>();
+                    foreach (var salvo in engagement.Salvos.OrderByDescending(item =>
+                                 defender.Units.First(unit => unit.Definition.Id == item.TargetUnitId)
+                                     .Definition.Role == UnitRole.Objective).ThenByDescending(item => item.RemainingFactors))
+                    {
+                        var amount = Math.Min(remaining, salvo.RemainingFactors);
+                        if (amount > 0) reductions.Add(new MissileReductionData { salvoId = salvo.Id, factors = amount });
+                        remaining -= amount;
+                        if (remaining == 0) break;
+                    }
+                    Execute(new GameCommand(GameCommandType.Defend, Side.Plan, State.Revision,
+                        missileReductions: reductions));
+                    break;
+                }
+                case MissileCombatPhase.ShortRangeDefense:
+                    Execute(new GameCommand(GameCommandType.Defend, Side.Plan, State.Revision,
+                        shortRangeDefenses: DefaultShortRangeAssignments(engagement, defender)));
+                    break;
+                case MissileCombatPhase.CounterattackDecision:
+                    Execute(new GameCommand(GameCommandType.Counterattack, Side.Plan,
+                        State.Revision, enabled: true));
+                    break;
+            }
+        }
+
+        private static DefensePairData[] DefaultDefensePairs(TaskForceState defender)
+        {
+            var remaining = defender.ActiveUnits.OrderByDescending(unit => unit.Definition.Role == UnitRole.Objective)
+                .ThenBy(unit => unit.Definition.Id).ToList();
+            var pairs = new List<DefensePairData>();
+            while (remaining.Count >= 2)
+            {
+                var first = remaining[0];
+                remaining.RemoveAt(0);
+                var second = remaining.OrderByDescending(unit => unit.EffectiveShortSam)
+                    .ThenBy(unit => unit.Definition.Id).First();
+                remaining.Remove(second);
+                pairs.Add(new DefensePairData
+                {
+                    firstUnitId = first.Definition.Id,
+                    secondUnitId = second.Definition.Id
+                });
+            }
+            return pairs.ToArray();
+        }
+
+        private static ShortRangeDefenseData[] DefaultShortRangeAssignments(
+            MissileEngagement engagement, TaskForceState defender)
+        {
+            var assignments = new List<ShortRangeDefenseData>();
+            foreach (var ship in defender.ActiveUnits.Where(unit => unit.EffectiveShortSam > 0))
+            {
+                var pairMate = engagement.PairMate(ship.Definition.Id);
+                var salvo = engagement.Salvos.Where(item => item.RemainingFactors > 0 &&
+                    (item.TargetUnitId == ship.Definition.Id || item.TargetUnitId == pairMate))
+                    .OrderByDescending(item => item.RemainingFactors).FirstOrDefault();
+                if (salvo != null) assignments.Add(new ShortRangeDefenseData
+                {
+                    defendingUnitId = ship.Definition.Id,
+                    salvoId = salvo.Id
+                });
+            }
+            return assignments.ToArray();
+        }
+
+        private void ExecutePlanGunDecision()
+        {
+            var engagement = State.PendingGunCombat;
+            if (engagement == null) return;
+            switch (engagement.Phase)
+            {
+                case GunCombatPhase.EngageDecision:
+                    Execute(new GameCommand(GameCommandType.BreakOff, Side.Plan,
+                        State.Revision, enabled: false));
+                    break;
+                case GunCombatPhase.ArrangeAttacker:
+                case GunCombatPhase.ArrangeDefender:
+                    Execute(new GameCommand(GameCommandType.ArrangeGunfire, Side.Plan,
+                        State.Revision, gunPairs: DefaultGunPairs(Side.Plan ==
+                            State.Formation(engagement.AttackerFormationId).Side
+                            ? State.Formation(engagement.AttackerFormationId)
+                            : State.Formation(engagement.DefenderFormationId))));
+                    break;
+                case GunCombatPhase.Firing:
+                {
+                    var shooterId = engagement.FiringOrder[engagement.FiringIndex];
+                    var targetForce = State.Forces.First(force => force.Side == Side.UsNavy && !force.IsDestroyed);
+                    var target = targetForce.Objective != null && !targetForce.Objective.IsSunk
+                        ? targetForce.Objective : targetForce.ActiveUnits.First();
+                    Execute(new GameCommand(GameCommandType.FireGuns, Side.Plan, State.Revision,
+                        targetId: target.Definition.Id, sourceUnitId: shooterId));
+                    break;
+                }
+                case GunCombatPhase.BreakOffAttacker:
+                case GunCombatPhase.BreakOffDefender:
+                    Execute(new GameCommand(GameCommandType.BreakOff, Side.Plan,
+                        State.Revision, enabled: false));
+                    break;
+            }
+        }
+
+        public static GunPairData[] DefaultGunPairs(TaskForceState force)
+        {
+            var active = force.ActiveUnits.ToList();
+            var result = new List<GunPairData>();
+            if (force.DefensePairs.Count > 0)
+            {
+                foreach (var pair in force.DefensePairs)
+                {
+                    var first = active.FirstOrDefault(unit => unit.Definition.Id == pair.firstUnitId);
+                    var second = active.FirstOrDefault(unit => unit.Definition.Id == pair.secondUnitId);
+                    if (first == null || second == null) continue;
+                    var firing = first.EffectiveGuns >= second.EffectiveGuns ? first : second;
+                    var screened = firing == first ? second : first;
+                    result.Add(new GunPairData
+                    {
+                        firingUnitId = firing.Definition.Id,
+                        screenedUnitId = screened.Definition.Id
+                    });
+                    active.Remove(first);
+                    active.Remove(second);
+                }
+            }
+            while (active.Count > 0)
+            {
+                var firing = active.OrderByDescending(unit => unit.EffectiveGuns).First();
+                active.Remove(firing);
+                UnitState screened = null;
+                if (active.Count > 0)
+                {
+                    screened = active.OrderBy(unit => unit.EffectiveGuns).First();
+                    active.Remove(screened);
+                }
+                result.Add(new GunPairData
+                {
+                    firingUnitId = firing.Definition.Id,
+                    screenedUnitId = screened?.Definition.Id ?? string.Empty
+                });
+            }
+            return result.ToArray();
         }
 
         private HexCoord BestEnemyDestination()
@@ -845,6 +1642,14 @@ namespace Harpoon.Core
             if (State.ObjectiveFor(Side.UsNavy).IsSunk || State.ObjectiveFor(Side.Plan).IsSunk) EndByScore();
         }
 
+        private void PruneDestroyedMovementChits()
+        {
+            if (State.MovementCup == null) return;
+            foreach (var force in State.Forces.Where(force => force.IsDestroyed))
+                if (State.MovementCup.RemoveUndrawnFormation(force.Id))
+                    Trace("CHIT", $"Removed destroyed formation {force.Id}'s undrawn movement chit from the cup.");
+        }
+
         private void EndByScore()
         {
             var damageInflicted = State.ObjectiveFor(Side.Plan).HullDamage;
@@ -953,11 +1758,17 @@ namespace Harpoon.Core
                     declaredSpeed = item.declaredSpeed,
                     factors = item.factors,
                     targetId = item.targetId,
+                    sourceUnitId = item.sourceUnitId,
                     enabled = item.enabled,
                     formationId = item.formationId,
                     newFormationId = item.newFormationId,
                     unitIds = item.unitIds?.ToArray() ?? Array.Empty<string>(),
-                    searchMode = item.searchMode
+                    searchMode = item.searchMode,
+                    missileAllocations = item.missileAllocations?.ToArray() ?? Array.Empty<MissileAllocationData>(),
+                    defensePairs = item.defensePairs?.ToArray() ?? Array.Empty<DefensePairData>(),
+                    missileReductions = item.missileReductions?.ToArray() ?? Array.Empty<MissileReductionData>(),
+                    shortRangeDefenses = item.shortRangeDefenses?.ToArray() ?? Array.Empty<ShortRangeDefenseData>(),
+                    gunPairs = item.gunPairs?.ToArray() ?? Array.Empty<GunPairData>()
                 }).ToArray(),
                 remainingChits = State.MovementCup.Remaining.Select(item => item.ToData()).ToArray(),
                 drawnChits = State.MovementCup.Drawn.Select(item => item.ToData()).ToArray(),
@@ -972,9 +1783,12 @@ namespace Harpoon.Core
                     movementPath = force.MovementPath.Select(ToSnapshot).ToArray(),
                     unitIds = force.Units.Select(unit => unit.Definition.Id).ToArray(),
                     radarRadiating = force.RadarRadiating,
-                    radarDeclared = force.RadarDeclaredThisActivation
+                    radarDeclared = force.RadarDeclaredThisActivation,
+                    defensePairs = force.DefensePairs.ToArray()
                 }).ToArray(),
-                contacts = State.Detection.Contacts.Select(contact => contact.ToData()).ToArray()
+                contacts = State.Detection.Contacts.Select(contact => contact.ToData()).ToArray(),
+                missileCombat = State.PendingMissileCombat?.ToData(),
+                gunCombat = State.PendingGunCombat?.ToData()
             };
         }
 
@@ -1006,6 +1820,7 @@ namespace Harpoon.Core
                         (item.movementPath ?? Array.Empty<HexCoordSnapshot>())
                         .Select(hex => new HexCoord(hex.column, hex.row)));
                     force.RestoreSensors(item.radarRadiating, item.radarDeclared);
+                    force.SetDefensePairs(item.defensePairs);
                     return force;
                 }).ToArray();
                 State.ReplaceForces(restoredForces);
@@ -1041,6 +1856,8 @@ namespace Harpoon.Core
             State.CommandLog.AddRange(snapshot.commands ?? Array.Empty<GameCommandData>());
             State.MovementCup.Restore(snapshot.remainingChits, snapshot.drawnChits);
             State.Detection.Restore(snapshot.contacts);
+            State.PendingMissileCombat = MissileEngagement.FromData(snapshot.missileCombat);
+            State.PendingGunCombat = GunEngagement.FromData(snapshot.gunCombat);
         }
 
         public static ScenarioOneGame Replay(int seed, IEnumerable<GameCommandData> commands,

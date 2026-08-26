@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -116,9 +117,12 @@ namespace Harpoon.Editor
             ValidateBoardAndMovement();
             ValidateMovementChitSequence();
             ValidateSurfaceDetection();
+            ValidateSurfaceMissileCombat();
+            ValidateNavalGunfire();
+            ValidateShipDamageAndModernPlatforms();
 
             ValidateLoopbackTransport();
-            Debug.Log("HARPOON RULE VALIDATION PASSED (Sections 3-5 movement, chits/time, surface detection, replay/private-view, and TCP loopback included).");
+            Debug.Log("HARPOON RULE VALIDATION PASSED (Sections 3-8 movement, chits/time, detection, missile combat, naval gunfire, modern-platform damage, replay/private-view, and TCP loopback included).");
         }
 
         public static void BuildWindowsPlayer()
@@ -161,6 +165,200 @@ namespace Harpoon.Editor
             material.SetFloat("_Metallic", 0.1f);
             material.SetFloat("_Glossiness", 0.55f);
             AssetDatabase.SaveAssets();
+        }
+
+        private static void ValidateNavalGunfire()
+        {
+            Require(GunCombatRules.InitialEngagementSucceeds(2, 2, 3) &&
+                    !GunCombatRules.InitialEngagementSucceeds(2, 2, 4) &&
+                    GunCombatRules.InitialEngagementSucceeds(3, 2, 6) &&
+                    !GunCombatRules.InitialEngagementSucceeds(2, 3, 1),
+                "Initial gun engagement must honor faster evasion and the equal-speed attacker roll of 1-3.");
+            Require(GunCombatRules.BreakOffThreshold(3, 2) == 6 &&
+                    GunCombatRules.BreakOffThreshold(2, 2) == 2 &&
+                    GunCombatRules.BreakOffThreshold(1, 2) == 1,
+                "Gun break-off must be automatic for the faster force, 1-2 at equal speed, and 1 for the slower force.");
+
+            var gun = new UnitDefinition("gun-test", "Gun Test", Side.UsNavy, UnitRole.Escort,
+                0, 0, 0, 0, 0, 2, 2, 4);
+            var targetDefinition = new UnitDefinition("target-test", "Target Test", Side.Plan, UnitRole.Objective,
+                0, 0, 0, 0, 0, 0, 2, 4);
+            var screenedTarget = new UnitState(targetDefinition);
+            var screened = new GunCombatResolver(new SequenceDieRoller(4, 4)).Fire(
+                new UnitState(gun), screenedTarget, true);
+            Require(screened.HullHits == 0 && screened.TargetWasScreened,
+                "A screened target must subtract one from every gun die before consulting the Guns column.");
+            var exposedTarget = new UnitState(targetDefinition);
+            var exposed = new GunCombatResolver(new SequenceDieRoller(4, 4)).Fire(
+                new UnitState(gun), exposedTarget, false);
+            Require(exposed.HullHits == 2 && exposedTarget.HullRemaining == 2,
+                "Every gun factor must roll independently on the Guns combat-table column.");
+
+            var game = new ScenarioOneGame(7, null, true, false,
+                new SequenceDieRoller(1, 4, 4, 4, 4, 4, 4));
+            var closeAction = game.CaptureSnapshot();
+            closeAction.activeSide = Side.UsNavy;
+            closeAction.activeFormationId = game.State.Player.Id;
+            closeAction.phase = ActivationPhase.PlayerAction;
+            closeAction.usColumn = closeAction.planColumn;
+            closeAction.usRow = closeAction.planRow;
+            foreach (var formation in closeAction.formations.Where(item => item.side == Side.UsNavy))
+            {
+                formation.column = closeAction.planColumn;
+                formation.row = closeAction.planRow;
+            }
+            foreach (var unit in closeAction.units)
+            {
+                unit.shortMissiles = 0;
+                unit.longMissiles = 0;
+            }
+            game.ApplySnapshot(closeAction);
+            Require(game.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                        game.State.Revision, targetId: game.State.Enemy.Id)).Accepted &&
+                    game.State.Phase == ActivationPhase.GunCombat &&
+                    game.State.PendingGunCombat.Phase == GunCombatPhase.ArrangeAttacker,
+                "A same-hex attack without missiles must open staged gunfire after passing the equal-speed engage roll.");
+            Require(game.Execute(new GameCommand(GameCommandType.ArrangeGunfire, Side.UsNavy,
+                    game.State.Revision, gunPairs: ScenarioOneGame.DefaultGunPairs(game.State.Player))).Accepted,
+                "The attacker must be able to nominate one firing ship and one screened ship per pair.");
+            Require(game.Execute(new GameCommand(GameCommandType.ArrangeGunfire, Side.Plan,
+                    game.State.Revision, gunPairs: ScenarioOneGame.DefaultGunPairs(game.State.Enemy))).Accepted,
+                "The defender must be able to lock its firing formation.");
+            var engagement = game.State.PendingGunCombat;
+            Require(engagement.Phase == GunCombatPhase.Firing &&
+                    engagement.FiringOrder.First() == "us-burke-iia",
+                "The strongest eligible gun factor must fire first rather than summing the formation's guns.");
+            var snapshot = game.CaptureSnapshot();
+            var mirror = new ScenarioOneGame(99, null, true);
+            mirror.ApplySnapshot(snapshot);
+            Require(mirror.State.PendingGunCombat != null &&
+                    mirror.State.PendingGunCombat.FiringOrder.SequenceEqual(engagement.FiringOrder),
+                "Snapshots must preserve gun pairings, firing order, round, and current decision.");
+            var firstShot = game.Execute(new GameCommand(GameCommandType.FireGuns, Side.UsNavy,
+                game.State.Revision, targetId: "plan-type-071", sourceUnitId: "us-burke-iia"));
+            Require(firstShot.Accepted && firstShot.AttackReport.IsGunfire &&
+                    firstShot.AttackReport.TargetWasScreened && firstShot.AttackReport.HullHits == 0,
+                "Gunfire must retain explicit firing/target pairs and apply rollback screening to the selected ship.");
+            Require(game.Execute(new GameCommand(GameCommandType.FireGuns, Side.Plan,
+                game.State.Revision, targetId: "us-merchant", sourceUnitId: "plan-type-054a")).Accepted,
+                "The next eligible opposing firing ship must act in gun-factor order.");
+            Require(game.Execute(new GameCommand(GameCommandType.BreakOff, Side.UsNavy,
+                    game.State.Revision, enabled: false)).Accepted &&
+                    game.Execute(new GameCommand(GameCommandType.BreakOff, Side.Plan,
+                    game.State.Revision, enabled: false)).Accepted &&
+                    game.State.PendingGunCombat.Round == 2,
+                "If neither force breaks off, the same engagement must continue into another firing round.");
+        }
+
+        private static void ValidateShipDamageAndModernPlatforms()
+        {
+            var platforms = ModernPlatformDatabase.All;
+            Require(platforms.Count == 34 && platforms.Select(item => item.Id).Distinct().Count() == 34,
+                "The modern platform database must contain all 34 hull-bearing cards from supplement pages 15-21.");
+            Require(platforms.Select(item => item.Hull).Distinct().OrderBy(value => value)
+                    .SequenceEqual(new[] { 1, 2, 3, 4, 5, 6 }) &&
+                    platforms.All(item => item.Hull >= 1 && item.Hull <= 6),
+                "The modern database must exercise every printed ship hull rating from one through six.");
+            Require(platforms.Count(item => item.LaunchesAircraft) == 8 &&
+                    ModernPlatformDatabase.Get("us-ford").Hull == 6 &&
+                    ModernPlatformDatabase.Get("us-nimitz").Hull == 5 &&
+                    ModernPlatformDatabase.Get("plan-type-055").Guns == 3 &&
+                    ModernPlatformDatabase.Get("us-ohio-ssgn").LongSsm == 16 &&
+                    ModernPlatformDatabase.Get("plan-type-093b").Torpedoes == 5,
+                "Modern carrier, surface-combatant, and submarine card values must match the supplied supplement.");
+
+            var expectedThresholds = new[,]
+            {
+                { 1, 1 }, { 1, 2 }, { 2, 2 }, { 2, 3 }, { 3, 4 }, { 3, 4 }
+            };
+            for (var hull = 1; hull <= 6; hull++)
+            {
+                Require(UnitState.HalfDamageThresholdFor(hull) == expectedThresholds[hull - 1, 0] &&
+                        UnitState.TwoThirdsDamageThresholdFor(hull) == expectedThresholds[hull - 1, 1],
+                    $"Hull {hull} threshold rounding must be explicit and match Captain's Rules page 4.");
+                var definition = new UnitDefinition($"damage-{hull}", $"Hull {hull} Damage Test",
+                    Side.UsNavy, UnitRole.Escort, 4, 6, 3, 2, 4, 3, 3, hull,
+                    airSearchRadar: 2, surfaceSearchRadar: 1, sonar: 4,
+                    antiSubmarineWarfare: 5, esmEquipped: true, isAircraftCarrier: true,
+                    torpedoes: 4);
+                var halfShip = new UnitState(definition);
+                var halfResult = halfShip.ApplyDamage(expectedThresholds[hull - 1, 0]);
+                if (!halfShip.IsSunk && !halfShip.HasTwoThirdsDamage)
+                    Require(halfShip.HasHalfDamage && halfShip.EffectiveSpeed == 2 &&
+                            halfShip.AvailableLongSsm == 0 && halfShip.AvailableShortSsm == 2 &&
+                            halfShip.EffectiveLongSam == 0 && halfShip.EffectiveAirSearchRadar == 0 &&
+                            !halfShip.CanLaunchAircraft && halfResult.CrossedThreshold,
+                        $"Hull {hull} must apply every half-damage capability loss at its rounded threshold.");
+
+                var crippled = new UnitState(definition);
+                var crippledResult = crippled.ApplyDamage(expectedThresholds[hull - 1, 1]);
+                if (!crippled.IsSunk)
+                    Require(crippled.HasTwoThirdsDamage && crippled.EffectiveSpeed == 1 &&
+                            crippled.EffectiveShortSam == 0 && crippled.EffectiveLongSam == 0 &&
+                            crippled.EffectivePointDefense == 0 && crippled.AvailableShortSsm == 0 &&
+                            crippled.AvailableLongSsm == 0 && crippled.EffectiveTorpedoes == 0 &&
+                            crippled.EffectiveAntiSubmarineWarfare == 0 && crippled.EffectiveSonar == 0 &&
+                            !crippled.EffectiveEsm && crippled.EffectiveSurfaceSearchRadar == 1 &&
+                            crippled.EffectiveGuns == 2 && !crippled.CanLaunchAircraft &&
+                            crippledResult.CrossedThreshold,
+                        $"Hull {hull} must lose all weapons except half guns and retain SSR at two-thirds damage.");
+
+                var sunk = new UnitState(definition);
+                var sunkResult = sunk.ApplyDamage(hull + 3);
+                Require(sunk.IsSunk && sunk.HullRemaining == 0 && sunk.HullDamage == hull &&
+                        sunkResult.AppliedHits == hull && sunkResult.SunkNow &&
+                        sunk.EffectiveSpeed == 0 && sunk.EffectiveGuns == 0 &&
+                        sunk.EffectiveSurfaceSearchRadar == 0 && sunk.EffectiveTorpedoes == 0,
+                    $"Hull {hull} sinking must cap overkill and remove every capability.");
+            }
+
+            foreach (var platform in platforms)
+            {
+                var ship = new UnitState(platform.CreateUnit(platform.DefaultSide ?? Side.UsNavy,
+                    UnitRole.Escort));
+                Require(ship.HalfDamageThreshold == expectedThresholds[platform.Hull - 1, 0] &&
+                        ship.TwoThirdsDamageThreshold == expectedThresholds[platform.Hull - 1, 1],
+                    $"{platform.DisplayName} must use the threshold row for its printed hull {platform.Hull}.");
+            }
+
+            var slowDefinition = new UnitDefinition("damaged-slow", "Damaged Slow Ship", Side.UsNavy,
+                UnitRole.Escort, 0, 0, 0, 0, 0, 0, 3, 5, surfaceSearchRadar: 1);
+            var fastDefinition = new UnitDefinition("fast", "Fast Ship", Side.UsNavy,
+                UnitRole.Escort, 0, 0, 0, 0, 0, 0, 4, 2);
+            var slow = new UnitState(slowDefinition);
+            var fast = new UnitState(fastDefinition);
+            var force = new TaskForceState("Damage Movement", Side.UsNavy, new HexCoord(4, 4),
+                new[] { slow, fast });
+            force.DeclareSpeed(3);
+            force.MoveOneHex(new HexCoord(5, 4));
+            force.DeclareRadar(true);
+            slow.ApplyDamage(3);
+            Require(force.EffectiveSpeed == 2 && force.MovementAllowance == 2 &&
+                    force.MovementRemaining == 1 && force.RadarRadiating,
+                "Mid-activation half damage must immediately clamp remaining task-force movement.");
+            slow.ApplyDamage(2);
+            Require(force.ActiveUnits.Count() == 1 && force.EffectiveSpeed == 4 &&
+                    !force.RadarRadiating,
+                "A sunk ship must leave task-force speed and sensor calculations immediately.");
+            var destroyedForce = new TaskForceState("Destroyed Chit", Side.Plan, new HexCoord(7, 7),
+                new[] { new UnitState(new UnitDefinition("doomed", "Doomed Ship", Side.Plan,
+                    UnitRole.Escort, 0, 0, 0, 0, 0, 0, 2, 1)) });
+            var cup = new MovementChitCup(new SequenceDieRoller(1));
+            cup.Reset(new[] { force, destroyedForce });
+            destroyedForce.Units.First().ApplyDamage(1);
+            Require(cup.RemoveUndrawnFormation(destroyedForce.Id) &&
+                    cup.Remaining.All(item => item.FormationId != destroyedForce.Id),
+                "A formation sunk before its activation must lose its undrawn movement chit immediately.");
+
+            var snapshotGame = new ScenarioOneGame(808, null, true);
+            snapshotGame.State.Player.Units.First().ApplyDamage(1);
+            var snapshot = snapshotGame.CaptureSnapshot();
+            var snapshotMirror = new ScenarioOneGame(909, null, true);
+            snapshotMirror.ApplySnapshot(snapshot);
+            var restored = snapshotMirror.State.Player.Units.First();
+            Require(restored.HullDamage == 1 && restored.HasHalfDamage &&
+                    restored.EffectiveSpeed == 2 && restored.AvailableLongSsm == 0,
+                "Snapshots must preserve hull boxes and recompute all derived damage effects.");
         }
 
         private static void ValidateLoopbackTransport()
@@ -346,6 +544,7 @@ namespace Harpoon.Editor
                 "Each entered hex must open exactly one Scenario 1 search opportunity.");
             var enteredHexAttack = actionGame.Execute(new GameCommand(GameCommandType.Attack, side,
                 actionGame.State.Revision));
+            if (enteredHexAttack.Accepted) ResolveDefaultMissileExchange(actionGame, declineCounterattack: true);
             Require(enteredHexAttack.Accepted && actionGame.State.Phase == ActivationPhase.PlayerMove,
                 "An attack must be legal between movement steps without ending movement.");
             Require(actionGame.TryMove(side, new HexCoord(7, 11), out _) &&
@@ -562,6 +761,280 @@ namespace Harpoon.Editor
             Require(mirror.State.Detection.ContactFor(Side.UsNavy, mirror.State.Enemy.Id).Level ==
                     ContactLevel.LostContact && mirror.State.Player.RadarDeclaredThisActivation,
                 "Snapshots must preserve contacts, lost-contact state, and radar declarations.");
+        }
+
+        private static void ValidateSurfaceMissileCombat()
+        {
+            var overfire = new ScenarioOneGame(1, null, true, false, new SequenceDieRoller(1));
+            Require(overfire.DrawMovementChit().Accepted && overfire.State.ActiveSide == Side.UsNavy &&
+                    overfire.DeclareSpeed(Side.UsNavy, 0).Accepted &&
+                    overfire.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                        overfire.State.Revision)).Accepted,
+                "Missile allocation test must open a legal range-three US raid.");
+            var overAllocation = overfire.Execute(new GameCommand(GameCommandType.AllocateMissileFire,
+                Side.UsNavy, overfire.State.Revision, missileAllocations: new[]
+                {
+                    new MissileAllocationData
+                    {
+                        id = "OVER", sourceUnitId = "us-burke-iia", targetUnitId = "plan-type-071",
+                        longFactors = 2
+                    }
+                }));
+            Require(!overAllocation.Accepted && overAllocation.Violation.Code == RuleViolationCode.InsufficientAmmunition &&
+                    overfire.State.Player.Units[0].LongMissilesRemaining == 1,
+                "A raid must reject over-allocation without spending ammunition.");
+            var partial = overfire.Execute(new GameCommand(GameCommandType.AllocateMissileFire,
+                Side.UsNavy, overfire.State.Revision, missileAllocations: new[]
+                {
+                    new MissileAllocationData
+                    {
+                        id = "PARTIAL", sourceUnitId = "us-burke-iia", targetUnitId = "plan-type-071",
+                        longFactors = 1
+                    }
+                }));
+            Require(partial.Accepted && overfire.State.Player.Units[0].ShortMissilesRemaining == 2 &&
+                    overfire.State.Player.Units[0].LongMissilesRemaining == 0,
+                "A player must be able to fire only selected in-range factors and retain the rest.");
+            var missileSnapshot = overfire.CaptureSnapshot();
+            var missileMirror = new ScenarioOneGame(99, null, true);
+            missileMirror.ApplySnapshot(missileSnapshot);
+            Require(missileMirror.State.Phase == ActivationPhase.MissileCombat &&
+                    missileMirror.State.PendingMissileCombat?.Salvos.Count == 1 &&
+                    missileMirror.State.Player.Units[0].LongMissilesRemaining == 0,
+                "Snapshots must preserve a pending staged raid, its salvos, and committed ammunition.");
+            var missileReplay = ScenarioOneGame.Replay(overfire.Seed, overfire.State.CommandLog);
+            Require(missileReplay.State.Phase == ActivationPhase.MissileCombat &&
+                    missileReplay.State.PendingMissileCombat?.Salvos.Count == 1 &&
+                    missileReplay.State.Player.Units[0].LongMissilesRemaining == 0,
+                "Replay must reproduce explicit missile allocations and ammunition commitment.");
+            ResolveDefaultMissileExchange(overfire, true);
+
+            var splitFire = new ScenarioOneGame(1, null, true, false,
+                new SequenceDieRoller(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1));
+            splitFire.State.Enemy.MoveTo(new HexCoord(7, 12));
+            Require(splitFire.DrawMovementChit().Accepted && splitFire.State.ActiveSide == Side.UsNavy &&
+                    splitFire.DeclareSpeed(Side.UsNavy, 0).Accepted &&
+                    splitFire.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                        splitFire.State.Revision)).Accepted,
+                "Split-fire test must open a range-one missile raid.");
+            var splitAllocation = splitFire.Execute(new GameCommand(GameCommandType.AllocateMissileFire,
+                Side.UsNavy, splitFire.State.Revision, missileAllocations: new[]
+                {
+                    new MissileAllocationData
+                    {
+                        id = "ESCORT", sourceUnitId = "us-burke-iia", targetUnitId = "plan-type-054a",
+                        shortFactors = 1
+                    },
+                    new MissileAllocationData
+                    {
+                        id = "ROLLBACK", sourceUnitId = "us-burke-iia", targetUnitId = "plan-type-071",
+                        shortFactors = 1, longFactors = 1
+                    }
+                }));
+            Require(splitAllocation.Accepted && splitFire.State.PendingMissileCombat.Salvos.Count == 2 &&
+                    splitFire.State.Player.Units[0].ShortMissilesRemaining == 0 &&
+                    splitFire.State.Player.Units[0].LongMissilesRemaining == 0,
+                "One firing ship must be able to split legal factors across both ships in a defensive pair.");
+            var planPair = new[] { new DefensePairData
+            {
+                firstUnitId = "plan-type-054a", secondUnitId = "plan-type-071"
+            } };
+            Require(splitFire.Execute(new GameCommand(GameCommandType.Defend, Side.Plan,
+                splitFire.State.Revision, defensePairs: planPair)).Accepted,
+                "The defender must choose its ship pairing before local SAM fire.");
+            var illegalDoubleFire = splitFire.Execute(new GameCommand(GameCommandType.Defend, Side.Plan,
+                splitFire.State.Revision, shortRangeDefenses: new[]
+                {
+                    new ShortRangeDefenseData { defendingUnitId = "plan-type-054a", salvoId = "ESCORT" },
+                    new ShortRangeDefenseData { defendingUnitId = "plan-type-054a", salvoId = "ROLLBACK" }
+                }));
+            Require(!illegalDoubleFire.Accepted && illegalDoubleFire.Violation.Code == RuleViolationCode.InvalidDefense,
+                "A short-range SAM battery must not defend two salvos or ships outside itself/its pair-mate.");
+            var splitResolution = splitFire.Execute(new GameCommand(GameCommandType.Defend, Side.Plan,
+                splitFire.State.Revision, shortRangeDefenses: new[]
+                {
+                    new ShortRangeDefenseData { defendingUnitId = "plan-type-054a", salvoId = "ROLLBACK" }
+                }));
+            Require(splitResolution.Accepted && splitResolution.AttackReport != null &&
+                    splitResolution.AttackReport.Strikes.Count == 2 &&
+                    splitFire.State.PendingMissileCombat.Phase == MissileCombatPhase.CounterattackDecision,
+                "Split fire must resolve each surviving target separately before offering the non-moving counterattack.");
+            var movementOwner = splitFire.State.PendingMissileCombat.MovementOwnerFormationId;
+            Require(splitFire.Execute(new GameCommand(GameCommandType.Counterattack, Side.Plan,
+                        splitFire.State.Revision, enabled: false)).Accepted &&
+                    splitFire.State.PendingMissileCombat == null &&
+                    splitFire.State.ActiveFormationId == movementOwner &&
+                    splitFire.State.Phase == ActivationPhase.PlayerAction,
+                "Declining a counterattack must restore the moving formation's interrupted activation.");
+
+            var longDefense = new ScenarioOneGame(1, null, true, false,
+                new SequenceDieRoller(2, 4, 1, 1, 1, 1, 1, 1, 1, 4, 1, 1, 1, 1));
+            longDefense.State.Player.MoveTo(longDefense.State.Enemy.Position);
+            Require(longDefense.DrawMovementChit().Accepted && longDefense.State.ActiveSide == Side.Plan &&
+                    longDefense.DeclareSpeed(Side.Plan, 0).Accepted &&
+                    longDefense.Execute(new GameCommand(GameCommandType.Attack, Side.Plan,
+                        longDefense.State.Revision)).Accepted,
+                "Long-range defense test must open a PLAN raid against the US pair.");
+            Require(longDefense.Execute(new GameCommand(GameCommandType.AllocateMissileFire, Side.Plan,
+                longDefense.State.Revision, missileAllocations: new[]
+                {
+                    new MissileAllocationData
+                    {
+                        id = "AT-ESCORT", sourceUnitId = "plan-type-054a", targetUnitId = "us-burke-iia",
+                        shortFactors = 1
+                    },
+                    new MissileAllocationData
+                    {
+                        id = "AT-MERCHANT", sourceUnitId = "plan-type-054a", targetUnitId = "us-merchant",
+                        shortFactors = 1
+                    }
+                })).Accepted && longDefense.Execute(new GameCommand(GameCommandType.Defend, Side.UsNavy,
+                longDefense.State.Revision, defensePairs: new[] { new DefensePairData
+                {
+                    firstUnitId = "us-burke-iia", secondUnitId = "us-merchant"
+                } })).Accepted && longDefense.State.PendingMissileCombat.LongRangeHits == 1,
+                "All operational long-range SAM dice must fire before local defenses.");
+            var wrongRemoval = longDefense.Execute(new GameCommand(GameCommandType.Defend, Side.UsNavy,
+                longDefense.State.Revision, missileReductions: Array.Empty<MissileReductionData>()));
+            Require(!wrongRemoval.Accepted && wrongRemoval.Violation.Code == RuleViolationCode.InvalidDefense,
+                "The defender must assign every long-range SAM hit to a surviving attacker-selected salvo.");
+            Require(longDefense.Execute(new GameCommand(GameCommandType.Defend, Side.UsNavy,
+                longDefense.State.Revision, missileReductions: new[]
+                {
+                    new MissileReductionData { salvoId = "AT-MERCHANT", factors = 1 }
+                })).Accepted &&
+                    longDefense.State.PendingMissileCombat.Salvos.First(item => item.Id == "AT-MERCHANT").RemainingFactors == 0 &&
+                    longDefense.State.PendingMissileCombat.Salvos.First(item => item.Id == "AT-ESCORT").RemainingFactors == 1,
+                "The defender must choose which incoming missile factors long-range SAM removes.");
+            var layeredResult = longDefense.Execute(new GameCommand(GameCommandType.Defend, Side.UsNavy,
+                longDefense.State.Revision, shortRangeDefenses: new[]
+                {
+                    new ShortRangeDefenseData { defendingUnitId = "us-burke-iia", salvoId = "AT-ESCORT" }
+                }));
+            Require(layeredResult.Accepted && layeredResult.AttackReport.InterceptedFactors == 2 &&
+                    layeredResult.AttackReport.Strikes.Count == 0,
+                "Short-range SAM must resolve after defender-directed long-range removals and may stop the surviving salvo.");
+
+            var targetWithPd = new UnitState(new UnitDefinition("pd", "PD Escort", Side.Plan,
+                UnitRole.Escort, 0, 0, 4, 0, 0, 0, 2, 2));
+            var targetWithoutPd = new UnitState(new UnitDefinition("no-pd", "Undefended Target", Side.Plan,
+                UnitRole.Objective, 0, 0, 0, 0, 0, 0, 2, 3));
+            var pdFormation = new TaskForceState("PD Test", Side.Plan, new HexCoord(5, 5),
+                new[] { targetWithPd, targetWithoutPd });
+            var pdEngagement = new MissileEngagement("Attackers", pdFormation.Id, Side.UsNavy,
+                "Attackers", ActivationPhase.PlayerAction);
+            pdEngagement.SetSalvos(new[] { new MissileSalvo("PD-SELF", "source", "no-pd", 1, 0) });
+            var pdReport = new MissileCombatResolver(new SequenceDieRoller(3))
+                .ResolvePointDefenseAndImpacts(pdEngagement, pdFormation);
+            Require(pdReport.InterceptedFactors == 0 && pdReport.HullHits == 1 &&
+                    targetWithoutPd.HullDamage == 1 && targetWithPd.HullDamage == 0,
+                "Point defense must protect only its own ship; surviving SSM factors use the Bombs & SSM table.");
+            var pointDefenseEngagement = new MissileEngagement("Attackers", pdFormation.Id,
+                Side.UsNavy, "Attackers", ActivationPhase.PlayerAction);
+            pointDefenseEngagement.SetSalvos(new[] { new MissileSalvo("PD-HIT", "source", "pd", 1, 0) });
+            var pointDefenseReport = new MissileCombatResolver(new SequenceDieRoller(2))
+                .ResolvePointDefenseAndImpacts(pointDefenseEngagement, pdFormation);
+            Require(pointDefenseReport.InterceptedFactors == 1 && pointDefenseReport.HullHits == 0,
+                "A target ship's own point defense must resolve after short-range SAM and before SSM impacts.");
+
+            var counter = new ScenarioOneGame(1, null, true, false,
+                new SequenceDieRoller(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1));
+            counter.State.Enemy.MoveTo(new HexCoord(7, 12));
+            Require(counter.DrawMovementChit().Accepted && counter.DeclareSpeed(Side.UsNavy, 0).Accepted &&
+                    counter.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                        counter.State.Revision)).Accepted,
+                "Counterattack test must open a legal moving-force raid.");
+            ResolveDefaultMissileExchange(counter, declineCounterattack: false);
+            Require(counter.State.PendingMissileCombat == null && counter.State.ActiveSide == Side.UsNavy &&
+                    counter.State.Phase == ActivationPhase.PlayerAction,
+                "An accepted non-moving counterattack must resolve once, without a counter-counterattack, then restore movement.");
+        }
+
+        private static AttackReport ResolveDefaultMissileExchange(ScenarioOneGame game,
+            bool declineCounterattack)
+        {
+            AttackReport report = null;
+            while (!game.State.IsGameOver && game.State.Phase == ActivationPhase.MissileCombat)
+            {
+                var engagement = game.State.PendingMissileCombat;
+                Require(engagement != null, "A missile-combat phase must have engagement state.");
+                var attacker = game.State.Formation(engagement.AttackerFormationId);
+                var defender = game.State.Formation(engagement.DefenderFormationId);
+                CommandResult result;
+                switch (engagement.Phase)
+                {
+                    case MissileCombatPhase.AllocateFire:
+                    {
+                        var range = attacker.Position.DistanceTo(defender.Position);
+                        var target = defender.Objective != null && !defender.Objective.IsSunk
+                            ? defender.Objective : defender.ActiveUnits.First();
+                        var allocations = attacker.ActiveUnits.Select((unit, index) => new MissileAllocationData
+                        {
+                            id = $"TEST-{game.State.Revision}-{index}",
+                            sourceUnitId = unit.Definition.Id,
+                            targetUnitId = target.Definition.Id,
+                            shortFactors = range <= 1 ? unit.AvailableShortSsm : 0,
+                            longFactors = range <= 3 ? unit.AvailableLongSsm : 0
+                        }).Where(item => item.shortFactors + item.longFactors > 0).ToArray();
+                        result = game.Execute(new GameCommand(GameCommandType.AllocateMissileFire,
+                            engagement.DecisionSide, game.State.Revision, missileAllocations: allocations));
+                        break;
+                    }
+                    case MissileCombatPhase.DefensiveDeployment:
+                    {
+                        var units = defender.ActiveUnits.ToArray();
+                        var pairs = units.Length >= 2 ? new[] { new DefensePairData
+                        {
+                            firstUnitId = units[0].Definition.Id,
+                            secondUnitId = units[1].Definition.Id
+                        } } : Array.Empty<DefensePairData>();
+                        result = game.Execute(new GameCommand(GameCommandType.Defend,
+                            engagement.DecisionSide, game.State.Revision, defensePairs: pairs));
+                        break;
+                    }
+                    case MissileCombatPhase.LongRangeRemoval:
+                    {
+                        var remaining = engagement.LongRangeHits;
+                        var reductions = new List<MissileReductionData>();
+                        foreach (var salvo in engagement.Salvos.Where(item => item.RemainingFactors > 0))
+                        {
+                            var amount = Math.Min(remaining, salvo.RemainingFactors);
+                            if (amount > 0) reductions.Add(new MissileReductionData
+                                { salvoId = salvo.Id, factors = amount });
+                            remaining -= amount;
+                            if (remaining == 0) break;
+                        }
+                        result = game.Execute(new GameCommand(GameCommandType.Defend,
+                            engagement.DecisionSide, game.State.Revision, missileReductions: reductions));
+                        break;
+                    }
+                    case MissileCombatPhase.ShortRangeDefense:
+                    {
+                        var assignments = new List<ShortRangeDefenseData>();
+                        foreach (var ship in defender.ActiveUnits.Where(unit => unit.EffectiveShortSam > 0))
+                        {
+                            var mate = engagement.PairMate(ship.Definition.Id);
+                            var salvo = engagement.Salvos.FirstOrDefault(item => item.RemainingFactors > 0 &&
+                                (item.TargetUnitId == ship.Definition.Id || item.TargetUnitId == mate));
+                            if (salvo != null) assignments.Add(new ShortRangeDefenseData
+                                { defendingUnitId = ship.Definition.Id, salvoId = salvo.Id });
+                        }
+                        result = game.Execute(new GameCommand(GameCommandType.Defend,
+                            engagement.DecisionSide, game.State.Revision,
+                            shortRangeDefenses: assignments));
+                        report = result.AttackReport ?? report;
+                        break;
+                    }
+                    default:
+                        result = game.Execute(new GameCommand(GameCommandType.Counterattack,
+                            engagement.DecisionSide, game.State.Revision,
+                            enabled: !declineCounterattack));
+                        if (!declineCounterattack) declineCounterattack = true;
+                        break;
+                }
+                Require(result.Accepted, "Default missile exchange command failed: " + result.Summary);
+            }
+            return report;
         }
 
         private static void Require(bool condition, string message)

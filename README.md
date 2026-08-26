@@ -11,13 +11,17 @@ Scenario 1, **Contact off the Bashi Channel**, is playable as the US Navy agains
 - a 15 × 20 three-dimensional hex map at 60 nautical miles per hex;
 - Captain's Edition task-force speed and random movement-chit initiative;
 - a complete surface-detection subsystem covering SSR, ESM, visual search, hidden formation contents, and contact loss;
-- short- and long-range surface-to-surface missiles;
-- layered long-range SAM, short-range SAM, and point-defense resolution;
-- naval gunfire after forces close to the same hex;
-- hull damage, mission-kill thresholds, sinking, and objective-ship victory scoring;
+- player-allocated short- and long-range surface-to-surface missile salvos with limited ammunition and split targeting;
+- staged defensive pairing, defender-directed long-range SAM, pair-limited short-range SAM, self-only point defense, and counterattacks;
+- staged same-hex naval gunfire with speed-based engage/evade, firing and screened ships, explicit rollback targeting, strongest-battery order, and multi-round break-off decisions;
+- exact hull-1-through-6 damage thresholds, mission kills, carrier launch restrictions, sinking, and objective-ship victory scoring across the supplement's modern platform database;
 - deterministic rules code with Edit Mode tests.
 
 Formation cards can be inspected from the right-side panel by selecting the US Navy or PLAN tab, or by clicking either 3D formation on the map.
+
+Close action has its own orange combat ribbon and command panel. Gun attacks use distinct muzzle flashes, arcing tracers, impact smoke, and a heavier procedural report than missile launches. The full Section 7 implementation is documented in [`docs/rules/GUN_COMBAT.md`](docs/rules/GUN_COMBAT.md).
+
+Damage is shown using effective—not merely printed—card values, with `printed→effective` reductions, amber/red card states, pulsing damage rings, smoke, persistent wreck markers, and a distinct sinking effect. See [`docs/rules/SHIP_DAMAGE.md`](docs/rules/SHIP_DAMAGE.md).
 
 Scenario 1 officially omits detection. To exercise the general Section 5 rules on the Scenario 1 board, press **F3** and enable **Detection Test Mode**. This solo-only mode requires an SSR silent/radiating declaration before speed and prohibits attacks until the target has been detected.
 

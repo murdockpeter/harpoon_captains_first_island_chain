@@ -75,6 +75,58 @@ namespace Harpoon.Core.Tests
             Assert.That(ship.EffectivePointDefense, Is.Zero);
             Assert.That(ship.EffectiveGuns, Is.EqualTo(2));
             Assert.That(ship.EffectiveSonar, Is.Zero);
+            Assert.That(ship.EffectiveAntiSubmarineWarfare, Is.Zero);
+            Assert.That(ship.EffectiveSurfaceSearchRadar, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void DamageThresholdRoundingCoversEveryModernHullRating()
+        {
+            var expected = new[,]
+            {
+                { 1, 1 }, { 1, 2 }, { 2, 2 }, { 2, 3 }, { 3, 4 }, { 3, 4 }
+            };
+            for (var hull = 1; hull <= 6; hull++)
+            {
+                Assert.That(UnitState.HalfDamageThresholdFor(hull), Is.EqualTo(expected[hull - 1, 0]));
+                Assert.That(UnitState.TwoThirdsDamageThresholdFor(hull), Is.EqualTo(expected[hull - 1, 1]));
+            }
+        }
+
+        [Test]
+        public void ModernPlatformDatabaseCoversEveryHullBearingSupplementCard()
+        {
+            Assert.That(ModernPlatformDatabase.All.Count, Is.EqualTo(34));
+            Assert.That(ModernPlatformDatabase.All.Select(item => item.Id).Distinct().Count(), Is.EqualTo(34));
+            Assert.That(ModernPlatformDatabase.All.Select(item => item.Hull).Distinct().OrderBy(value => value),
+                Is.EqualTo(new[] { 1, 2, 3, 4, 5, 6 }));
+            Assert.That(ModernPlatformDatabase.Get("us-ford").Hull, Is.EqualTo(6));
+            Assert.That(ModernPlatformDatabase.Get("plan-type-093b").Torpedoes, Is.EqualTo(5));
+            Assert.That(ModernPlatformDatabase.All.Count(item => item.LaunchesAircraft), Is.EqualTo(8));
+        }
+
+        [Test]
+        public void TwoThirdsDamageLeavesOnlyHalfGunsAndSurfaceRadar()
+        {
+            var definition = new UnitDefinition("cripple", "Cripple Test", Side.UsNavy,
+                UnitRole.Escort, 4, 6, 3, 2, 4, 3, 3, 6, 2, 1, 4, 5,
+                esmEquipped: true, isAircraftCarrier: true, torpedoes: 4);
+            var ship = new UnitState(definition);
+            ship.ApplyDamage(4);
+            Assert.That(ship.DamageLevel, Is.EqualTo(ShipDamageLevel.TwoThirdsDamage));
+            Assert.That(ship.EffectiveSpeed, Is.EqualTo(1));
+            Assert.That(ship.EffectiveGuns, Is.EqualTo(2));
+            Assert.That(ship.EffectiveSurfaceSearchRadar, Is.EqualTo(1));
+            Assert.That(ship.EffectiveShortSam, Is.Zero);
+            Assert.That(ship.EffectiveLongSam, Is.Zero);
+            Assert.That(ship.EffectivePointDefense, Is.Zero);
+            Assert.That(ship.AvailableShortSsm, Is.Zero);
+            Assert.That(ship.AvailableLongSsm, Is.Zero);
+            Assert.That(ship.EffectiveTorpedoes, Is.Zero);
+            Assert.That(ship.EffectiveAntiSubmarineWarfare, Is.Zero);
+            Assert.That(ship.EffectiveSonar, Is.Zero);
+            Assert.That(ship.EffectiveEsm, Is.False);
+            Assert.That(ship.CanLaunchAircraft, Is.False);
         }
 
         [Test]
@@ -93,6 +145,31 @@ namespace Harpoon.Core.Tests
             for (var roll = 1; roll <= 6; roll++)
                 Assert.That(CombatTables.Hits((CombatTableColumn)column, roll),
                     Is.EqualTo(expected[column, roll - 1]), $"column {column}, roll {roll}");
+        }
+
+        [Test]
+        public void ScreenedGunTargetSubtractsOneFromEveryDie()
+        {
+            var firing = new UnitState(new UnitDefinition("gun", "Gun Ship", Side.UsNavy,
+                UnitRole.Escort, 0, 0, 0, 0, 0, 2, 2, 4));
+            var target = new UnitState(new UnitDefinition("target", "Screened Ship", Side.Plan,
+                UnitRole.Objective, 0, 0, 0, 0, 0, 0, 2, 4));
+            var report = new GunCombatResolver(new SequenceDieRoller(4, 4)).Fire(firing, target, true);
+            Assert.That(report.HullHits, Is.Zero);
+            Assert.That(report.TargetWasScreened, Is.True);
+            Assert.That(target.HullRemaining, Is.EqualTo(4));
+        }
+
+        [Test]
+        public void GunEngageAndBreakOffThresholdsMatchCaptainRules()
+        {
+            Assert.That(GunCombatRules.InitialEngagementSucceeds(2, 2, 3), Is.True);
+            Assert.That(GunCombatRules.InitialEngagementSucceeds(2, 2, 4), Is.False);
+            Assert.That(GunCombatRules.InitialEngagementSucceeds(3, 2, 6), Is.True);
+            Assert.That(GunCombatRules.InitialEngagementSucceeds(2, 3, 1), Is.False);
+            Assert.That(GunCombatRules.BreakOffThreshold(3, 2), Is.EqualTo(6));
+            Assert.That(GunCombatRules.BreakOffThreshold(2, 2), Is.EqualTo(2));
+            Assert.That(GunCombatRules.BreakOffThreshold(1, 2), Is.EqualTo(1));
         }
 
         [Test]
@@ -377,6 +454,58 @@ namespace Harpoon.Core.Tests
             Assert.That(game.State.Detection.IsDetected(Side.UsNavy, game.State.Enemy.Id), Is.True);
             Assert.That(game.State.Detection.ContactFor(Side.UsNavy, game.State.Enemy.Id).Method,
                 Is.EqualTo(DetectionMethod.SurfaceSearchRadar));
+        }
+
+        [Test]
+        public void MissileAllocationRejectsOverfireAndCommitsOnlyChosenFactors()
+        {
+            var game = new ScenarioOneGame(1, null, true, false, new SequenceDieRoller(1));
+            Assert.That(game.DrawMovementChit().Accepted, Is.True);
+            Assert.That(game.DeclareSpeed(Side.UsNavy, 0).Accepted, Is.True);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                game.State.Revision)).Accepted, Is.True);
+            var excessive = game.Execute(new GameCommand(GameCommandType.AllocateMissileFire,
+                Side.UsNavy, game.State.Revision, missileAllocations: new[]
+                {
+                    new MissileAllocationData
+                    {
+                        id = "EXCESS", sourceUnitId = "us-burke-iia",
+                        targetUnitId = "plan-type-071", longFactors = 2
+                    }
+                }));
+            Assert.That(excessive.Violation.Code, Is.EqualTo(RuleViolationCode.InsufficientAmmunition));
+            Assert.That(game.State.Player.Units[0].LongMissilesRemaining, Is.EqualTo(1));
+            var legal = game.Execute(new GameCommand(GameCommandType.AllocateMissileFire,
+                Side.UsNavy, game.State.Revision, missileAllocations: new[]
+                {
+                    new MissileAllocationData
+                    {
+                        id = "LEGAL", sourceUnitId = "us-burke-iia",
+                        targetUnitId = "plan-type-071", longFactors = 1
+                    }
+                }));
+            Assert.That(legal.Accepted, Is.True);
+            Assert.That(game.State.Player.Units[0].LongMissilesRemaining, Is.Zero);
+            Assert.That(game.State.Player.Units[0].ShortMissilesRemaining, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void PointDefenseProtectsOnlyTheTargetShip()
+        {
+            var escort = new UnitState(new UnitDefinition("escort", "Escort", Side.Plan,
+                UnitRole.Escort, 0, 0, 5, 0, 0, 0, 2, 2));
+            var target = new UnitState(new UnitDefinition("target", "Target", Side.Plan,
+                UnitRole.Objective, 0, 0, 0, 0, 0, 0, 2, 3));
+            var defender = new TaskForceState("Defender", Side.Plan, new HexCoord(5, 5),
+                new[] { escort, target });
+            var engagement = new MissileEngagement("Attacker", defender.Id, Side.UsNavy,
+                "Attacker", ActivationPhase.PlayerAction);
+            engagement.SetSalvos(new[] { new MissileSalvo("SALVO", "source", "target", 1, 0) });
+            var report = new MissileCombatResolver(new SequenceDieRoller(3))
+                .ResolvePointDefenseAndImpacts(engagement, defender);
+            Assert.That(report.InterceptedFactors, Is.Zero);
+            Assert.That(target.HullDamage, Is.EqualTo(1));
+            Assert.That(escort.HullDamage, Is.Zero);
         }
     }
 }

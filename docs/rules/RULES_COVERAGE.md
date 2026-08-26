@@ -11,7 +11,7 @@ When sources disagree, use this order:
 3. The supplement's compressed rules as a convenient summary.
 4. A documented project interpretation when neither source supplies an answer.
 
-Modern unit cards and the optional EA-18G rule necessarily come from the supplement.
+Modern unit cards and the optional EA-18G rule necessarily come from the supplement. All 34 hull-bearing modern platform cards on pages 15–21 are transcribed into `ModernPlatformDatabase`; scenario definitions select from that database rather than duplicating card values.
 
 ## Scenario 1 coverage
 
@@ -22,14 +22,14 @@ Modern unit cards and the optional EA-18G rule necessarily come from the supplem
 | Random movement chits and period sequence | Captain's Rules p. 3 | `MovementChitCup`, `ScenarioOneGame.DrawMovementChitInternal`, `BeginTurn` | no-replacement, named activation, split-window, turn-rollover, Night, and seeded-order tests | Complete for surface task forces; cup also accepts patrol-aircraft chits for later air rules |
 | Declared speed, slowest ship, one-hex movement | Captain's Rules p. 3 | `TaskForceState`, `ScenarioOneGame.DeclareSpeedInternal`, `TryMoveInternal` | declaration, adjacency, incomplete-movement, damaged-speed tests | Complete for Scenario 1 |
 | Map topology, terrain, bases, and land restriction | Captain's Rules p. 3; supplement map p. 6 | `OperationalMap`, `FirstIslandChainMap`, `HexCoord` | 15×20 bounds, axial setup, base, coastline, land, and edge tests | Complete for Scenario 1 |
-| Per-entered-hex combat/search timing | Captain's Rules p. 3 | movement-opportunity events; attack/search commands remain legal between steps | per-hex action-window batch test | Movement hook complete; detailed counterattack procedure remains section 6 |
+| Per-entered-hex combat/search timing | Captain's Rules p. 3 | movement-opportunity events; attack/search commands remain legal between steps | per-hex action-window batch test | Complete for Scenario 1 missile and same-hex gun engagements |
 | Surface detection, SSR, ESM, and visual search | Captain's Rules p. 8; supplement p. 4 | `DetectionTracker`, `DetectionResolver`, `ScenarioOneGame` sensor commands/triggers | radar declaration/automatic detection, ESM 1–5, visual 1–2/Night/repeat, attack-gating, private-view, snapshot tests | Complete; available through solo Detection Test Mode because Scenario 1 itself omits detection |
-| Attack/counterattack timing and simultaneity | Captain's Rules pp. 3–4 | `ScenarioOneGame`, `CombatResolver` | none | Incomplete |
-| Ship damage | Captain's Rules p. 4 | `UnitState` | batch threshold audit | Partial; capability values corrected, full tests pending |
-| SSM values, range, splitting, ammunition | Captain's Rules pp. 4–5 | `UnitState.CommitMissiles` | missile smoke test | Values/range established; player allocation pending |
-| Defensive pairing | Captain's Rules pp. 5–6 | `CombatResolver` | layered-defense smoke test | Simplified |
-| Missile procedure and combat table | Captain's Rules p. 6; supplement p. 11 | `CombatResolver` | table fixture plus smoke test | Partial; allocation choices pending |
-| Naval gunfire | Captain's Rules p. 7 | `CombatResolver.ResolveGuns` | none | Simplified |
+| Attack/counterattack timing and simultaneity | Captain's Rules pp. 3–4 | `ScenarioOneGame`, `MissileEngagement` | accepted/declined counterattack and interrupted-activation restoration tests | Complete for missile exchanges; gunfire follows in section 7 |
+| Ship damage | Captain's Rules p. 4; modern hulls on supplement pp. 15–21 | `UnitState`, `DamageApplication`, `ModernPlatformDatabase` | hull 1–6 threshold matrix; all 34 modern cards; half/two-thirds/sunk capability, movement, sensor, carrier, snapshot tests | Complete for every modern ship/submarine/auxiliary hull |
+| SSM values, range, splitting, ammunition | Captain's Rules pp. 4–5; supplement pp. 3–4 | `UnitState.TryCommitMissiles`, `MissileEngagement`, `ScenarioOneGame.AllocateMissileFireInternal` | partial/over-fire, range, split-target, exhausted-ammunition, replay tests | Complete |
+| Defensive pairing and rollback pressure | Captain's Rules pp. 5–7; supplement p. 4 | staged defensive deployment and SR-SAM assignment | pairing, duplicate/illegal SR assignment, split fire across pair tests | Complete for missiles |
+| Missile procedure and combat table | Captain's Rules p. 6; supplement pp. 4, 11 | `MissileCombatResolver`, staged defense commands | every table row, LR choice, SR SAM, self-only PD, mixed defense, per-target impact tests | Complete |
+| Naval gunfire | Captain's Rules p. 7 | `GunEngagement`, `GunCombatResolver`, staged gun commands | engage/evade thresholds, legal firing formation, strongest-first order, explicit targets, screened modifier, Guns table, snapshot, repeated-round tests | Complete for Scenario 1 |
 | Detection exemption for learning scenarios 1–2 | Captain's Rules pp. 3 and 6 | default Scenario 1 configuration bypasses detection; debug mode enables the general subsystem | exemption and attack-gating tests | Complete for Scenario 1 |
 | Scenario 1 victory and tie-break | First Island Chain p. 25; analogous original scenario on Briefing p. 4 | `ScenarioOneGame.EndByScore`, `CompareScore` | `ScenarioOneUsesCombatantDamageOnlyAsATieBreak` | Implemented for available end states |
 | Scenario stopping condition | No explicit limit in either Scenario 1 text | unlimited `MaximumTurns = 0` | batch state audit | Interpretation adopted; disengage/concede UI pending |

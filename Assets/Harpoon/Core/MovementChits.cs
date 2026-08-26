@@ -77,6 +77,15 @@ namespace Harpoon.Core
             return chit;
         }
 
+        public bool RemoveUndrawnFormation(string formationId)
+        {
+            var index = _remaining.FindIndex(item => string.Equals(item.FormationId,
+                formationId, StringComparison.Ordinal));
+            if (index < 0) return false;
+            _remaining.RemoveAt(index);
+            return true;
+        }
+
         internal void Restore(IEnumerable<MovementChitData> remaining, IEnumerable<MovementChitData> drawn)
         {
             _remaining.Clear();

@@ -101,56 +101,56 @@ This is the living implementation checklist. Check an item only when its rules b
 
 ## 6. Surface-to-surface missile combat
 
-- [ ] Model short-range SSM range as one hex and long-range SSM range as three hexes.
-- [ ] Let the attacker choose how many available missile factors to fire.
-- [ ] Let the attacker split factors among legal targets.
-- [ ] Track short- and long-range ammunition using the roster-sheet rules.
-- [ ] Prevent firing more factors than remain.
-- [ ] Do not automatically expend every in-range missile factor.
-- [ ] Resolve long-range SAM first.
-- [ ] Let the defender choose which attacking factors are removed by long-range SAM hits where relevant.
-- [ ] Resolve short-range SAM second with self/pair defense restrictions.
-- [ ] Resolve point defense last and only for the ship itself.
-- [ ] Resolve surviving missile factors on the Bombs & SSM combat-table column.
-- [ ] Implement `M`, `H`, and `2H` results exactly for every D6 result.
-- [ ] Implement target selection and ship defensive pairing.
-- [ ] Implement rollback/split-fire decisions across a pair.
-- [ ] Permit the non-moving force's counterattack at the correct point.
-- [ ] Replace the current automatic objective-ship targeting.
-- [ ] Test each combat-table row, each defense layer, mixed defenses, exhausted ammunition, pairing, rollback, and counterattack timing.
+- [x] Model short-range SSM range as one hex and long-range SSM range as three hexes.
+- [x] Let the attacker choose how many available missile factors to fire.
+- [x] Let the attacker split factors among legal targets.
+- [x] Track short- and long-range ammunition using the roster-sheet rules.
+- [x] Prevent firing more factors than remain.
+- [x] Do not automatically expend every in-range missile factor.
+- [x] Resolve long-range SAM first.
+- [x] Let the defender choose which attacking factors are removed by long-range SAM hits where relevant.
+- [x] Resolve short-range SAM second with self/pair defense restrictions.
+- [x] Resolve point defense last and only for the ship itself.
+- [x] Resolve surviving missile factors on the Bombs & SSM combat-table column.
+- [x] Implement `M`, `H`, and `2H` results exactly for every D6 result.
+- [x] Implement target selection and ship defensive pairing.
+- [x] Implement rollback/split-fire decisions across a pair.
+- [x] Permit the non-moving force's counterattack at the correct point.
+- [x] Replace the current automatic objective-ship targeting.
+- [x] Test each combat-table row, each defense layer, mixed defenses, exhausted ammunition, pairing, rollback, and counterattack timing.
 
 ## 7. Naval gunfire
 
-- [ ] Allow gunfire only in the same hex.
-- [ ] Determine which force may engage or evade using relative effective speed.
-- [ ] Implement mutual agreement to break off.
-- [ ] Implement the faster force's automatic break-off choice.
-- [ ] Implement equal-speed contested continuation (`1–3` for attacker where applicable).
-- [ ] Form legal firing/target pairs.
-- [ ] Permit only the eligible firing ship from each pair, strongest gun factor first.
-- [ ] Apply the `−1` die-roll modifier when firing at a screened ship.
-- [ ] Resolve gun dice on the Guns combat-table column.
-- [ ] Implement rollback during gun combat.
-- [ ] Replace the current behavior that simply sums every active gun factor.
-- [ ] Test engage/evade, pairing, screened modifiers, firing order, rollback, and break-off.
+- [x] Allow gunfire only in the same hex.
+- [x] Determine which force may engage or evade using relative effective speed.
+- [x] Implement mutual agreement to break off.
+- [x] Implement the faster force's automatic break-off choice.
+- [x] Implement equal-speed contested continuation (`1–3` for attacker where applicable).
+- [x] Form legal firing/target pairs.
+- [x] Permit only the eligible firing ship from each pair, strongest gun factor first.
+- [x] Apply the `−1` die-roll modifier when firing at a screened ship.
+- [x] Resolve gun dice on the Guns combat-table column.
+- [x] Implement rollback during gun combat.
+- [x] Replace the current behavior that simply sums every active gun factor.
+- [x] Test engage/evade, pairing, screened modifiers, firing order, rollback, and break-off.
 
 ## 8. Ship damage and capability loss
 
-- [ ] Mark one hull box per hit and sink at zero remaining boxes.
-- [ ] At one-half hull remaining, apply exactly:
-  - [ ] Speed reduced by one.
-  - [ ] Long-range SSM and long-range SAM capability lost; short-range SSM remains available.
-  - [ ] Air-search radar lost.
-  - [ ] Carrier aircraft launch prohibited.
-- [ ] At two-thirds hull lost, apply exactly:
-  - [ ] Speed becomes one.
-  - [ ] All weapons except half guns, rounded up, are lost.
-  - [ ] Sonar and ESM are lost.
-  - [ ] Surface-search radar remains.
-- [ ] Define threshold rounding explicitly for hull values 1 through 6.
-- [ ] Remove sunk ships from movement speed, firing, defense, sensors, and scoring at the correct time.
-- [ ] Preserve damage consistently through counterattacks and multi-step combat.
-- [ ] Test every threshold for every possible hull rating used by the supplement.
+- [x] Mark one hull box per hit and sink at zero remaining boxes.
+- [x] At one-half hull remaining, apply exactly:
+  - [x] Speed reduced by one.
+  - [x] Long-range SSM and long-range SAM capability lost; short-range SSM remains available.
+  - [x] Air-search radar lost.
+  - [x] Carrier aircraft launch prohibited.
+- [x] At two-thirds hull lost, apply exactly:
+  - [x] Speed becomes one.
+  - [x] All weapons except half guns, rounded up, are lost.
+  - [x] Sonar and ESM are lost.
+  - [x] Surface-search radar remains.
+- [x] Define threshold rounding explicitly for hull values 1 through 6.
+- [x] Remove sunk ships from movement speed, firing, defense, sensors, and scoring at the correct time.
+- [x] Preserve damage consistently through counterattacks and multi-step combat.
+- [x] Test every threshold for every possible hull rating used by the supplement.
 
 ## 9. Scenario 1 setup, AI, and victory
 
