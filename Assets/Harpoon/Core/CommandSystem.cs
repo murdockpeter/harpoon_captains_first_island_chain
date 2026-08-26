@@ -15,6 +15,7 @@ namespace Harpoon.Core
     {
         DrawMovementChit,
         DeployFormation,
+        TransferDummyCards,
         SplitTaskForce,
         DeclareSpeed,
         Move,
@@ -51,6 +52,7 @@ namespace Harpoon.Core
         MovementExhausted,
         CupNotReady,
         DeploymentUnavailable,
+        DummyActionUnavailable,
         SplitWindowClosed,
         InvalidFormation,
         InvalidUnitSelection,
@@ -361,7 +363,8 @@ namespace Harpoon.Core
             Id = isKnown ? force.Id : $"CONTACT {force.Side}";
             Side = force.Side;
             IsKnown = isKnown;
-            Position = isKnown ? force.Position : contact != null && contact.Level == ContactLevel.LostContact
+            Position = isKnown ? force.Position : contact != null &&
+                (contact.IsDetected || contact.Level == ContactLevel.LostContact)
                 ? contact.LastKnownPosition : default;
             DeclaredSpeed = isKnown ? force.DeclaredSpeed : -1;
             MovementPointsSpent = isKnown ? force.MovementPointsSpent : 0;

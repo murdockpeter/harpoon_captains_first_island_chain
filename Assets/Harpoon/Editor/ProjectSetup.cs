@@ -126,9 +126,10 @@ namespace Harpoon.Editor
             ValidateScenarioTwoRelease();
             ValidateScenarioThreeRelease();
             ValidateScenarioFourRelease();
+            ValidateScenarioFiveRelease();
 
             ValidateLoopbackTransport();
-            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-4 including hidden contacts, convoy arrival, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
+            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-5 including hidden contacts, dummy deception, convoy arrival, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
         }
 
         public static void BuildWindowsPlayer()
@@ -425,6 +426,23 @@ namespace Harpoon.Editor
                     game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.Plan,
                     game.State.Revision, new HexCoord(15, 10), formationId: "PLAN Picket Group")).Accepted,
                 "Scenario 4 PLAN deployment must enforce both four-hex exclusion zones.");
+        }
+
+        private static void ValidateScenarioFiveRelease()
+        {
+            var game = new ScenarioOneGame(5505, null, true, false,
+                new SequenceDieRoller(1), FirstIslandChainScenarios.GhostFleet);
+            Require(game.State.Forces.Where(force => force.Side == Side.UsNavy).Sum(force => force.DummyCards) == 3 &&
+                    game.State.Forces.Where(force => force.Side == Side.Plan).Sum(force => force.DummyCards) == 5,
+                "Scenario 5 must load the printed three US and five PLAN dummy-card allotments.");
+            Require(game.Execute(new GameCommand(GameCommandType.TransferDummyCards, Side.UsNavy,
+                    game.State.Revision, factors: 1, formationId: "US Dummy Group",
+                    newFormationId: "US Dummy Group 2")).Accepted &&
+                    game.State.Forces.Where(force => force.Side == Side.UsNavy).Sum(force => force.DummyCards) == 3,
+                "Scenario 5 dummy transfers must preserve the side's allotment.");
+            var usSnapshot = game.CaptureSnapshotFor(Side.UsNavy);
+            Require(usSnapshot.formations.Where(item => item.side == Side.Plan).All(item => item.dummyCards == 0),
+                "Scenario 5 must not leak opposing dummy-card counts in side-private snapshots.");
         }
 
         private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,

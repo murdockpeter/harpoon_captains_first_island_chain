@@ -91,6 +91,8 @@ namespace Harpoon.Core
 
         public bool IsDetected(Side observer, string targetFormationId) =>
             ContactFor(observer, targetFormationId).IsDetected;
+        public bool IsClassified(Side observer, string targetFormationId) =>
+            ContactFor(observer, targetFormationId).Level == ContactLevel.Classified;
 
         public ContactRecord Detect(Side observer, TaskForceState target, DetectionMethod method,
             int turn, bool classified = true)
@@ -147,6 +149,24 @@ namespace Harpoon.Core
                 timeOfDay == TimeOfDay.Night || observer.Position != target.Position)
                 return false;
             return Roll("VISUAL", observer, target, 2);
+        }
+
+        public bool ResolveSonar(TaskForceState observer, TaskForceState target, bool previouslyDetected)
+        {
+            if (observer == null || target == null) return false;
+            var range = observer.Position.DistanceTo(target.Position);
+            if (range > 2) return false;
+            var sonarShips = observer.ActiveUnits.Where(unit => unit.EffectiveSonar > 0).ToArray();
+            if (sonarShips.Length == 0) return false;
+            var value = sonarShips.Max(unit => unit.EffectiveSonar) + (sonarShips.Length > 1 ? 1 : 0) -
+                        (range == 1 ? 2 : range == 2 ? 3 : 0) +
+                        Math.Max(0, target.DeclaredSpeed) - Math.Max(0, observer.DeclaredSpeed) +
+                        (previouslyDetected ? 1 : 0);
+            var roll = _dice.RollD6();
+            var success = roll != 6 && roll < value;
+            _trace?.Invoke("DIE", $"SONAR {observer.Id}->{target.Id}: D6={roll}; value={value}; " +
+                $"{(success ? "DETECTED" : "NO CONTACT")}.");
+            return success;
         }
 
         private bool Roll(string sensor, TaskForceState observer, TaskForceState target, int maximum)

@@ -64,6 +64,17 @@ Modern unit cards and the optional EA-18G rule necessarily come from the supplem
 | Convoy destination and multiple merchants | First Island Chain p. 25 | arrival state, `ConvoyArrival` scoring, Taipei destination | deterministic arrival route | Complete |
 | Victory wording conflict | First Island Chain p. 25 | arrival-or-destroy versus both-merchants-sunk ruling | scoring route and specification | Resolved and documented |
 
+## Scenario 5 coverage
+
+| Rule/data | Authoritative source | Current code | Automated evidence | Status |
+|---|---|---|---|---|
+| Three US and five PLAN dummy cards | First Island Chain p. 25; dummy card p. 22 | `FirstIslandChainScenarios.GhostFleet`, `TaskForceState.DummyCards` | exact side-total and setup checks | Complete |
+| Dummy distribution, creation, and transfer | Captain's Rules p. 9 | `TransferDummyCards`, movement-cup integration, private controls | conservation, new-force, and command-log tests | Complete |
+| Public verification without unrelated disclosure | Captain's Rules p. 9 | redacted snapshot command/event projection | opposing-count redaction and public-transfer checks | Complete |
+| SSR/visual “no surface ships” result | Captain's Rules p. 9 | located-but-unclassified dummy contacts | visual resolution and attack-gating route | Complete |
+| Successful sonar removes dummy force | Captain's Rules pp. 8–9 | `ResolveSonar`, dummy removal and card recovery | deterministic sonar acceptance route | Complete |
+| Side-private presentation | Captain's Rules p. 9 | formation cards, unresolved-contact marker, redacted snapshots | owner/opponent projection checks | Complete |
+
 ## Rules-family source index
 
 | Rules family | Captain's Rules | Supplement |

@@ -107,6 +107,7 @@ namespace Harpoon.Runtime
         private bool _showEventSection;
         private ScenarioDefinition _selectedScenario = FirstIslandChainScenarios.ContactOffBashiChannel;
         private bool _placingPlanDeployment;
+        private string _planDeploymentFormationId = "PLAN Picket Group";
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureBootstrap()
@@ -291,7 +292,7 @@ namespace Harpoon.Runtime
         private void DeployPlanFormation(HexCoord destination)
         {
             var command = new GameCommand(GameCommandType.DeployFormation, Side.Plan,
-                _game.State.Revision, destination, formationId: "PLAN Picket Group");
+                _game.State.Revision, destination, formationId: _planDeploymentFormationId);
             if (IsClientSession)
             {
                 _pendingCommands[command.Id] = command;
@@ -306,6 +307,32 @@ namespace Harpoon.Runtime
                 if (result.Accepted && IsHostSession) BroadcastSnapshot();
             }
             _placingPlanDeployment = false;
+        }
+
+        private void TransferDummy(TaskForceState source, TaskForceState target = null)
+        {
+            if (source == null || source.DummyCards <= 0) return;
+            var newId = string.Empty;
+            if (target == null)
+            {
+                var index = 1;
+                do newId = $"{SideLabel(source.Side)} Dummy Group {index++}";
+                while (_game.State.Formation(newId) != null);
+            }
+            var command = new GameCommand(GameCommandType.TransferDummyCards, LocalSide,
+                _game.State.Revision, factors: 1, targetId: target?.Id,
+                formationId: source.Id, newFormationId: newId);
+            if (IsClientSession)
+            {
+                _pendingCommands[command.Id] = command;
+                NetworkSend(new NetworkMessage { kind = "command", command = command.ToData() });
+                _status = "Dummy-card transfer sent to host.";
+                return;
+            }
+            var result = _game.Execute(command);
+            _status = result.Summary;
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
         }
 
         private void DeclareLocalRadar(bool enabled)
@@ -340,8 +367,12 @@ namespace Harpoon.Runtime
             var result = _game.Execute(command);
             var contact = _game.State.Detection.ContactFor(LocalSide, target.Id);
             _status = result.Accepted
-                ? contact.IsDetected ? $"CONTACT: {target.Id} classified by {mode.ToUpperInvariant()}."
-                    : $"No {mode.ToUpperInvariant()} contact."
+                ? _game.State.Formation(target.Id) == null
+                    ? $"FALSE CONTACT CLEARED by {mode.ToUpperInvariant()}."
+                    : contact.Level == ContactLevel.Located && target.Units.Count == 0
+                        ? "NO SURFACE SHIPS PRESENT; sonar is required to clear the contact."
+                        : contact.IsDetected ? $"CONTACT: {target.Id} classified by {mode.ToUpperInvariant()}."
+                            : $"No {mode.ToUpperInvariant()} contact."
                 : result.Summary;
             RefreshViews();
             if (IsHostSession) BroadcastSnapshot();
@@ -973,7 +1004,7 @@ namespace Harpoon.Runtime
             if (_game == null || _playerMarker == null) return;
             foreach (var force in _game.State.Forces)
             {
-                var markerShipCount = Mathf.Clamp(force.ActiveUnits.Count(), 1, 4);
+                var markerShipCount = force.Units.Count == 0 ? 0 : Mathf.Clamp(force.ActiveUnits.Count(), 1, 4);
                 if (_formationMarkers.TryGetValue(force.Id, out var staleMarker) &&
                     (!_formationMarkerShipCounts.TryGetValue(force.Id, out var priorCount) ||
                      priorCount != markerShipCount))
@@ -987,7 +1018,9 @@ namespace Harpoon.Runtime
                         ? new Color(0.08f, 0.46f, 0.95f) : new Color(0.9f, 0.12f, 0.08f);
                     var amphibious = force.Units.Any(unit => unit.Definition.DisplayName.Contains("LPD") ||
                         unit.Definition.DisplayName.Contains("Merchant"));
-                    marker = VisualFactory.CreateFormation(force.Id, color, amphibious, markerShipCount);
+                    marker = markerShipCount == 0
+                        ? VisualFactory.CreateContactMarker(force.Id, color)
+                        : VisualFactory.CreateFormation(force.Id, color, amphibious, markerShipCount);
                     marker.gameObject.AddComponent<FormationView>().Initialize(force.Side, force.Id);
                     _formationMarkers[force.Id] = marker;
                     _formationMarkerShipCounts[force.Id] = markerShipCount;
@@ -1017,7 +1050,7 @@ namespace Harpoon.Runtime
             if (_game.State.Phase != ActivationPhase.PlayerMove &&
                 _game.State.Phase != ActivationPhase.PlayerAction) return false;
             if (_game.State.PlayerHasAttacked) return false;
-            if (_game.State.DetectionRulesEnabled && !_game.State.Detection.IsDetected(LocalSide, target.Id)) return false;
+            if (_game.State.DetectionRulesEnabled && !_game.State.Detection.IsClassified(LocalSide, target.Id)) return false;
             var attacker = _game.State.ForceFor(LocalSide);
             var range = attacker.Position.DistanceTo(target.Position);
             var missile = attacker.ActiveUnits.Any(unit =>
@@ -1514,6 +1547,7 @@ namespace Harpoon.Runtime
 
         private void DrawCurrentOrders()
         {
+            DrawDummyControls();
             DrawSpeedDeclaration();
             GUILayout.Space(6f);
             var actionPhase = _game.State.Phase == ActivationPhase.PlayerMove ||
@@ -1574,6 +1608,30 @@ namespace Harpoon.Runtime
             GUI.backgroundColor = prior;
         }
 
+        private void DrawDummyControls()
+        {
+            if (_game.State.Scenario.Id != "fic-05") return;
+            var friendly = _game.State.Forces.Where(force => force.Side == LocalSide).ToArray();
+            var sources = friendly.Where(force => force.DummyCards > 0).ToArray();
+            if (sources.Length == 0) return;
+            GUILayout.Label("DUMMY CONTROL", _cardHeaderStyle);
+            GUILayout.Label("Transfers are openly verified without exposing real formation contents.", _cardStatStyle);
+            foreach (var source in sources)
+            {
+                GUILayout.Label($"{ShortFormationName(source.Id)}  ·  {source.DummyCards} CARD{(source.DummyCards == 1 ? "" : "S")}",
+                    _cardStatStyle);
+                GUI.enabled = !_game.State.IsGameOver &&
+                              (_sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat || NetworkConnected) &&
+                              (_sessionMode != SessionMode.HotSeat || CanLocalAct());
+                if (GUILayout.Button("CREATE DUMMY TASK FORCE", _buttonStyle)) TransferDummy(source);
+                foreach (var target in friendly.Where(candidate => candidate.Id != source.Id))
+                    if (GUILayout.Button($"TRANSFER 1 TO {ShortFormationName(target.Id)}", _buttonStyle))
+                        TransferDummy(source, target);
+                GUI.enabled = true;
+            }
+            GUILayout.Space(6f);
+        }
+
         private void DrawSystemControls()
         {
             GUILayout.Label("INTRODUCTORY SCENARIO", _cardStatStyle);
@@ -1585,7 +1643,8 @@ namespace Harpoon.Runtime
                     GUI.backgroundColor = new Color(0.12f, 0.58f, 0.78f);
                 GUI.enabled = !IsClientSession;
                 var scenarioLabel = scenario.Id == "fic-01" ? "1 BASHI" : scenario.Id == "fic-02"
-                    ? "2 FLAGSHIP" : scenario.Id == "fic-03" ? "3 GUN DUEL" : "4 PICKET";
+                    ? "2 FLAGSHIP" : scenario.Id == "fic-03" ? "3 GUN" : scenario.Id == "fic-04"
+                        ? "4 PICKET" : "5 GHOST";
                 if (GUILayout.Button(scenarioLabel, _buttonStyle))
                 {
                     _selectedScenario = scenario;
@@ -1605,8 +1664,17 @@ namespace Harpoon.Runtime
                 GUI.enabled = mayDeploy;
                 var priorDeployColor = GUI.backgroundColor;
                 GUI.backgroundColor = new Color(0.52f, 0.18f, 0.68f);
-                if (GUILayout.Button(_placingPlanDeployment ? "CANCEL PLAN DEPLOYMENT" : "PLACE PLAN PICKET ON MAP", _buttonStyle))
-                    _placingPlanDeployment = !_placingPlanDeployment;
+                foreach (var formation in _game.State.Forces.Where(force => force.Side == Side.Plan))
+                {
+                    var candidate = formation;
+                    var selectingThis = _placingPlanDeployment && _planDeploymentFormationId == candidate.Id;
+                    if (GUILayout.Button(selectingThis ? $"CANCEL {ShortFormationName(candidate.Id)}"
+                            : $"PLACE {ShortFormationName(candidate.Id)}", _buttonStyle))
+                    {
+                        _planDeploymentFormationId = candidate.Id;
+                        _placingPlanDeployment = !selectingThis;
+                    }
+                }
                 GUI.backgroundColor = priorDeployColor;
                 GUI.enabled = true;
                 if (!mayDeploy) GUILayout.Label("Solo PLAN deployment is seeded and hidden.", _cardStatStyle);
@@ -2057,18 +2125,26 @@ namespace Harpoon.Runtime
         {
             if (!_game.State.DetectionRulesEnabled || _game.State.ActiveSide != LocalSide) return;
             var targets = _game.State.Forces.Where(force => force.Side != LocalSide && !force.IsDestroyed).ToArray();
-            var visual = targets.FirstOrDefault(force => force.Position == observer.Position);
-            var esm = targets.FirstOrDefault(force => force.RadarRadiating &&
-                force.Position.DistanceTo(observer.Position) == 1);
+            var selectedTarget = targets.FirstOrDefault(force => force.Id == _selectedFormationId);
+            var visual = selectedTarget != null && selectedTarget.Position == observer.Position
+                ? selectedTarget : targets.FirstOrDefault(force => force.Position == observer.Position);
+            var esm = selectedTarget != null && selectedTarget.RadarRadiating &&
+                      selectedTarget.Position.DistanceTo(observer.Position) == 1
+                ? selectedTarget : targets.FirstOrDefault(force => force.RadarRadiating &&
+                    force.Position.DistanceTo(observer.Position) == 1);
+            var sonar = targets.Where(force => force.Position.DistanceTo(observer.Position) <= 2)
+                .OrderByDescending(force => force == selectedTarget)
+                .ThenBy(force => force.Position.DistanceTo(observer.Position)).FirstOrDefault();
             GUILayout.Label("SENSOR ACTIONS", _cardHeaderStyle);
-            GUILayout.BeginHorizontal();
-            GUI.enabled = CanLocalAct() && visual != null && !observer.RadarRadiating &&
+            GUI.enabled = CanLocalAct() && !observer.IsDummyOnly && visual != null && !observer.RadarRadiating &&
                           _game.State.TimeOfDay != TimeOfDay.Night;
             if (GUILayout.Button("VISUAL SEARCH", _buttonStyle)) SearchLocal("visual", visual);
-            GUI.enabled = CanLocalAct() && esm != null && observer.CanUseEsm;
+            GUI.enabled = CanLocalAct() && !observer.IsDummyOnly && esm != null && observer.CanUseEsm;
             if (GUILayout.Button("ESM SEARCH", _buttonStyle)) SearchLocal("esm", esm);
+            GUI.enabled = CanLocalAct() && !observer.IsDummyOnly && sonar != null &&
+                          observer.ActiveUnits.Any(unit => unit.EffectiveSonar > 0);
+            if (GUILayout.Button("SONAR SEARCH", _buttonStyle)) SearchLocal("sonar", sonar);
             GUI.enabled = true;
-            GUILayout.EndHorizontal();
         }
 
         private void DrawMissileCombatDecision()
@@ -2749,6 +2825,13 @@ namespace Harpoon.Runtime
                 ? $"MAX SPEED {force.EffectiveSpeed} · AWAITING DECLARATION"
                 : $"DECLARED {force.DeclaredSpeed} · MOVED {force.MovementPointsSpent} · REMAINING {force.MovementRemaining}",
                 _cardStatStyle);
+            if (force.Side == LocalSide && force.DummyCards > 0)
+                GUILayout.Label($"DUMMY CARDS   {force.DummyCards}", _cardHeaderStyle);
+            else if (force.Side != LocalSide && force.Units.Count == 0 && contact?.Level == ContactLevel.Located)
+            {
+                GUILayout.Label("SEARCH REPORT   NO SURFACE SHIPS PRESENT", _cardHeaderStyle);
+                GUILayout.Label("A submarine or dummy contact remains possible until cleared by sonar.", _cardStatStyle);
+            }
             if (force.DefensePairs.Count > 0)
                 GUILayout.Label("DEFENSE PAIRS   " + string.Join("  |  ", force.DefensePairs.Select(pair =>
                     $"{ShortUnitName(UnitName(force, pair.firstUnitId))} + {ShortUnitName(UnitName(force, pair.secondUnitId))}")),
@@ -2840,6 +2923,10 @@ namespace Harpoon.Runtime
                 return;
             }
             GUILayout.Label($"{force.Id} · HEX {force.Position}{activity}", _labelStyle);
+            if (force.Side == LocalSide && force.DummyCards > 0)
+                GUILayout.Label($"  Dummy cards: {force.DummyCards}", _labelStyle);
+            else if (force.Units.Count == 0)
+                GUILayout.Label("  No surface ships present; contact not cleared by sonar", _labelStyle);
             foreach (var unit in force.Units)
                 GUILayout.Label($"  {unit.Definition.DisplayName}: {unit.HullRemaining}/{unit.Definition.Hull} hull · {DamageStateLabel(unit)}", _labelStyle);
         }

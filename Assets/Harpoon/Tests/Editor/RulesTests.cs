@@ -72,6 +72,64 @@ namespace Harpoon.Core.Tests
         }
 
         [Test]
+        public void ScenarioFiveDistributesTransfersAndPrivatelyRedactsDummyCards()
+        {
+            var game = new ScenarioOneGame(5, null, true, false, null,
+                FirstIslandChainScenarios.GhostFleet);
+            Assert.That(game.State.Forces.Where(force => force.Side == Side.UsNavy).Sum(force => force.DummyCards),
+                Is.EqualTo(3));
+            Assert.That(game.State.Forces.Where(force => force.Side == Side.Plan).Sum(force => force.DummyCards),
+                Is.EqualTo(5));
+            var transfer = game.Execute(new GameCommand(GameCommandType.TransferDummyCards, Side.UsNavy,
+                game.State.Revision, factors: 1, formationId: "US Dummy Group",
+                newFormationId: "US Dummy Group 2"));
+            Assert.That(transfer.Accepted, Is.True);
+            Assert.That(game.State.Formation("US Dummy Group 2").DummyCards, Is.EqualTo(1));
+            Assert.That(game.State.Forces.Where(force => force.Side == Side.UsNavy).Sum(force => force.DummyCards),
+                Is.EqualTo(3));
+            Assert.That(game.State.Log.Last(), Does.Contain("no real ships transferred"));
+
+            var usView = game.CaptureSnapshotFor(Side.UsNavy);
+            Assert.That(usView.formations.Where(item => item.side == Side.Plan).All(item => item.dummyCards == 0), Is.True);
+            var planView = game.CaptureSnapshotFor(Side.Plan);
+            Assert.That(planView.formations.Where(item => item.side == Side.Plan).Sum(item => item.dummyCards), Is.EqualTo(5));
+        }
+
+        [Test]
+        public void ScenarioFiveSurfaceSearchLocatesButSonarClearsDummyContact()
+        {
+            var game = new ScenarioOneGame(55, null, true, false,
+                new SequenceDieRoller(1, 1), FirstIslandChainScenarios.GhostFleet);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Subic Convoy";
+            snapshot.phase = ActivationPhase.PlayerAction;
+            var observer = snapshot.formations.Single(item => item.id == "US Subic Convoy");
+            var dummy = snapshot.formations.Single(item => item.id == "PLAN Dummy Group");
+            dummy.column = observer.column;
+            dummy.row = observer.row;
+            game.ApplySnapshot(snapshot);
+
+            var visual = game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                game.State.Revision, targetId: "PLAN Dummy Group", formationId: "US Subic Convoy",
+                searchMode: "visual"));
+            Assert.That(visual.Accepted, Is.True);
+            Assert.That(game.State.Detection.ContactFor(Side.UsNavy, "PLAN Dummy Group").Level,
+                Is.EqualTo(ContactLevel.Located));
+            var attack = game.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                game.State.Revision, targetId: "PLAN Dummy Group"));
+            Assert.That(attack.Violation.Code, Is.EqualTo(RuleViolationCode.TargetUndetected));
+
+            var sonar = game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                game.State.Revision, targetId: "PLAN Dummy Group", formationId: "US Subic Convoy",
+                searchMode: "sonar"));
+            Assert.That(sonar.Accepted, Is.True);
+            Assert.That(game.State.Formation("PLAN Dummy Group"), Is.Null);
+            Assert.That(game.State.Forces.Where(force => force.Side == Side.Plan).Sum(force => force.DummyCards),
+                Is.EqualTo(5));
+        }
+
+        [Test]
         public void ScenarioStartsThreeHexesApart()
         {
             var battle = ScenarioOne.Create();

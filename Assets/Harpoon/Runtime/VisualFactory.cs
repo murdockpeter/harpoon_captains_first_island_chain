@@ -49,6 +49,34 @@ namespace Harpoon.Runtime
             return root;
         }
 
+        public static Transform CreateContactMarker(string name, Color sideColor)
+        {
+            var root = new GameObject(name).transform;
+            var buoy = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            buoy.name = "Unresolved Contact";
+            buoy.transform.SetParent(root);
+            buoy.transform.localPosition = new Vector3(0f, 0.12f, 0f);
+            buoy.transform.localScale = new Vector3(0.18f, 0.42f, 0.18f);
+            buoy.GetComponent<Renderer>().sharedMaterial = Material(
+                Color.Lerp(sideColor, new Color(0.78f, 0.28f, 0.95f), 0.48f), 0.42f, 0.72f);
+
+            var beacon = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            beacon.name = "Contact Beacon";
+            beacon.transform.SetParent(root);
+            beacon.transform.localPosition = new Vector3(0f, 0.58f, 0f);
+            beacon.transform.localScale = Vector3.one * 0.34f;
+            beacon.GetComponent<Renderer>().sharedMaterial = Material(
+                Color.Lerp(sideColor, Color.white, 0.35f), 0.18f, 0.85f);
+
+            var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            ring.name = "Contact Ring";
+            ring.transform.SetParent(root);
+            ring.transform.localPosition = new Vector3(0f, -0.28f, 0f);
+            ring.transform.localScale = new Vector3(0.72f, 0.025f, 0.72f);
+            ring.GetComponent<Renderer>().sharedMaterial = Material(sideColor, 0f, 0.7f);
+            return root;
+        }
+
         public static GameObject CreateMissile(Color color)
         {
             var missile = GameObject.CreatePrimitive(PrimitiveType.Sphere);

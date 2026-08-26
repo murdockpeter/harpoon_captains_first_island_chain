@@ -18,6 +18,7 @@ static class Program
             ScenarioTwoRoute();
             ScenarioThreeRoute();
             ScenarioFourRoute();
+            ScenarioFiveRoute();
             ReleaseVersionRoute();
             Console.WriteLine($"HARPOON CORE VALIDATION PASSED: {_checks} checks; scripted movement, missile, gunfire, scoring, stopping, and replay routes complete.");
             return 0;
@@ -412,6 +413,53 @@ static class Program
             arrival.State.Revision, new HexCoord(8, 10))).Accepted && arrival.State.IsGameOver &&
             arrival.State.EndReason == ScenarioEndReason.DestinationReached &&
             arrival.State.Result == "US NAVY VICTORY", "Scenario 4 convoy arrival acceptance route");
+    }
+
+    private static void ScenarioFiveRoute()
+    {
+        var definition = FirstIslandChainScenarios.GhostFleet;
+        var game = new ScenarioOneGame(5505, null, true, false,
+            new SequenceDieRoller(1, 1), definition);
+        Check(game.State.Scenario.Id == "fic-05" && game.State.Forces.Count == 4 &&
+            game.State.Forces.Where(force => force.Side == Side.UsNavy).Sum(force => force.DummyCards) == 3 &&
+            game.State.Forces.Where(force => force.Side == Side.Plan).Sum(force => force.DummyCards) == 5,
+            "Scenario 5 printed three-US/five-PLAN dummy allotment");
+
+        Check(game.Execute(new GameCommand(GameCommandType.TransferDummyCards, Side.UsNavy,
+            game.State.Revision, factors: 1, formationId: "US Dummy Group",
+            newFormationId: "US Dummy Group 2")).Accepted &&
+            game.State.Forces.Where(force => force.Side == Side.UsNavy).Sum(force => force.DummyCards) == 3,
+            "Scenario 5 creates a dummy force without changing its side's allotment");
+        var opponentSnapshot = game.CaptureSnapshotFor(Side.UsNavy);
+        Check(opponentSnapshot.formations.Where(item => item.side == Side.Plan)
+                .All(item => item.dummyCards == 0) &&
+            opponentSnapshot.commands.Any(item => item.type == GameCommandType.TransferDummyCards),
+            "Scenario 5 hides enemy dummy counts but publishes verified transfers");
+
+        var sensorGame = new ScenarioOneGame(5506, null, true, false,
+            new SequenceDieRoller(1, 1), definition);
+        var snapshot = sensorGame.CaptureSnapshot();
+        snapshot.activeSide = Side.UsNavy;
+        snapshot.activeFormationId = "US Subic Convoy";
+        snapshot.phase = ActivationPhase.PlayerAction;
+        var observer = snapshot.formations.Single(item => item.id == "US Subic Convoy");
+        var dummy = snapshot.formations.Single(item => item.id == "PLAN Dummy Group");
+        dummy.column = observer.column;
+        dummy.row = observer.row;
+        sensorGame.ApplySnapshot(snapshot);
+        Check(sensorGame.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                sensorGame.State.Revision, targetId: "PLAN Dummy Group", formationId: "US Subic Convoy",
+                searchMode: "visual")).Accepted &&
+            sensorGame.State.Detection.ContactFor(Side.UsNavy, "PLAN Dummy Group").Level == ContactLevel.Located,
+            "Scenario 5 visual search reports no surface ships without classifying a dummy");
+        Check(!sensorGame.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                sensorGame.State.Revision, targetId: "PLAN Dummy Group")).Accepted,
+            "Scenario 5 located dummy contact cannot be attacked");
+        Check(sensorGame.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                sensorGame.State.Revision, targetId: "PLAN Dummy Group", formationId: "US Subic Convoy",
+                searchMode: "sonar")).Accepted && sensorGame.State.Formation("PLAN Dummy Group") == null &&
+            sensorGame.State.Forces.Where(force => force.Side == Side.Plan).Sum(force => force.DummyCards) == 5,
+            "Scenario 5 successful sonar clears dummy force and preserves the dummy cards");
     }
 
     private static void ReleaseVersionRoute()

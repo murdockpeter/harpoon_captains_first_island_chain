@@ -32,14 +32,16 @@ namespace Harpoon.Core
         public Side Side { get; }
         public HexCoord Start { get; }
         public IReadOnlyList<ScenarioUnitDefinition> Units { get; }
+        public int DummyCards { get; }
 
         public ScenarioFormationDefinition(string id, Side side, HexCoord start,
-            IEnumerable<ScenarioUnitDefinition> units)
+            IEnumerable<ScenarioUnitDefinition> units, int dummyCards = 0)
         {
             Id = id ?? string.Empty;
             Side = side;
             Start = start;
             Units = (units ?? Array.Empty<ScenarioUnitDefinition>()).ToArray();
+            DummyCards = Math.Max(0, dummyCards);
         }
     }
 
@@ -192,8 +194,28 @@ namespace Harpoon.Core
                     })
             }, ScenarioScoringMode.ConvoyArrival, true, new HexCoord(8, 10), 4);
 
+        public static readonly ScenarioDefinition GhostFleet = new ScenarioDefinition(
+            "fic-05", "Ghost Fleet", "FIRST ISLAND CHAIN · SCENARIO 5",
+            "Picket Line is replayed with three US and five PLAN dummy cards, allowing both sides " +
+            "to create false task forces and transfer deception assets.",
+            "The US wins by bringing at least one merchant to Taipei / Zuoying or destroying the listed PLAN force. " +
+            "PLAN wins by sinking both merchants before either arrives.",
+            "First Island Chain p. 25; dummy cards p. 22; Captain's Rules p. 9", 0, true,
+            "us-merchant-1", "plan-type-052d", string.Empty, string.Empty,
+            new[]
+            {
+                new ScenarioFormationDefinition("US Subic Convoy", Side.UsNavy, new HexCoord(7, 16),
+                    PicketLine.Formations.First(item => item.Side == Side.UsNavy).Units),
+                new ScenarioFormationDefinition("US Dummy Group", Side.UsNavy, new HexCoord(7, 16),
+                    Array.Empty<ScenarioUnitDefinition>(), 3),
+                new ScenarioFormationDefinition("PLAN Picket Group", Side.Plan, new HexCoord(15, 10),
+                    PicketLine.Formations.First(item => item.Side == Side.Plan).Units),
+                new ScenarioFormationDefinition("PLAN Dummy Group", Side.Plan, new HexCoord(15, 10),
+                    Array.Empty<ScenarioUnitDefinition>(), 5)
+            }, ScenarioScoringMode.ConvoyArrival, true, new HexCoord(8, 10), 4);
+
         public static IReadOnlyList<ScenarioDefinition> Introductory { get; } =
-            new[] { ContactOffBashiChannel, FlagshipDuel, CloseAboard, PicketLine };
+            new[] { ContactOffBashiChannel, FlagshipDuel, CloseAboard, PicketLine, GhostFleet };
 
         public static ScenarioDefinition Get(string id) => Introductory.FirstOrDefault(item =>
             string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase));

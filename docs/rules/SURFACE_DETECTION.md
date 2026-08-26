@@ -31,6 +31,6 @@ Entering an enemy base hex automatically establishes visual contact even at Nigh
 
 ## Information and presentation
 
-Side-private projections expose friendly formations completely and classified enemy contacts completely. Undetected formations expose neither current position nor contents; lost contacts retain only their last-known position. Scenario 4 additionally redacts opposing commands, paths, contacts, logs, and rules transactions from network snapshots. Cyan pulsing rings indicate radiating radar; amber rings mark known enemy contacts. The authoritative debug trace is sealed during a hidden-information match and becomes available at game end.
+Side-private projections expose friendly formations completely and classified enemy contacts completely. Undetected formations expose neither current position nor contents; lost contacts retain only their last-known position. Scenarios 4–5 additionally redact opposing commands, paths, contacts, logs, and rules transactions from network snapshots. Scenario 5 publishes required dummy-card transfer verification but never the opponent's remaining dummy count. Cyan pulsing rings indicate radiating radar; amber rings mark known enemy contacts. The authoritative debug trace is sealed during a hidden-information match and becomes available at game end.
 
-Scenario 4 supplies a redacted authoritative multiplayer snapshot schema, so hidden contacts are supported over direct IP and Relay. Scenarios 1–3 remain fully public because those learning scenarios omit detection.
+Scenarios 4–5 use the redacted authoritative multiplayer snapshot schema, so hidden contacts and dummy deception are supported over direct IP and Relay. Scenarios 1–3 remain fully public because those learning scenarios omit detection.

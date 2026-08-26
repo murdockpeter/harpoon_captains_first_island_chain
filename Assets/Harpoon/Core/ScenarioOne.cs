@@ -58,6 +58,7 @@ namespace Harpoon.Core
         public bool radarRadiating;
         public bool radarDeclared;
         public bool arrived;
+        public int dummyCards;
         public DefensePairData[] defensePairs;
     }
 
@@ -114,7 +115,7 @@ namespace Harpoon.Core
             definition ??= FirstIslandChainScenarios.ContactOffBashiChannel;
             var formations = definition.Formations.Select(item => new TaskForceState(item.Id, item.Side, item.Start,
                 item.Units.Select(slot => new UnitState(ModernPlatformDatabase.Get(slot.PlatformId)
-                    .CreateUnit(item.Side, slot.Role, slot.UnitId))))).ToArray();
+                    .CreateUnit(item.Side, slot.Role, slot.UnitId))), item.DummyCards)).ToArray();
             var us = formations.First(item => item.Side == Side.UsNavy);
             var plan = formations.First(item => item.Side == Side.Plan);
             var useDetection = detectionRulesEnabled || definition.DetectionRulesEnabled;
@@ -168,7 +169,12 @@ namespace Harpoon.Core
                     hex.DistanceTo(subic) > State.Scenario.PlanDeploymentMinimumDistance &&
                     hex.DistanceTo(taipei) > State.Scenario.PlanDeploymentMinimumDistance).ToArray();
                 var index = new Random(seed).Next(legal.Length);
-                State.Enemy.MoveTo(legal[index]);
+                foreach (var planForce in State.Forces.Where(force => force.Side == Side.Plan))
+                {
+                    var stableId = planForce.Id.Aggregate(17,
+                        (value, character) => unchecked(value * 31 + character));
+                    planForce.MoveTo(legal[new Random(seed ^ stableId).Next(legal.Length)]);
+                }
                 State.Trace("SETUP", "PLAN AI selected a seeded legal concealed picket deployment.");
             }
             State.MovementCup = new MovementChitCup(random as IRandomSource ?? new SeededDieRoller(seed));
@@ -206,6 +212,9 @@ namespace Harpoon.Core
                         break;
                     case GameCommandType.DeployFormation:
                         accepted = DeployFormationInternal(command, out violation);
+                        break;
+                    case GameCommandType.TransferDummyCards:
+                        accepted = TransferDummyCardsInternal(command, out violation);
                         break;
                     case GameCommandType.SplitTaskForce:
                         accepted = SplitTaskForceInternal(command, out violation);
@@ -394,6 +403,55 @@ namespace Harpoon.Core
             }
             force.MoveTo(command.Destination);
             Trace("SETUP", $"PLAN player deployed {force.Id} to {command.Destination} outside both exclusion zones.");
+            return true;
+        }
+
+        private bool TransferDummyCardsInternal(GameCommand command, out RuleViolation violation)
+        {
+            violation = null;
+            var source = State.Formation(command.FormationId);
+            var target = State.Formation(command.TargetId);
+            if (source == null || source.Side != command.Actor || command.Factors <= 0 ||
+                command.Factors > source.DummyCards)
+            {
+                violation = new RuleViolation(RuleViolationCode.DummyActionUnavailable,
+                    "Choose a friendly source containing enough dummy cards.", "factors");
+                Trace("REJECTED", violation.Message);
+                return false;
+            }
+            if (target == null && !string.IsNullOrWhiteSpace(command.NewFormationId))
+            {
+                if (State.Formation(command.NewFormationId) != null)
+                {
+                    violation = new RuleViolation(RuleViolationCode.InvalidFormation,
+                        "That dummy task-force identity is already in use.", "newFormationId");
+                    Trace("REJECTED", violation.Message);
+                    return false;
+                }
+                target = new TaskForceState(command.NewFormationId, command.Actor, source.Position,
+                    Array.Empty<UnitState>());
+                State.AddForce(target);
+                if (State.Phase == ActivationPhase.AwaitingChit && State.MovementCup.FirstDrawPending)
+                    State.MovementCup.Reset(State.Forces);
+            }
+            if (target == null || target == source || target.Side != command.Actor)
+            {
+                violation = new RuleViolation(RuleViolationCode.InvalidFormation,
+                    "Dummy cards may transfer only to another friendly task force.", "targetId");
+                Trace("REJECTED", violation.Message);
+                return false;
+            }
+            source.TryRemoveDummyCards(command.Factors);
+            target.AddDummyCards(command.Factors);
+            Trace("DUMMY", $"{command.Actor} openly verified transfer of {command.Factors} dummy card(s) " +
+                $"from {source.Id} to {target.Id}; no real ship contents were revealed.");
+            AddLog($"{command.Actor} openly verified transfer of {command.Factors} dummy card(s); " +
+                "no real ships transferred.");
+            if (source.Units.Count == 0 && source.DummyCards == 0)
+            {
+                State.MovementCup.RemoveUndrawnFormation(source.Id);
+                State.RemoveForce(source);
+            }
             return true;
         }
 
@@ -602,6 +660,13 @@ namespace Harpoon.Core
             }
 
             var observer = State.ForceFor(side);
+            if (observer.IsDummyOnly)
+            {
+                violation = new RuleViolation(RuleViolationCode.DummyActionUnavailable,
+                    "Dummy task forces cannot detect or search.", "formationId");
+                Trace("REJECTED", violation.Message);
+                return false;
+            }
             var mode = string.IsNullOrWhiteSpace(command.SearchMode) ? command.TargetId : command.SearchMode;
             var targetId = string.IsNullOrWhiteSpace(command.SearchMode) ? string.Empty : command.TargetId;
             var target = FindDetectionTarget(side, targetId, mode);
@@ -611,6 +676,24 @@ namespace Harpoon.Core
                     "No enemy formation is in range of that sensor.", "targetId");
                 Trace("REJECTED", $"{side} {mode} search: {violation.Message}");
                 return false;
+            }
+            if (string.Equals(mode, "sonar", StringComparison.OrdinalIgnoreCase))
+            {
+                var prior = State.Detection.ContactFor(side, target.Id).IsDetected;
+                var detected = _detection.ResolveSonar(observer, target, prior);
+                if (detected && target.IsDummyOnly)
+                {
+                    var receiver = State.Forces.FirstOrDefault(force => force.Side == target.Side &&
+                        force != target && force.Units.Count > 0);
+                    receiver?.AddDummyCards(target.DummyCards);
+                    State.MovementCup.RemoveUndrawnFormation(target.Id);
+                    State.RemoveForce(target);
+                    Trace("DUMMY", $"{side} sonar proved {target.Id} was a dummy task force; its counter was removed " +
+                        "and its dummy cards returned to another friendly formation.");
+                    AddLog($"Sonar cleared false contact {target.Id}.");
+                }
+                else RecordDetection(side, target, DetectionMethod.Sonar, detected);
+                return true;
             }
             if (string.Equals(mode, "esm", StringComparison.OrdinalIgnoreCase))
             {
@@ -628,7 +711,7 @@ namespace Harpoon.Core
             if (!string.Equals(mode, "visual", StringComparison.OrdinalIgnoreCase))
             {
                 violation = new RuleViolation(RuleViolationCode.InvalidPayload,
-                    "Search mode must be visual or ESM; surface radar resolves automatically.", "searchMode");
+                    "Search mode must be visual, ESM, or sonar; surface radar resolves automatically.", "searchMode");
                 Trace("REJECTED", violation.Message);
                 return false;
             }
@@ -689,7 +772,7 @@ namespace Harpoon.Core
             }
             var attacker = State.ForceFor(side);
             var defender = FindOpponent(side, State.CurrentCommand?.TargetId);
-            if (State.DetectionRulesEnabled && !State.Detection.IsDetected(side, defender.Id))
+            if (State.DetectionRulesEnabled && !State.Detection.IsClassified(side, defender.Id))
             {
                 violation = new RuleViolation(RuleViolationCode.TargetUndetected,
                     "A task force may not be attacked until it is detected.", "targetId");
@@ -983,7 +1066,7 @@ namespace Harpoon.Core
         {
             var range = attacker.Position.DistanceTo(target.Position);
             return CanFireMissiles(attacker, range) && (!State.DetectionRulesEnabled ||
-                State.Detection.IsDetected(attacker.Side, target.Id));
+                State.Detection.IsClassified(attacker.Side, target.Id));
         }
 
         private static bool CanFireMissiles(TaskForceState force, int range) => force.ActiveUnits.Any(unit =>
@@ -992,7 +1075,7 @@ namespace Harpoon.Core
         private bool CanOpenAttack(TaskForceState attacker, TaskForceState defender)
         {
             if (attacker == null || defender == null || attacker.IsDestroyed || defender.IsDestroyed) return false;
-            if (State.DetectionRulesEnabled && !State.Detection.IsDetected(attacker.Side, defender.Id)) return false;
+            if (State.DetectionRulesEnabled && !State.Detection.IsClassified(attacker.Side, defender.Id)) return false;
             var range = attacker.Position.DistanceTo(defender.Position);
             return CanFireMissiles(attacker, range) || (range == 0 &&
                 (attacker.ActiveUnits.Any(unit => unit.EffectiveGuns > 0) ||
@@ -1655,6 +1738,8 @@ namespace Harpoon.Core
                 candidates = candidates.Where(force => force.Position == origin);
             else if (string.Equals(mode, "esm", StringComparison.OrdinalIgnoreCase))
                 candidates = candidates.Where(force => force.RadarRadiating && force.Position.DistanceTo(origin) == 1);
+            else if (string.Equals(mode, "sonar", StringComparison.OrdinalIgnoreCase))
+                candidates = candidates.Where(force => force.Position.DistanceTo(origin) <= 2);
             return candidates.OrderBy(force => force.Position.DistanceTo(origin)).FirstOrDefault();
         }
 
@@ -1704,6 +1789,14 @@ namespace Harpoon.Core
                 Trace("DETECTION", $"{observer} found no contact on {target.Id} by {method}.");
                 return;
             }
+            if (target.IsDummyOnly && method != DetectionMethod.Sonar)
+            {
+                var dummyContact = State.Detection.Detect(observer, target, method, State.Turn, false);
+                Trace("DETECTION", $"{observer} searched {target.Id} at {target.Position} by {method}: " +
+                    "NO SURFACE SHIPS PRESENT; submarine possibility remains unresolved.");
+                AddLog($"{observer} search at {dummyContact.LastKnownPosition}: no surface ships present.");
+                return;
+            }
             var contact = State.Detection.Detect(observer, target, method, State.Turn, true);
             Trace("DETECTION", $"{observer} detected and classified {target.Id} at {target.Position} by {method}; " +
                 "the contact is shared with all friendly task forces.");
@@ -1731,7 +1824,8 @@ namespace Harpoon.Core
             {
                 var merchants = State.Forces.Where(force => force.Side == Side.UsNavy)
                     .SelectMany(force => force.Units).Where(unit => unit.Definition.Role == UnitRole.Objective).ToArray();
-                if (State.Forces.Where(force => force.Side == Side.Plan).All(force => force.IsDestroyed))
+                if (State.Forces.Where(force => force.Side == Side.Plan && force.Units.Count > 0)
+                    .All(force => force.IsDestroyed))
                 {
                     EndByScore(ScenarioEndReason.ForceDestroyed);
                     return;
@@ -1795,7 +1889,8 @@ namespace Harpoon.Core
             {
                 var arrived = State.Forces.Any(force => force.Side == Side.UsNavy && force.HasArrived &&
                     force.ActiveUnits.Any(unit => unit.Definition.Role == UnitRole.Objective));
-                var planDestroyed = State.Forces.Where(force => force.Side == Side.Plan).All(force => force.IsDestroyed);
+                var planDestroyed = State.Forces.Where(force => force.Side == Side.Plan && force.Units.Count > 0)
+                    .All(force => force.IsDestroyed);
                 var merchants = State.Forces.Where(force => force.Side == Side.UsNavy).SelectMany(force => force.Units)
                     .Where(unit => unit.Definition.Role == UnitRole.Objective).ToArray();
                 var surviving = merchants.Count(unit => !unit.IsSunk);
@@ -1968,7 +2063,11 @@ namespace Harpoon.Core
                     shortMissiles = unit.ShortMissilesRemaining,
                     longMissiles = unit.LongMissilesRemaining
                 }).ToArray(),
-                eventLog = redact ? new[] { "Opponent position and formation contents remain hidden until detected." }
+                eventLog = redact
+                    ? new[] { "Opponent position and formation contents remain hidden until detected." }
+                        .Concat(State.CommandLog.Where(item => item.type == GameCommandType.TransferDummyCards)
+                            .Select(item => $"{item.actor} openly verified transfer of {item.factors} dummy card(s); no real ships transferred."))
+                        .ToArray()
                     : State.Log.ToArray(),
                 transactions = (redact ? Enumerable.Empty<RuleTransaction>() : State.Transactions)
                     .Select(item => new TransactionSnapshot
@@ -1990,7 +2089,8 @@ namespace Harpoon.Core
                     commandId = item.CommandId,
                     detail = item.Detail
                 }).ToArray(),
-                commands = State.CommandLog.Where(item => !redact || item.actor == viewer).Select(item => new GameCommandData
+                commands = State.CommandLog.Where(item => !redact || item.actor == viewer ||
+                    item.type == GameCommandType.TransferDummyCards).Select(item => new GameCommandData
                 {
                     id = item.id,
                     type = item.type,
@@ -2028,6 +2128,7 @@ namespace Harpoon.Core
                     radarRadiating = visible(force) && force.RadarRadiating,
                     radarDeclared = visible(force) && force.RadarDeclaredThisActivation,
                     arrived = visible(force) && force.HasArrived,
+                    dummyCards = force.Side == viewer || !redact ? force.DummyCards : 0,
                     defensePairs = visible(force) ? force.DefensePairs.ToArray() : Array.Empty<DefensePairData>()
                 }).ToArray(),
                 contacts = State.Detection.Contacts.Where(contact => !redact || contact.Observer == viewer)
@@ -2073,7 +2174,7 @@ namespace Harpoon.Core
                 {
                     var force = new TaskForceState(item.id, item.side, new HexCoord(item.column, item.row),
                         (item.unitIds ?? Array.Empty<string>()).Where(availableUnits.ContainsKey)
-                        .Select(id => availableUnits[id]));
+                        .Select(id => availableUnits[id]), item.dummyCards);
                     force.RestoreMovement(item.declaredSpeed, item.movementSpent,
                         (item.movementPath ?? Array.Empty<HexCoordSnapshot>())
                         .Select(hex => new HexCoord(hex.column, hex.row)));

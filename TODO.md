@@ -213,13 +213,13 @@ Each scenario is both playable content and the acceptance test for a new rules f
 
 ## Scenario 5 — Ghost Fleet: dummy units
 
-- [ ] Add three US and five PLAN dummy cards.
-- [ ] Allow legal dummy distribution and transfer between task forces.
-- [ ] Reveal transfers as required without leaking unrelated contents.
-- [ ] Resolve radar/visual searches of dummy-only forces as “no surface ships present.”
-- [ ] Remove a dummy after successful sonar detection.
-- [ ] Add side-private UI and AI knowledge boundaries.
-- [ ] Add deterministic Scenario 5 acceptance tests.
+- [x] Add three US and five PLAN dummy cards.
+- [x] Allow legal dummy distribution and transfer between task forces.
+- [x] Reveal transfers as required without leaking unrelated contents.
+- [x] Resolve radar/visual searches of dummy-only forces as “no surface ships present.”
+- [x] Remove a dummy after successful sonar detection.
+- [x] Add side-private UI and AI knowledge boundaries.
+- [x] Add deterministic Scenario 5 acceptance tests.
 
 ## Scenario 6 — Wolves of the Bashi Channel: submarines
 

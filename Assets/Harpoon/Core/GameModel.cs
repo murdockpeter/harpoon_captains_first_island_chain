@@ -231,6 +231,8 @@ namespace Harpoon.Core
         public IReadOnlyList<UnitState> Units => _units;
         public IReadOnlyList<DefensePairData> DefensePairs => _defensePairs;
         public bool HasArrived { get; private set; }
+        public int DummyCards { get; private set; }
+        public bool IsDummyOnly => _units.Count == 0 && DummyCards > 0;
         public IEnumerable<UnitState> ActiveUnits => _units.Where(unit => !unit.IsSunk);
         public bool IsDestroyed => _units.Count > 0 && _units.All(unit => unit.IsSunk);
         public UnitState Objective => _units.FirstOrDefault(unit => unit.Definition.Role == UnitRole.Objective);
@@ -240,12 +242,14 @@ namespace Harpoon.Core
         public bool CanRadiateRadar => ActiveUnits.Any(unit => unit.EffectiveSurfaceSearchRadar > 0);
         public bool CanUseEsm => ActiveUnits.Any(unit => unit.EffectiveEsm);
 
-        public TaskForceState(string id, Side side, HexCoord position, IEnumerable<UnitState> units)
+        public TaskForceState(string id, Side side, HexCoord position, IEnumerable<UnitState> units,
+            int dummyCards = 0)
         {
             Id = id;
             Side = side;
             Position = position;
             _units = new List<UnitState>(units);
+            DummyCards = Math.Max(0, dummyCards);
         }
 
         public int EffectiveSpeed
@@ -253,7 +257,7 @@ namespace Harpoon.Core
             get
             {
                 var active = ActiveUnits.ToArray();
-                return active.Length == 0 ? 0 : Math.Max(1, active.Min(unit => unit.EffectiveSpeed));
+                return active.Length == 0 ? (IsDummyOnly ? 3 : 0) : Math.Max(1, active.Min(unit => unit.EffectiveSpeed));
             }
         }
 
@@ -297,6 +301,13 @@ namespace Harpoon.Core
 
         public void MoveTo(HexCoord destination) => Position = destination;
         public void MarkArrived() => HasArrived = true;
+        public void AddDummyCards(int count) => DummyCards += Math.Max(0, count);
+        public bool TryRemoveDummyCards(int count)
+        {
+            if (count <= 0 || count > DummyCards) return false;
+            DummyCards -= count;
+            return true;
+        }
 
         public TaskForceState SplitOff(string newId, IEnumerable<string> unitIds)
         {
@@ -403,6 +414,12 @@ namespace Harpoon.Core
             if (_forces.Any(item => item.Id == force.Id))
                 throw new InvalidOperationException($"Formation ID '{force.Id}' already exists.");
             _forces.Add(force);
+        }
+
+        public void RemoveForce(TaskForceState force)
+        {
+            if (force == null || force == Player || force == Enemy) return;
+            _forces.Remove(force);
         }
 
         internal void ReplaceForces(IEnumerable<TaskForceState> forces)
