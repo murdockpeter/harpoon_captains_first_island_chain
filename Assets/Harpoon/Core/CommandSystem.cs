@@ -8,11 +8,13 @@ namespace Harpoon.Core
     {
         GameState State { get; }
         CommandResult Execute(GameCommand command);
-        SideGameView ViewFor(Side viewer, bool opponentKnown = true);
+        SideGameView ViewFor(Side viewer, bool? opponentKnown = null);
     }
 
     public enum GameCommandType
     {
+        DrawMovementChit,
+        SplitTaskForce,
         DeclareSpeed,
         Move,
         RadiateRadar,
@@ -42,6 +44,15 @@ namespace Harpoon.Core
         InvalidSpeed,
         MovementIncomplete,
         MovementExhausted,
+        CupNotReady,
+        SplitWindowClosed,
+        InvalidFormation,
+        InvalidUnitSelection,
+        NightRestricted,
+        RadarDeclarationRequired,
+        SensorUnavailable,
+        TargetUndetected,
+        NoDetectionOpportunity,
         NoLegalWeapon,
         AlreadyActed,
         InvalidPayload,
@@ -58,6 +69,8 @@ namespace Harpoon.Core
         Movement,
         SpeedDeclared,
         MovementOpportunity,
+        ChitDrawn,
+        FormationSplit,
         DieRolled,
         Ammunition,
         Combat,
@@ -82,6 +95,10 @@ namespace Harpoon.Core
         public int factors;
         public string targetId;
         public bool enabled;
+        public string formationId;
+        public string newFormationId;
+        public string[] unitIds;
+        public string searchMode;
     }
 
     public sealed class GameCommand
@@ -95,10 +112,16 @@ namespace Harpoon.Core
         public int Factors { get; }
         public string TargetId { get; }
         public bool Enabled { get; }
+        public string FormationId { get; }
+        public string NewFormationId { get; }
+        public IReadOnlyList<string> UnitIds { get; }
+        public string SearchMode { get; }
 
         public GameCommand(GameCommandType type, Side actor, int expectedRevision,
             HexCoord destination = default, int declaredSpeed = 0, int factors = 0,
-            string targetId = null, bool enabled = false, string id = null)
+            string targetId = null, bool enabled = false, string id = null,
+            string formationId = null, string newFormationId = null, IEnumerable<string> unitIds = null,
+            string searchMode = null)
         {
             Id = string.IsNullOrWhiteSpace(id) ? Guid.NewGuid().ToString("N") : id;
             Type = type;
@@ -109,6 +132,10 @@ namespace Harpoon.Core
             Factors = factors;
             TargetId = targetId ?? string.Empty;
             Enabled = enabled;
+            FormationId = formationId ?? string.Empty;
+            NewFormationId = newFormationId ?? string.Empty;
+            UnitIds = (unitIds ?? Array.Empty<string>()).ToArray();
+            SearchMode = searchMode ?? string.Empty;
         }
 
         public GameCommandData ToData() => new GameCommandData
@@ -122,7 +149,11 @@ namespace Harpoon.Core
             declaredSpeed = DeclaredSpeed,
             factors = Factors,
             targetId = TargetId,
-            enabled = Enabled
+            enabled = Enabled,
+            formationId = FormationId,
+            newFormationId = NewFormationId,
+            unitIds = UnitIds.ToArray(),
+            searchMode = SearchMode
         };
 
         public static GameCommand FromData(GameCommandData data)
@@ -130,7 +161,8 @@ namespace Harpoon.Core
             if (data == null) throw new ArgumentNullException(nameof(data));
             return new GameCommand(data.type, data.actor, data.expectedRevision,
                 new HexCoord(data.column, data.row), data.declaredSpeed, data.factors,
-                data.targetId, data.enabled, data.id);
+                data.targetId, data.enabled, data.id, data.formationId,
+                data.newFormationId, data.unitIds, data.searchMode);
         }
     }
 
@@ -228,13 +260,20 @@ namespace Harpoon.Core
         public int MovementPointsSpent { get; }
         public int MovementRemaining { get; }
         public IReadOnlyList<UnitView> Units { get; }
+        public ContactLevel ContactStatus { get; }
+        public DetectionMethod DetectionMethod { get; }
 
-        public FormationViewState(TaskForceState force, bool isKnown, bool includePrivateDetails)
+        public FormationViewState(TaskForceState force, bool isKnown, bool includePrivateDetails,
+            ContactRecord contact = null)
         {
-            Id = isKnown ? force.Id : "UNKNOWN CONTACT";
+            ContactStatus = isKnown ? ContactLevel.Classified : contact?.Level ?? ContactLevel.Undetected;
+            DetectionMethod = contact?.Method ?? (isKnown ? DetectionMethod.ScenarioKnown : DetectionMethod.None);
+            Id = isKnown ? force.Id : $"CONTACT {force.Side}";
             Side = force.Side;
             IsKnown = isKnown;
-            Position = isKnown ? force.Position : default;
+            // Task-force counters move openly on the board; detection controls whether the
+            // counter represents real surface ships and whether its contents can be examined.
+            Position = force.Position;
             DeclaredSpeed = isKnown ? force.DeclaredSpeed : -1;
             MovementPointsSpent = isKnown ? force.MovementPointsSpent : 0;
             MovementRemaining = isKnown ? force.MovementRemaining : 0;
@@ -251,19 +290,37 @@ namespace Harpoon.Core
         public int Turn { get; }
         public ActivationPhase Phase { get; }
         public Side ActiveSide { get; }
+        public string ActiveFormationId { get; }
+        public int Day { get; }
+        public TimeOfDay TimeOfDay { get; }
+        public int ChitsRemaining { get; }
         public FormationViewState OwnFormation { get; }
         public FormationViewState OpposingFormation { get; }
+        public IReadOnlyList<FormationViewState> OwnFormations { get; }
+        public IReadOnlyList<FormationViewState> OpposingFormations { get; }
 
-        public SideGameView(Side viewer, GameState state, bool opponentKnown)
+        public SideGameView(Side viewer, GameState state, bool? opponentKnown)
         {
             Viewer = viewer;
             Revision = state.Revision;
             Turn = state.Turn;
             Phase = state.Phase;
             ActiveSide = state.ActiveSide;
-            OwnFormation = new FormationViewState(state.ForceFor(viewer), true, true);
-            // Scenario 1 omits detection, so opponentKnown is true there. Future scenarios can hide it.
-            OpposingFormation = new FormationViewState(state.ForceFor(Opposing(viewer)), opponentKnown, opponentKnown);
+            ActiveFormationId = state.ActiveFormationId;
+            Day = state.Day;
+            TimeOfDay = state.TimeOfDay;
+            ChitsRemaining = state.MovementCup?.Remaining.Count ?? 0;
+            OwnFormations = state.Forces.Where(force => force.Side == viewer)
+                .Select(force => new FormationViewState(force, true, true)).ToArray();
+            OpposingFormations = state.Forces.Where(force => force.Side == Opposing(viewer)).Select(force =>
+            {
+                var contact = state.Detection.ContactFor(viewer, force.Id);
+                var classified = opponentKnown ?? (!state.DetectionRulesEnabled ||
+                                 contact.Level == ContactLevel.Classified);
+                return new FormationViewState(force, classified, classified, contact);
+            }).ToArray();
+            OwnFormation = OwnFormations.First();
+            OpposingFormation = OpposingFormations.FirstOrDefault();
         }
 
         private static Side Opposing(Side side) => side == Side.UsNavy ? Side.Plan : Side.UsNavy;

@@ -6,7 +6,7 @@ namespace Harpoon.Core
 {
     public enum Side { UsNavy, Plan }
     public enum UnitRole { Escort, Objective }
-    public enum ActivationPhase { DeclareSpeed, PlayerMove, PlayerAction, GameOver }
+    public enum ActivationPhase { AwaitingChit, DeclareSpeed, PlayerMove, PlayerAction, GameOver }
 
     public sealed class RuleTransaction
     {
@@ -47,11 +47,12 @@ namespace Harpoon.Core
         public int SurfaceSearchRadar { get; }
         public int Sonar { get; }
         public int AntiSubmarineWarfare { get; }
+        public bool EsmEquipped { get; }
 
         public UnitDefinition(string id, string displayName, Side side, UnitRole role, int shortSam,
             int longSam, int pointDefense, int shortSsm, int longSsm, int guns, int speed, int hull,
             int airSearchRadar = 0, int surfaceSearchRadar = 0, int sonar = 0,
-            int antiSubmarineWarfare = 0)
+            int antiSubmarineWarfare = 0, bool esmEquipped = true)
         {
             Id = id;
             DisplayName = displayName;
@@ -69,6 +70,7 @@ namespace Harpoon.Core
             SurfaceSearchRadar = surfaceSearchRadar;
             Sonar = sonar;
             AntiSubmarineWarfare = antiSubmarineWarfare;
+            EsmEquipped = esmEquipped;
         }
     }
 
@@ -108,6 +110,8 @@ namespace Harpoon.Core
         public int EffectiveGuns => IsSunk ? 0 : HasTwoThirdsDamage ? (Definition.Guns + 1) / 2 : Definition.Guns;
         public int EffectiveAirSearchRadar => HasHalfDamage || IsSunk ? 0 : Definition.AirSearchRadar;
         public int EffectiveSonar => HasTwoThirdsDamage || IsSunk ? 0 : Definition.Sonar;
+        public int EffectiveSurfaceSearchRadar => IsSunk ? 0 : Definition.SurfaceSearchRadar;
+        public bool EffectiveEsm => !HasTwoThirdsDamage && !IsSunk && Definition.EsmEquipped;
 
         public void ApplyDamage(int hits)
         {
@@ -154,7 +158,11 @@ namespace Harpoon.Core
         public IReadOnlyList<UnitState> Units => _units;
         public IEnumerable<UnitState> ActiveUnits => _units.Where(unit => !unit.IsSunk);
         public bool IsDestroyed => _units.All(unit => unit.IsSunk);
-        public UnitState Objective => _units.First(unit => unit.Definition.Role == UnitRole.Objective);
+        public UnitState Objective => _units.FirstOrDefault(unit => unit.Definition.Role == UnitRole.Objective);
+        public bool RadarRadiating { get; private set; }
+        public bool RadarDeclaredThisActivation { get; private set; }
+        public bool CanRadiateRadar => ActiveUnits.Any(unit => unit.EffectiveSurfaceSearchRadar > 0);
+        public bool CanUseEsm => ActiveUnits.Any(unit => unit.EffectiveEsm);
 
         public TaskForceState(string id, Side side, HexCoord position, IEnumerable<UnitState> units)
         {
@@ -195,7 +203,33 @@ namespace Harpoon.Core
             _movementPath.Clear();
         }
 
+        public void BeginSensorDeclaration() => RadarDeclaredThisActivation = false;
+
+        public void DeclareRadar(bool enabled)
+        {
+            RadarRadiating = enabled && CanRadiateRadar;
+            RadarDeclaredThisActivation = true;
+        }
+
+        public void SpendMovementPointSearching()
+        {
+            if (MovementRemaining <= 0)
+                throw new InvalidOperationException("No movement point remains for another search.");
+            MovementPointsSpent++;
+            _movementPath.Add(Position);
+        }
+
         public void MoveTo(HexCoord destination) => Position = destination;
+
+        public TaskForceState SplitOff(string newId, IEnumerable<string> unitIds)
+        {
+            var selectedIds = new HashSet<string>(unitIds ?? Array.Empty<string>());
+            var selected = _units.Where(unit => selectedIds.Contains(unit.Definition.Id)).ToArray();
+            if (selected.Length == 0 || selected.Length >= _units.Count)
+                throw new InvalidOperationException("A split must move at least one unit and leave at least one unit behind.");
+            foreach (var unit in selected) _units.Remove(unit);
+            return new TaskForceState(newId, Side, Position, selected);
+        }
 
         internal void RestoreMovement(int declaredSpeed, int movementPointsSpent, IEnumerable<HexCoord> path)
         {
@@ -204,21 +238,38 @@ namespace Harpoon.Core
             _movementPath.Clear();
             _movementPath.AddRange(path ?? Array.Empty<HexCoord>());
         }
+
+        internal void RestoreSensors(bool radarRadiating, bool radarDeclared)
+        {
+            RadarRadiating = radarRadiating;
+            RadarDeclaredThisActivation = radarDeclared;
+        }
     }
 
     public sealed class GameState
     {
-        public TaskForceState Player { get; }
-        public TaskForceState Enemy { get; }
+        private readonly List<TaskForceState> _forces;
+        public TaskForceState Player { get; private set; }
+        public TaskForceState Enemy { get; private set; }
+        public IReadOnlyList<TaskForceState> Forces => _forces;
         public OperationalMap Map { get; }
         public int Turn { get; internal set; } = 1;
         public int MaximumTurns { get; }
-        public ActivationPhase Phase { get; internal set; } = ActivationPhase.DeclareSpeed;
+        public ActivationPhase Phase { get; internal set; } = ActivationPhase.AwaitingChit;
         public bool PlayerHasMoved { get; internal set; }
         public bool PlayerHasAttacked { get; internal set; }
         public bool PlayerHasSearched { get; internal set; }
         public bool EnemyActivatedFirst { get; internal set; }
         public Side ActiveSide { get; internal set; } = Side.UsNavy;
+        public string ActiveFormationId { get; internal set; } = string.Empty;
+        public TaskForceState ActiveForce => _forces.FirstOrDefault(force => force.Id == ActiveFormationId);
+        public MovementChitCup MovementCup { get; internal set; }
+        public bool DetectionRulesEnabled { get; }
+        public DetectionTracker Detection { get; } = new DetectionTracker();
+        public int Day => ((Turn - 1) / 3) + 1;
+        public TimeOfDay TimeOfDay => (TimeOfDay)((Turn - 1) % 3);
+        public string TimeLabel => $"Day {Day} " + (TimeOfDay == TimeOfDay.Am ? "AM" :
+            TimeOfDay == TimeOfDay.Pm ? "PM" : "Night");
         public bool UsActivated { get; internal set; }
         public bool PlanActivated { get; internal set; }
         public bool IsGameOver { get; internal set; }
@@ -230,12 +281,15 @@ namespace Harpoon.Core
         public List<GameCommandData> CommandLog { get; } = new List<GameCommandData>();
         internal GameCommand CurrentCommand { get; set; }
 
-        public GameState(TaskForceState player, TaskForceState enemy, int maximumTurns, OperationalMap map = null)
+        public GameState(TaskForceState player, TaskForceState enemy, int maximumTurns, OperationalMap map = null,
+            bool detectionRulesEnabled = false)
         {
             Player = player;
             Enemy = enemy;
+            _forces = new List<TaskForceState> { player, enemy };
             MaximumTurns = maximumTurns;
             Map = map ?? FirstIslandChainMap.Instance;
+            DetectionRulesEnabled = detectionRulesEnabled;
         }
 
         public void Trace(string category, string detail)
@@ -245,9 +299,33 @@ namespace Harpoon.Core
                 CurrentCommand?.Actor ?? ActiveSide, CurrentCommand?.Id, detail));
         }
 
-        public TaskForceState ForceFor(Side side) => side == Side.UsNavy ? Player : Enemy;
+        public TaskForceState ForceFor(Side side) => ActiveForce != null && ActiveForce.Side == side
+            ? ActiveForce : _forces.First(force => force.Side == side);
 
-        public SideGameView ViewFor(Side viewer, bool opponentKnown = true) =>
+        public TaskForceState Formation(string id) =>
+            _forces.FirstOrDefault(force => string.Equals(force.Id, id, StringComparison.Ordinal));
+
+        public void AddForce(TaskForceState force)
+        {
+            if (force == null) throw new ArgumentNullException(nameof(force));
+            if (_forces.Any(item => item.Id == force.Id))
+                throw new InvalidOperationException($"Formation ID '{force.Id}' already exists.");
+            _forces.Add(force);
+        }
+
+        internal void ReplaceForces(IEnumerable<TaskForceState> forces)
+        {
+            _forces.Clear();
+            _forces.AddRange(forces ?? Array.Empty<TaskForceState>());
+            Player = _forces.First(force => force.Side == Side.UsNavy);
+            Enemy = _forces.First(force => force.Side == Side.Plan);
+        }
+
+        public UnitState ObjectiveFor(Side side) => _forces.Where(force => force.Side == side)
+            .SelectMany(force => force.Units)
+            .First(unit => unit.Definition.Role == UnitRole.Objective);
+
+        public SideGameView ViewFor(Side viewer, bool? opponentKnown = null) =>
             new SideGameView(viewer, this, opponentKnown);
 
         private static RuleEventType EventTypeFor(string category)
@@ -262,6 +340,8 @@ namespace Harpoon.Core
                 case "MOVEMENT": return RuleEventType.Movement;
                 case "SPEED": return RuleEventType.SpeedDeclared;
                 case "OPPORTUNITY": return RuleEventType.MovementOpportunity;
+                case "CHIT": return RuleEventType.ChitDrawn;
+                case "SPLIT": return RuleEventType.FormationSplit;
                 case "DIE": return RuleEventType.DieRolled;
                 case "AMMUNITION": return RuleEventType.Ammunition;
                 case "COMBAT": return RuleEventType.Combat;

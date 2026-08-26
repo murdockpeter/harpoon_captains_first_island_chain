@@ -16,6 +16,7 @@ namespace Harpoon.Runtime
         private ScenarioOneGame _game;
         private Transform _playerMarker;
         private Transform _enemyMarker;
+        private readonly Dictionary<string, Transform> _formationMarkers = new Dictionary<string, Transform>();
         private LineRenderer _movementPathPreview;
         private GUIStyle _titleStyle;
         private GUIStyle _labelStyle;
@@ -27,8 +28,10 @@ namespace Harpoon.Runtime
         private GUIStyle _debugHeaderStyle;
         private GUIStyle _activationStyle;
         private Side _selectedFormation = Side.UsNavy;
+        private string _selectedFormationId = "US Task Force";
         private HexCoord? _hoveredHex;
         private bool _showDebug;
+        private bool _detectionTestMode;
         private Vector2 _debugScroll;
         private int _lastDebugCount;
         private readonly MultiplayerNetwork _network = new MultiplayerNetwork();
@@ -61,12 +64,15 @@ namespace Harpoon.Runtime
         private AudioClip _impactClip;
         private AudioClip _actionClip;
         private AudioClip _rejectClip;
+        private AudioClip _chitClip;
+        private float _chitBannerUntil;
+        private string _chitBanner = string.Empty;
         private object _speechVoice;
         private static readonly string[] SoundboardNames =
         {
             "You sank my battleship!", "Incoming!", "All hands brace!", "Good hunting!"
         };
-        private string _status = "Declare task-force speed to begin the activation.";
+        private string _status = "Draw the first movement chit to begin the turn.";
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureBootstrap()
@@ -107,7 +113,7 @@ namespace Harpoon.Runtime
                 var formation = hit.collider.GetComponentInParent<FormationView>();
                 if (formation != null)
                 {
-                    SelectFormation(formation.Side);
+                    SelectFormation(formation.Side, formation.FormationId);
                     HighlightMovement();
                     return;
                 }
@@ -124,11 +130,13 @@ namespace Harpoon.Runtime
         private void Restart()
         {
             _pendingCommands.Clear();
-            _game = new ScenarioOneGame(2026, null, _sessionMode != SessionMode.SinglePlayer);
+            _game = new ScenarioOneGame(2026, null, _sessionMode != SessionMode.SinglePlayer,
+                _detectionTestMode);
             _game.AttackResolved += OnAttackResolved;
             _game.CommandProcessed += OnCommandProcessed;
             _selectedFormation = LocalSide;
-            _status = "Declare task-force speed to begin the activation.";
+            _selectedFormationId = _game.State.Forces.First(force => force.Side == LocalSide).Id;
+            _status = "Draw the first movement chit to begin the turn.";
             _debugScroll = Vector2.zero;
             _lastDebugCount = 0;
             RefreshViews();
@@ -188,10 +196,89 @@ namespace Harpoon.Runtime
             if (IsHostSession) BroadcastSnapshot();
         }
 
+        private void DrawLocalMovementChit()
+        {
+            if (IsClientSession)
+            {
+                SendCommand(GameCommandType.DrawMovementChit);
+                _status = "Movement-chit draw requested from host.";
+                return;
+            }
+            var result = _game.Execute(new GameCommand(GameCommandType.DrawMovementChit,
+                LocalSide, _game.State.Revision));
+            _status = result.Accepted
+                ? _game.State.ActiveSide == LocalSide ? "Your formation chit was drawn. Declare speed."
+                    : "Opponent formation chit drawn."
+                : result.Summary;
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void SplitLocalFormation(TaskForceState source, UnitState unit)
+        {
+            var number = _game.State.Forces.Count(force => force.Side == LocalSide) + 1;
+            var newId = $"{SideLabel(LocalSide)} Task Force {number}";
+            var command = new GameCommand(GameCommandType.SplitTaskForce, LocalSide,
+                _game.State.Revision, formationId: source.Id, newFormationId: newId,
+                unitIds: new[] { unit.Definition.Id });
+            if (IsClientSession)
+            {
+                _pendingCommands[command.Id] = command;
+                NetworkSend(new NetworkMessage { kind = "command", command = command.ToData() });
+                _status = $"Split request for {unit.Definition.DisplayName} sent to host.";
+                return;
+            }
+            var result = _game.Execute(command);
+            _status = result.Accepted ? $"Formed {newId}; its chit was added to the cup." : result.Summary;
+            if (result.Accepted) SelectFormation(LocalSide, newId);
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void DeclareLocalRadar(bool enabled)
+        {
+            var command = new GameCommand(GameCommandType.RadiateRadar, LocalSide,
+                _game.State.Revision, enabled: enabled, formationId: _game.State.ActiveFormationId);
+            if (IsClientSession)
+            {
+                _pendingCommands[command.Id] = command;
+                NetworkSend(new NetworkMessage { kind = "command", command = command.ToData() });
+                _status = $"Radar {(enabled ? "radiate" : "silent")} declaration sent to host.";
+                return;
+            }
+            var result = _game.Execute(command);
+            _status = result.Accepted ? $"Surface-search radar {(enabled ? "radiating" : "silent")}." : result.Summary;
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void SearchLocal(string mode, TaskForceState target)
+        {
+            if (target == null) return;
+            var command = new GameCommand(GameCommandType.Search, LocalSide, _game.State.Revision,
+                targetId: target.Id, formationId: _game.State.ActiveFormationId, searchMode: mode);
+            if (IsClientSession)
+            {
+                _pendingCommands[command.Id] = command;
+                NetworkSend(new NetworkMessage { kind = "command", command = command.ToData() });
+                _status = $"{mode.ToUpperInvariant()} search sent to host.";
+                return;
+            }
+            var result = _game.Execute(command);
+            var contact = _game.State.Detection.ContactFor(LocalSide, target.Id);
+            _status = result.Accepted
+                ? contact.IsDetected ? $"CONTACT: {target.Id} classified by {mode.ToUpperInvariant()}."
+                    : $"No {mode.ToUpperInvariant()} contact."
+                : result.Summary;
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
+        }
+
         private void StartHosting()
         {
             if (!TryReadPort(out var port)) return;
             _sessionMode = SessionMode.Host;
+            _detectionTestMode = false;
             _localSide = _hostSideChoice;
             _network.StartHost(port);
             _chat.Clear();
@@ -204,6 +291,7 @@ namespace Harpoon.Runtime
         {
             if (!TryReadPort(out var port)) return;
             _sessionMode = SessionMode.Client;
+            _detectionTestMode = false;
             _localSide = Side.Plan;
             _network.StartClient(_ipAddress.Trim(), port);
             _chat.Clear();
@@ -221,6 +309,7 @@ namespace Harpoon.Runtime
             }
             _network.Stop();
             _sessionMode = SessionMode.PublicHost;
+            _detectionTestMode = false;
             _localSide = _hostSideChoice;
             _chat.Clear();
             _chat.Add($"SYSTEM: Creating public encrypted Relay session as {SideLabel(_localSide)}.");
@@ -234,6 +323,7 @@ namespace Harpoon.Runtime
             if (_joinCode.Trim().Length < 6) { _status = "Enter the host's Relay join code."; return; }
             _network.Stop();
             _sessionMode = SessionMode.PublicClient;
+            _detectionTestMode = false;
             _localSide = Side.Plan;
             _chat.Clear();
             _chat.Add("SYSTEM: Joining public encrypted Relay session; awaiting side assignment.");
@@ -246,6 +336,7 @@ namespace Harpoon.Runtime
         {
             _network.Stop();
             _sessionMode = SessionMode.PublicClient;
+            _detectionTestMode = false;
             _localSide = Side.Plan;
             _chat.Clear();
             _chat.Add("SYSTEM: Joining selected public session; awaiting side assignment.");
@@ -328,7 +419,9 @@ namespace Harpoon.Runtime
                                          .Where(item => item.actor != LocalSide))
                                 PlayClientCommandFeedback(GameCommand.FromData(observed), true);
                             RefreshViews();
-                            _status = _game.State.ActiveSide == LocalSide ? "Your activation." : "Waiting for opponent.";
+                            _status = _game.State.Phase == ActivationPhase.AwaitingChit
+                                ? "Draw the first movement chit to begin the turn."
+                                : _game.State.ActiveSide == LocalSide ? "Your activation." : "Waiting for opponent.";
                         }
                         break;
                     case "commandResult":
@@ -403,7 +496,7 @@ namespace Harpoon.Runtime
                 return;
             }
             var command = new GameCommand(type, LocalSide, _game.State.Revision, coordinate,
-                declaredSpeed: declaredSpeed);
+                declaredSpeed: declaredSpeed, formationId: _game.State.ActiveFormationId);
             _pendingCommands[command.Id] = command;
             NetworkSend(new NetworkMessage
             {
@@ -506,6 +599,12 @@ namespace Harpoon.Runtime
             {
                 var frequency = time < 0.13f ? 190f : 125f;
                 return Mathf.Sin(time * Mathf.PI * 2f * frequency) * 0.22f;
+            });
+            _chitClip = CreateProceduralClip("Movement chit draw", 0.56f, time =>
+            {
+                var click = Mathf.Sin(time * Mathf.PI * 2f * (210f + time * 520f));
+                var rattle = Mathf.Sin(time * 4733f) * Mathf.Sin(time * 1901f);
+                return (click * 0.24f + rattle * 0.08f) * Mathf.Exp(-time * 4f);
             });
         }
 
@@ -663,8 +762,10 @@ namespace Harpoon.Runtime
         {
             _playerMarker = VisualFactory.CreateFormation("US Task Force", new Color(0.08f, 0.46f, 0.95f), false);
             _enemyMarker = VisualFactory.CreateFormation("PLAN Task Force", new Color(0.9f, 0.12f, 0.08f), true);
-            _playerMarker.gameObject.AddComponent<FormationView>().Initialize(Side.UsNavy);
-            _enemyMarker.gameObject.AddComponent<FormationView>().Initialize(Side.Plan);
+            _playerMarker.gameObject.AddComponent<FormationView>().Initialize(Side.UsNavy, "US Task Force");
+            _enemyMarker.gameObject.AddComponent<FormationView>().Initialize(Side.Plan, "PLAN Task Force");
+            _formationMarkers["US Task Force"] = _playerMarker;
+            _formationMarkers["PLAN Task Force"] = _enemyMarker;
             var previewObject = new GameObject("Movement Step Preview");
             _movementPathPreview = previewObject.AddComponent<LineRenderer>();
             _movementPathPreview.useWorldSpace = true;
@@ -731,26 +832,54 @@ namespace Harpoon.Runtime
         private void RefreshViews()
         {
             if (_game == null || _playerMarker == null) return;
-            _playerMarker.position = WorldPosition(_game.State.Player.Position) + Vector3.up * 0.75f;
-            _enemyMarker.position = WorldPosition(_game.State.Enemy.Position) + Vector3.up * 0.75f;
-            _playerMarker.gameObject.SetActive(!_game.State.Player.IsDestroyed);
-            _enemyMarker.gameObject.SetActive(!_game.State.Enemy.IsDestroyed);
-            _playerMarker.localScale = _selectedFormation == Side.UsNavy ? Vector3.one * 1.16f : Vector3.one;
-            _enemyMarker.localScale = _selectedFormation == Side.Plan ? Vector3.one * 1.16f : Vector3.one;
+            foreach (var force in _game.State.Forces)
+            {
+                if (!_formationMarkers.TryGetValue(force.Id, out var marker))
+                {
+                    var color = force.Side == Side.UsNavy
+                        ? new Color(0.08f, 0.46f, 0.95f) : new Color(0.9f, 0.12f, 0.08f);
+                    marker = VisualFactory.CreateFormation(force.Id, color, force.Side == Side.Plan);
+                    marker.gameObject.AddComponent<FormationView>().Initialize(force.Side, force.Id);
+                    _formationMarkers[force.Id] = marker;
+                }
+                marker.position = WorldPosition(force.Position) + Vector3.up * 0.75f;
+                marker.gameObject.SetActive(!force.IsDestroyed);
+                var selected = force.Id == _selectedFormationId;
+                var active = force.Id == _game.State.ActiveFormationId;
+                marker.localScale = Vector3.one * (selected ? 1.18f : active ? 1.1f : 0.92f);
+                var formationView = marker.GetComponent<FormationView>();
+                var knownContact = force.Side != LocalSide && (!_game.State.DetectionRulesEnabled ||
+                    _game.State.Detection.IsDetected(LocalSide, force.Id));
+                formationView?.SetSensorState(force.RadarRadiating, knownContact);
+            }
+            foreach (var pair in _formationMarkers)
+                if (_game.State.Formation(pair.Key) == null) pair.Value.gameObject.SetActive(false);
         }
 
         private void SelectFormation(Side side)
         {
+            var force = _game.State.Forces.First(candidate => candidate.Side == side);
+            SelectFormation(side, force.Id);
+        }
+
+        private void SelectFormation(Side side, string formationId)
+        {
             _selectedFormation = side;
-            _status = side == Side.UsNavy ? "Inspecting US formation cards." : "Inspecting PLAN formation cards.";
+            _selectedFormationId = string.IsNullOrEmpty(formationId)
+                ? _game.State.Forces.First(force => force.Side == side).Id : formationId;
+            _status = $"Inspecting {_selectedFormationId} formation cards.";
             RefreshViews();
         }
 
         private void OnAttackResolved(Side attacker, AttackReport report)
         {
             PlayGameSound(_attackClip);
-            var origin = attacker == Side.UsNavy ? _playerMarker.position : _enemyMarker.position;
-            var target = attacker == Side.UsNavy ? _enemyMarker.position : _playerMarker.position;
+            var attackingForce = _game.State.ActiveForce ?? _game.State.ForceFor(attacker);
+            var defendingForce = _game.State.ForceFor(attacker == Side.UsNavy ? Side.Plan : Side.UsNavy);
+            var origin = _formationMarkers.TryGetValue(attackingForce.Id, out var attackingMarker)
+                ? attackingMarker.position : WorldPosition(attackingForce.Position);
+            var target = _formationMarkers.TryGetValue(defendingForce.Id, out var defendingMarker)
+                ? defendingMarker.position : WorldPosition(defendingForce.Position);
             StartCoroutine(PlayAttackEffect(origin, target, report));
         }
 
@@ -803,9 +932,14 @@ namespace Harpoon.Runtime
             if (command == null) return;
             switch (command.Type)
             {
+                case GameCommandType.DrawMovementChit:
+                    AnnounceChitDraw();
+                    break;
                 case GameCommandType.Move:
                     PlayGameSound(_moveClip, 0.85f);
-                    var marker = command.Actor == Side.UsNavy ? _playerMarker : _enemyMarker;
+                    var movingId = string.IsNullOrEmpty(command.FormationId)
+                        ? _game.State.ActiveFormationId : command.FormationId;
+                    _formationMarkers.TryGetValue(movingId, out var marker);
                     if (marker != null)
                         StartCoroutine(PlayWakeEffect(marker.position,
                             WorldPosition(command.Destination) + Vector3.up * 0.12f, command.Actor));
@@ -826,16 +960,28 @@ namespace Harpoon.Runtime
                 PlayGameSound(_rejectClip, 0.8f);
                 return;
             }
-            if (command.Type == GameCommandType.Move)
+            if (command.Type == GameCommandType.DrawMovementChit)
+                AnnounceChitDraw();
+            else if (command.Type == GameCommandType.Move)
             {
                 PlayGameSound(_moveClip, 0.85f);
-                var marker = command.Actor == Side.UsNavy ? _playerMarker : _enemyMarker;
+                var movingId = string.IsNullOrEmpty(command.FormationId)
+                    ? _game.State.ActiveFormationId : command.FormationId;
+                _formationMarkers.TryGetValue(movingId, out var marker);
                 if (marker != null)
                     StartCoroutine(PlayWakeEffect(marker.position,
                         WorldPosition(command.Destination) + Vector3.up * 0.12f, command.Actor));
             }
             else if (command.Type == GameCommandType.Attack) PlayGameSound(_attackClip);
             else PlayGameSound(_actionClip, 0.8f);
+        }
+
+        private void AnnounceChitDraw()
+        {
+            PlayGameSound(_chitClip, 0.9f);
+            _chitBanner = _game.State.ActiveFormationId.Length > 0
+                ? _game.State.ActiveFormationId.ToUpperInvariant() : "MOVEMENT CHIT DRAWN";
+            _chitBannerUntil = Time.unscaledTime + 2.2f;
         }
 
         private IEnumerator PlayWakeEffect(Vector3 origin, Vector3 destination, Side side)
@@ -901,15 +1047,19 @@ namespace Harpoon.Runtime
             GUILayout.Label($"TURN {_game.State.Turn}/{turnLimit}   ·   {_game.State.Phase}", _labelStyle);
             GUILayout.Label(_status, _labelStyle);
             GUILayout.Space(10);
-            DrawForce(_game.State.Player);
-            GUILayout.Space(7);
-            DrawForce(_game.State.Enemy);
+            foreach (var force in _game.State.Forces)
+            {
+                DrawForce(force);
+                GUILayout.Space(4);
+            }
             GUILayout.Space(8);
             DrawSpeedDeclaration();
             GUILayout.Space(8);
             var actionPhase = _game.State.Phase == ActivationPhase.PlayerMove ||
                               _game.State.Phase == ActivationPhase.PlayerAction;
-            GUI.enabled = CanLocalAct() && actionPhase && !_game.State.PlayerHasAttacked;
+            var hasDetectedTarget = !_game.State.DetectionRulesEnabled || _game.State.Forces.Any(force =>
+                force.Side != LocalSide && _game.State.Detection.IsDetected(LocalSide, force.Id));
+            GUI.enabled = CanLocalAct() && actionPhase && !_game.State.PlayerHasAttacked && hasDetectedTarget;
             if (GUILayout.Button("ATTACK", _buttonStyle))
             {
                 if (IsClientSession)
@@ -964,6 +1114,7 @@ namespace Harpoon.Runtime
             GUILayout.EndArea();
             DrawFormationCards();
             DrawActivationRibbon();
+            DrawChitBanner();
             if (_sessionMode != SessionMode.SinglePlayer) DrawChatAndSoundboard();
             if (_showMultiplayer) DrawMultiplayerLobby();
             if (_showDebug) DrawDebugPanel();
@@ -982,6 +1133,31 @@ namespace Harpoon.Runtime
 
         private void DrawSpeedDeclaration()
         {
+            if (_game.State.Phase == ActivationPhase.AwaitingChit)
+            {
+                GUILayout.Label($"MOVEMENT CUP  ·  {_game.State.MovementCup.Remaining.Count} CHITS", _cardHeaderStyle);
+                GUILayout.Label("Optional task-force splits close when the first chit is drawn.", _cardStatStyle);
+                var splittable = _game.State.Forces.FirstOrDefault(force =>
+                    force.Side == LocalSide && force.Units.Count > 1);
+                if (splittable != null)
+                {
+                    GUILayout.BeginHorizontal();
+                    GUI.enabled = _sessionMode == SessionMode.SinglePlayer || NetworkConnected;
+                    foreach (var unit in splittable.Units.ToArray())
+                    {
+                        var selectedUnit = unit;
+                        if (GUILayout.Button("SPLIT " + ShortUnitName(unit.Definition.DisplayName),
+                                _buttonStyle))
+                            SplitLocalFormation(splittable, selectedUnit);
+                    }
+                    GUI.enabled = true;
+                    GUILayout.EndHorizontal();
+                }
+                GUI.enabled = _sessionMode == SessionMode.SinglePlayer || NetworkConnected;
+                if (GUILayout.Button("DRAW FIRST CHIT", _buttonStyle)) DrawLocalMovementChit();
+                GUI.enabled = true;
+                return;
+            }
             var force = _game.State.ForceFor(LocalSide);
             if (_game.State.ActiveSide != LocalSide)
             {
@@ -992,9 +1168,23 @@ namespace Harpoon.Runtime
             }
             if (_game.State.Phase == ActivationPhase.DeclareSpeed)
             {
+                if (_game.State.DetectionRulesEnabled)
+                {
+                    GUILayout.Label(force.RadarDeclaredThisActivation
+                        ? $"SSR  {(force.RadarRadiating ? "RADIATING" : "SILENT")}"
+                        : "DECLARE SURFACE-SEARCH RADAR", _cardHeaderStyle);
+                    GUILayout.BeginHorizontal();
+                    GUI.enabled = CanLocalAct();
+                    if (GUILayout.Button("RADAR SILENT", _buttonStyle)) DeclareLocalRadar(false);
+                    GUI.enabled = CanLocalAct() && force.CanRadiateRadar;
+                    if (GUILayout.Button("RADIATE SSR", _buttonStyle)) DeclareLocalRadar(true);
+                    GUI.enabled = true;
+                    GUILayout.EndHorizontal();
+                }
                 GUILayout.Label($"DECLARE SPEED  ·  MAX {force.EffectiveSpeed}", _cardHeaderStyle);
                 GUILayout.BeginHorizontal();
-                GUI.enabled = CanLocalAct();
+                GUI.enabled = CanLocalAct() &&
+                              (!_game.State.DetectionRulesEnabled || force.RadarDeclaredThisActivation);
                 for (var speed = 0; speed <= force.EffectiveSpeed; speed++)
                 {
                     var selectedSpeed = speed;
@@ -1007,7 +1197,32 @@ namespace Harpoon.Runtime
             {
                 GUILayout.Label($"SPEED {force.DeclaredSpeed}  ·  STEPS {force.MovementPointsSpent}/{force.DeclaredSpeed}  ·  REMAINING {force.MovementRemaining}",
                     _cardStatStyle);
+                DrawDetectionActions(force);
             }
+        }
+
+        private void DrawDetectionActions(TaskForceState observer)
+        {
+            if (!_game.State.DetectionRulesEnabled || _game.State.ActiveSide != LocalSide) return;
+            var targets = _game.State.Forces.Where(force => force.Side != LocalSide && !force.IsDestroyed).ToArray();
+            var visual = targets.FirstOrDefault(force => force.Position == observer.Position);
+            var esm = targets.FirstOrDefault(force => force.RadarRadiating &&
+                force.Position.DistanceTo(observer.Position) == 1);
+            GUILayout.Label("SENSOR ACTIONS", _cardHeaderStyle);
+            GUILayout.BeginHorizontal();
+            GUI.enabled = CanLocalAct() && visual != null && !observer.RadarRadiating &&
+                          _game.State.TimeOfDay != TimeOfDay.Night;
+            if (GUILayout.Button("VISUAL SEARCH", _buttonStyle)) SearchLocal("visual", visual);
+            GUI.enabled = CanLocalAct() && esm != null && observer.CanUseEsm;
+            if (GUILayout.Button("ESM SEARCH", _buttonStyle)) SearchLocal("esm", esm);
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+        }
+
+        private static string ShortUnitName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "UNIT";
+            return name.Length <= 12 ? name.ToUpperInvariant() : name.Substring(0, 12).ToUpperInvariant();
         }
 
         private void DrawActivationRibbon()
@@ -1025,13 +1240,31 @@ namespace Harpoon.Runtime
 
             var ownership = _game.State.IsGameOver
                 ? "ACTION COMPLETE"
+                : _game.State.Phase == ActivationPhase.AwaitingChit ? "AWAITING FIRST DRAW"
                 : active == LocalSide ? "YOUR COMMAND" : "OPPONENT COMMAND";
-            var side = active == Side.UsNavy ? "US NAVY" : "PLAN";
+            var side = _game.State.Phase == ActivationPhase.AwaitingChit ? "MOVEMENT CUP"
+                : active == Side.UsNavy ? "US NAVY" : "PLAN";
             GUI.Label(new Rect(left + 8f, 22f, width - 16f, 28f),
-                $"{side} ACTIVATION  -  {ownership}", _activationStyle);
+                $"{side}{(_game.State.Phase == ActivationPhase.AwaitingChit ? string.Empty : " ACTIVATION")}  -  {ownership}", _activationStyle);
             GUI.Label(new Rect(left + 8f, 47f, width - 16f, 20f),
-                $"TURN {_game.State.Turn}  -  {_game.State.Phase}  -  REV {_game.State.Revision:0000}",
+                $"{_game.State.TimeLabel.ToUpperInvariant()}  -  CUP {_game.State.MovementCup.Remaining.Count}/{_game.State.MovementCup.TotalCount}  -  REV {_game.State.Revision:0000}",
                 _cardStatStyle);
+        }
+
+        private void DrawChitBanner()
+        {
+            if (Time.unscaledTime >= _chitBannerUntil || string.IsNullOrEmpty(_chitBanner)) return;
+            const float width = 360f;
+            const float height = 66f;
+            var left = (Screen.width - width) * 0.5f;
+            var top = 86f;
+            var remaining = Mathf.Clamp01((_chitBannerUntil - Time.unscaledTime) / 2.2f);
+            var oldColor = GUI.color;
+            GUI.color = new Color(0.08f, 0.16f, 0.22f, 0.75f + remaining * 0.2f);
+            GUI.Box(new Rect(left, top, width, height), GUIContent.none);
+            GUI.color = oldColor;
+            GUI.Label(new Rect(left + 10f, top + 8f, width - 20f, 28f), "CHIT DRAWN", _activationStyle);
+            GUI.Label(new Rect(left + 10f, top + 34f, width - 20f, 24f), _chitBanner, _activationStyle);
         }
 
         private void DrawMultiplayerLobby()
@@ -1173,6 +1406,18 @@ namespace Harpoon.Runtime
             if (GUILayout.Button("CLOSE", _buttonStyle, GUILayout.Width(82f))) _showDebug = false;
             GUILayout.EndHorizontal();
             GUILayout.Label("Complete deterministic rules activity. Rejected commands and every die result are retained.", _labelStyle);
+            GUI.enabled = _sessionMode == SessionMode.SinglePlayer;
+            if (GUILayout.Button(_detectionTestMode
+                    ? "DETECTION TEST MODE: ON  (RESTART IN SCENARIO MODE)"
+                    : "DETECTION TEST MODE: OFF  (RESTART WITH SECTION 5 RULES)", _buttonStyle))
+            {
+                _detectionTestMode = !_detectionTestMode;
+                Restart();
+                _status = _detectionTestMode
+                    ? "Detection Test Mode enabled: declare radar before speed and establish contact before attacking."
+                    : "Scenario 1 detection exemption restored.";
+            }
+            GUI.enabled = true;
             GUILayout.Space(7f);
 
             if (_game.State.Transactions.Count != _lastDebugCount)
@@ -1201,12 +1446,48 @@ namespace Harpoon.Runtime
             GUILayout.EndHorizontal();
             GUILayout.Space(8);
 
-            var force = _selectedFormation == Side.UsNavy ? _game.State.Player : _game.State.Enemy;
+            var sideForces = _game.State.Forces.Where(candidate => candidate.Side == _selectedFormation &&
+                (!_game.State.DetectionRulesEnabled || candidate.Side == LocalSide ||
+                 _game.State.Detection.IsDetected(LocalSide, candidate.Id))).ToArray();
+            if (sideForces.Length == 0)
+            {
+                GUILayout.Label("NO DETECTED CONTACTS", _cardHeaderStyle);
+                GUILayout.Label("Radiate SSR in the same hex, use ESM against an adjacent radiating enemy, or conduct a daytime visual search in its hex.", _cardStatStyle);
+                GUILayout.FlexibleSpace();
+                GUILayout.Label("Enemy formation cards remain hidden until classified.", _labelStyle);
+                GUILayout.EndArea();
+                return;
+            }
+            if (sideForces.Length > 1)
+            {
+                GUILayout.Label("TASK FORCES", _cardStatStyle);
+                GUILayout.BeginHorizontal();
+                foreach (var candidate in sideForces)
+                {
+                    var selectedForce = candidate;
+                    var oldColor = GUI.backgroundColor;
+                    if (candidate.Id == _selectedFormationId)
+                        GUI.backgroundColor = _selectedFormation == Side.UsNavy
+                            ? new Color(0.25f, 0.62f, 1f) : new Color(1f, 0.32f, 0.26f);
+                    if (GUILayout.Button(ShortFormationName(candidate.Id), _buttonStyle))
+                        SelectFormation(candidate.Side, candidate.Id);
+                    GUI.backgroundColor = oldColor;
+                }
+                GUILayout.EndHorizontal();
+                GUILayout.Space(5);
+            }
+
+            var force = _game.State.Formation(_selectedFormationId) ?? sideForces.First();
             var sideColor = _selectedFormation == Side.UsNavy
                 ? new Color(0.32f, 0.68f, 1f) : new Color(1f, 0.38f, 0.3f);
             var previousHeaderColor = _cardHeaderStyle.normal.textColor;
             _cardHeaderStyle.normal.textColor = sideColor;
+            var contact = force.Side == LocalSide ? null : _game.State.Detection.ContactFor(LocalSide, force.Id);
+            var contactText = !_game.State.DetectionRulesEnabled ? "SCENARIO CONTACT: CLASSIFIED"
+                : contact == null ? "CONTACT: UNDETECTED"
+                : $"CONTACT: {contact.Level.ToString().ToUpperInvariant()} / {contact.Method.ToString().ToUpperInvariant()}";
             GUILayout.Label($"{force.Id.ToUpperInvariant()} · HEX {force.Position}", _cardHeaderStyle);
+            GUILayout.Label($"SSR {(force.RadarRadiating ? "RADIATING" : "SILENT")} · {contactText}", _cardStatStyle);
             GUILayout.Label(force.DeclaredSpeed < 0
                 ? $"MAX SPEED {force.EffectiveSpeed} · AWAITING DECLARATION"
                 : $"DECLARED {force.DeclaredSpeed} · MOVED {force.MovementPointsSpent} · REMAINING {force.MovementRemaining}",
@@ -1247,9 +1528,24 @@ namespace Harpoon.Runtime
 
         private void DrawForce(TaskForceState force)
         {
-            GUILayout.Label($"{force.Id} · HEX {force.Position}", _labelStyle);
+            var activity = force.Id == _game.State.ActiveFormationId ? "  [ACTIVE]" : string.Empty;
+            if (_game.State.DetectionRulesEnabled && force.Side != LocalSide &&
+                !_game.State.Detection.IsDetected(LocalSide, force.Id))
+            {
+                GUILayout.Label($"UNKNOWN {SideLabel(force.Side)} CONTACT · HEX {force.Position}{activity}", _labelStyle);
+                GUILayout.Label("  Formation contents undetected", _labelStyle);
+                return;
+            }
+            GUILayout.Label($"{force.Id} · HEX {force.Position}{activity}", _labelStyle);
             foreach (var unit in force.Units)
                 GUILayout.Label($"  {unit.Definition.DisplayName}: {unit.HullRemaining}/{unit.Definition.Hull} hull", _labelStyle);
+        }
+
+        private static string ShortFormationName(string formationId)
+        {
+            if (string.IsNullOrWhiteSpace(formationId)) return "FORMATION";
+            var words = formationId.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            return words.Length <= 2 ? formationId.ToUpperInvariant() : string.Join(" ", words.Skip(words.Length - 2)).ToUpperInvariant();
         }
 
         private void EnsureStyles()

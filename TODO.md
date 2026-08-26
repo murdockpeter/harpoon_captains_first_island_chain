@@ -72,32 +72,32 @@ This is the living implementation checklist. Check an item only when its rules b
 
 ## 4. Movement-chit sequence of play
 
-- [ ] Represent one movement chit per task force or patrol-aircraft unit.
-- [ ] Randomize draws without replacement from the complete cup.
-- [ ] Activate exactly the unit named by the drawn chit.
-- [ ] Allow pre-draw task-force splitting at the proper time.
-- [ ] End the turn only when the cup is empty.
-- [ ] Return all eligible chits for the next turn.
-- [ ] Implement AM, PM, and Night periods with three turns per day.
-- [ ] Apply the Night restriction to visual searches.
-- [ ] Replace the current 50/50 two-side initiative shortcut.
-- [ ] Test draw order, no duplicate activation, turn rollover, and seeded reproducibility.
+- [x] Represent one movement chit per task force or patrol-aircraft unit.
+- [x] Randomize draws without replacement from the complete cup.
+- [x] Activate exactly the unit named by the drawn chit.
+- [x] Allow pre-draw task-force splitting at the proper time.
+- [x] End the turn only when the cup is empty.
+- [x] Return all eligible chits for the next turn.
+- [x] Implement AM, PM, and Night periods with three turns per day.
+- [x] Apply the Night restriction to visual searches.
+- [x] Replace the current 50/50 two-side initiative shortcut.
+- [x] Test draw order, no duplicate activation, turn rollover, and seeded reproducibility.
 
 ## 5. Surface detection (deferred beyond Scenario 1)
 
 > Scenario 1 explicitly omits detection. This section is foundational follow-on work, but it is not an MVP 0.1 release gate for this scenario.
 
-- [ ] Represent undetected, located, classified, and lost-contact states as required by the rules.
-- [ ] Prevent attacks against undetected targets.
-- [ ] Allow task forces to radiate or silence surface-search radar.
-- [ ] Implement automatic same-hex/range-one surface-search radar detection exactly as printed.
-- [ ] Implement passive ESM detection of radiating enemies on the correct trigger and `1–5` roll.
-- [ ] Implement daytime visual search on `1–2` while entering/remaining in an enemy hex.
-- [ ] Permit repeated visual attempts for remaining movement points where allowed.
-- [ ] Lose or retain contacts according to the full rules.
-- [ ] Show only information the US player is entitled to know.
-- [ ] Give the PLAN AI the same detection restrictions as the human player.
-- [ ] Test radar silent/radiating, ESM success/failure, visual success/failure, Night, and attack gating.
+- [x] Represent undetected, located, classified, and lost-contact states as required by the rules.
+- [x] Prevent attacks against undetected targets.
+- [x] Allow task forces to radiate or silence surface-search radar.
+- [x] Implement automatic same-hex/range-one surface-search radar detection exactly as printed.
+- [x] Implement passive ESM detection of radiating enemies on the correct trigger and `1–5` roll.
+- [x] Implement daytime visual search on `1–2` while entering/remaining in an enemy hex.
+- [x] Permit repeated visual attempts for remaining movement points where allowed.
+- [x] Lose or retain contacts according to the full rules.
+- [x] Show only information the US player is entitled to know.
+- [x] Give the PLAN AI the same detection restrictions as the human player.
+- [x] Test radar silent/radiating, ESM success/failure, visual success/failure, Night, and attack gating.
 
 ## 6. Surface-to-surface missile combat
 

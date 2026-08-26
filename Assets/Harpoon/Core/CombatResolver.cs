@@ -6,18 +6,20 @@ namespace Harpoon.Core
 {
     public interface IDieRoller { int RollD6(); }
 
-    public sealed class SeededDieRoller : IDieRoller
+    public sealed class SeededDieRoller : IDieRoller, IRandomSource
     {
         private readonly Random _random;
         public SeededDieRoller(int seed) => _random = new Random(seed);
         public int RollD6() => _random.Next(1, 7);
+        public int Next(int maximumExclusive) => _random.Next(maximumExclusive);
     }
 
-    public sealed class SequenceDieRoller : IDieRoller
+    public sealed class SequenceDieRoller : IDieRoller, IRandomSource
     {
         private readonly Queue<int> _rolls;
         public SequenceDieRoller(params int[] rolls) => _rolls = new Queue<int>(rolls);
         public int RollD6() => _rolls.Count > 0 ? _rolls.Dequeue() : 1;
+        public int Next(int maximumExclusive) => (RollD6() - 1) % maximumExclusive;
     }
 
     public sealed class AttackReport

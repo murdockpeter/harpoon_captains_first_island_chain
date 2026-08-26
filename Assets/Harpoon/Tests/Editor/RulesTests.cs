@@ -33,7 +33,8 @@ namespace Harpoon.Core.Tests
         [Test]
         public void PlayerCannotMoveBeyondSlowestShipSpeed()
         {
-            var game = new ScenarioOneGame(8, null, true);
+            var game = new ScenarioOneGame(1, null, true);
+            Assert.That(game.DrawMovementChit().Accepted, Is.True);
             Assert.That(game.DeclareSpeed(game.State.ActiveSide, 2).Accepted, Is.True);
             var moved = game.TryMovePlayer(new HexCoord(9, 11), out var reason);
             Assert.That(moved, Is.False);
@@ -106,11 +107,11 @@ namespace Harpoon.Core.Tests
         [Test]
         public void DebugTraceCapturesDiceAndRejectedCommandsInOrder()
         {
-            var game = new ScenarioOneGame(8);
+            var game = new ScenarioOneGame(1, null, true);
             game.TryMovePlayer(new HexCoord(3, 13), out _);
             Assert.That(game.State.Transactions.Count, Is.GreaterThanOrEqualTo(5));
             Assert.That(game.State.Transactions[0].Category, Is.EqualTo("SETUP"));
-            Assert.That(game.State.Transactions.Exists(item => item.Category == "DIE"), Is.True);
+            Assert.That(game.State.Transactions.Exists(item => item.Category == "TURN"), Is.True);
             Assert.That(game.State.Transactions.Exists(item => item.Category == "REJECTED"), Is.True);
             for (var index = 0; index < game.State.Transactions.Count; index++)
                 Assert.That(game.State.Transactions[index].Sequence, Is.EqualTo(index + 1));
@@ -119,7 +120,8 @@ namespace Harpoon.Core.Tests
         [Test]
         public void MultiplayerSnapshotReproducesAuthoritativeState()
         {
-            var host = new ScenarioOneGame(8, null, true);
+            var host = new ScenarioOneGame(1, null, true);
+            Assert.That(host.DrawMovementChit().Accepted, Is.True);
             var force = host.State.ForceFor(host.State.ActiveSide);
             Assert.That(host.DeclareSpeed(host.State.ActiveSide, 1).Accepted, Is.True);
             var destination = host.State.Map.NavigableNeighbors(force.Position, host.State.ActiveSide).First();
@@ -135,7 +137,8 @@ namespace Harpoon.Core.Tests
         [Test]
         public void ManualOpponentPassesActivationBetweenBothSides()
         {
-            var game = new ScenarioOneGame(8, null, true);
+            var game = new ScenarioOneGame(1, null, true);
+            Assert.That(game.DrawMovementChit().Accepted, Is.True);
             var firstSide = game.State.ActiveSide;
             var force = game.State.ForceFor(firstSide);
             Assert.That(game.DeclareSpeed(firstSide, 1).Accepted, Is.True);
@@ -149,19 +152,21 @@ namespace Harpoon.Core.Tests
         [Test]
         public void CommandsAreRevisionedAndEmitTypedEvents()
         {
-            IRulesEngine engine = new ScenarioOneGame(8, null, true);
+            IRulesEngine engine = new ScenarioOneGame(1, null, true);
+            Assert.That(engine.Execute(new GameCommand(GameCommandType.DrawMovementChit,
+                Side.UsNavy, 0)).Accepted, Is.True);
             var side = engine.State.ActiveSide;
-            var declaration = engine.Execute(new GameCommand(GameCommandType.DeclareSpeed, side, 0,
+            var declaration = engine.Execute(new GameCommand(GameCommandType.DeclareSpeed, side, 1,
                 declaredSpeed: 1, id: "typed-speed-test"));
             Assert.That(declaration.Accepted, Is.True);
             var destination = engine.State.Map.NavigableNeighbors(engine.State.ForceFor(side).Position, side).First();
-            var command = new GameCommand(GameCommandType.Move, side, 1,
+            var command = new GameCommand(GameCommandType.Move, side, 2,
                 destination, id: "typed-event-test");
             var result = engine.Execute(command);
 
             Assert.That(result.Accepted, Is.True);
-            Assert.That(engine.State.Revision, Is.EqualTo(2));
-            Assert.That(engine.State.CommandLog.Count, Is.EqualTo(2));
+            Assert.That(engine.State.Revision, Is.EqualTo(3));
+            Assert.That(engine.State.CommandLog.Count, Is.EqualTo(3));
             Assert.That(result.Events, Has.Some.Matches<RuleEvent>(item =>
                 item.Type == RuleEventType.Movement && item.CommandId == command.Id));
             Assert.That(result.Events, Has.Some.Matches<RuleEvent>(item =>
@@ -171,7 +176,7 @@ namespace Harpoon.Core.Tests
         [Test]
         public void IllegalCommandsReturnStableViolationCodes()
         {
-            IRulesEngine engine = new ScenarioOneGame(8, null, true);
+            IRulesEngine engine = new ScenarioOneGame(1, null, true);
             var side = engine.State.ActiveSide;
             var stale = engine.Execute(new GameCommand(GameCommandType.Move, side, 99,
                 engine.State.ForceFor(side).Position));
@@ -187,7 +192,8 @@ namespace Harpoon.Core.Tests
         [Test]
         public void SeedAndAcceptedCommandLogReplayAuthoritativeState()
         {
-            var original = new ScenarioOneGame(8, null, true);
+            var original = new ScenarioOneGame(1, null, true);
+            original.DrawMovementChit();
             var side = original.State.ActiveSide;
             original.Execute(new GameCommand(GameCommandType.DeclareSpeed, side, original.State.Revision,
                 declaredSpeed: 1, id: "replay-speed"));
@@ -208,7 +214,7 @@ namespace Harpoon.Core.Tests
         [Test]
         public void SideViewCanHideUnknownOpponentDetails()
         {
-            IRulesEngine engine = new ScenarioOneGame(8, null, true);
+            IRulesEngine engine = new ScenarioOneGame(1, null, true);
             var view = engine.ViewFor(Side.UsNavy, false);
             Assert.That(view.OwnFormation.IsKnown, Is.True);
             Assert.That(view.OwnFormation.Units, Is.Not.Empty);
@@ -230,7 +236,8 @@ namespace Harpoon.Core.Tests
         [Test]
         public void MovementRequiresDeclarationAndOneAdjacentNavigableHex()
         {
-            var game = new ScenarioOneGame(8, null, true);
+            var game = new ScenarioOneGame(1, null, true);
+            Assert.That(game.DrawMovementChit().Accepted, Is.True);
             var side = game.State.ActiveSide;
             var beforeDeclaration = game.Execute(new GameCommand(GameCommandType.Move, side,
                 game.State.Revision, new HexCoord(7, 12)));
@@ -257,6 +264,119 @@ namespace Harpoon.Core.Tests
             Assert.That(path, Has.All.Matches<HexCoord>(hex => map.IsNavigable(hex, Side.UsNavy)));
             for (var index = 1; index < path.Count; index++)
                 Assert.That(path[index - 1].IsAdjacentTo(path[index]), Is.True);
+        }
+
+        [Test]
+        public void MovementChitsDrawWithoutReplacementAndAreSeedReproducible()
+        {
+            var chits = new[]
+            {
+                new MovementChit("US TF", Side.UsNavy),
+                new MovementChit("PLAN TF", Side.Plan),
+                new MovementChit("Patrol Aircraft", Side.UsNavy)
+            };
+            var first = new MovementChitCup(new SeededDieRoller(77));
+            var second = new MovementChitCup(new SeededDieRoller(77));
+            first.Reset(chits);
+            second.Reset(chits);
+            var firstOrder = Enumerable.Range(0, 3).Select(_ => first.Draw().FormationId).ToArray();
+            var secondOrder = Enumerable.Range(0, 3).Select(_ => second.Draw().FormationId).ToArray();
+            Assert.That(firstOrder, Is.EqualTo(secondOrder));
+            Assert.That(firstOrder.Distinct().Count(), Is.EqualTo(3));
+            Assert.That(first.IsEmpty, Is.True);
+        }
+
+        [Test]
+        public void TurnEndsOnlyAfterEveryChitActivates()
+        {
+            var game = new ScenarioOneGame(1, null, true);
+            Assert.That(game.State.Phase, Is.EqualTo(ActivationPhase.AwaitingChit));
+            Assert.That(game.DrawMovementChit().Accepted, Is.True);
+            var firstFormation = game.State.ActiveFormationId;
+            Assert.That(game.DeclareSpeed(game.State.ActiveSide, 0).Accepted, Is.True);
+            game.EndActivation(game.State.ActiveSide);
+            Assert.That(game.State.Turn, Is.EqualTo(1));
+            Assert.That(game.State.ActiveFormationId, Is.Not.EqualTo(firstFormation));
+            Assert.That(game.DeclareSpeed(game.State.ActiveSide, 0).Accepted, Is.True);
+            game.EndActivation(game.State.ActiveSide);
+            Assert.That(game.State.Turn, Is.EqualTo(2));
+            Assert.That(game.State.TimeOfDay, Is.EqualTo(TimeOfDay.Pm));
+            Assert.That(game.State.MovementCup.Remaining.Count, Is.EqualTo(2));
+            Assert.That(game.State.MovementCup.Drawn, Is.Empty);
+        }
+
+        [Test]
+        public void SplitIsLegalOnlyBeforeFirstChitDraw()
+        {
+            var game = new ScenarioOneGame(1, null, true);
+            var split = game.Execute(new GameCommand(GameCommandType.SplitTaskForce, Side.UsNavy,
+                game.State.Revision, formationId: "US Task Force", newFormationId: "US Task Force 2",
+                unitIds: new[] { "us-burke-iia" }));
+            Assert.That(split.Accepted, Is.True);
+            Assert.That(game.State.Forces.Count, Is.EqualTo(3));
+            Assert.That(game.State.MovementCup.TotalCount, Is.EqualTo(3));
+            Assert.That(game.DrawMovementChit().Accepted, Is.True);
+            var lateSplit = game.Execute(new GameCommand(GameCommandType.SplitTaskForce, Side.Plan,
+                game.State.Revision, formationId: "PLAN Task Force", newFormationId: "PLAN Task Force 2",
+                unitIds: new[] { "plan-type-054a" }));
+            Assert.That(lateSplit.Violation.Code, Is.EqualTo(RuleViolationCode.SplitWindowClosed));
+        }
+
+        [Test]
+        public void EsmAndVisualSearchUsePrintedDetectionNumbers()
+        {
+            var state = ScenarioOne.Create(true);
+            state.Player.MoveTo(new HexCoord(7, 13));
+            state.Enemy.MoveTo(new HexCoord(8, 13));
+            state.Enemy.DeclareRadar(true);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(5))
+                .ResolveEsm(state.Player, state.Enemy), Is.True);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(6))
+                .ResolveEsm(state.Player, state.Enemy), Is.False);
+            state.Enemy.MoveTo(state.Player.Position);
+            state.Enemy.DeclareRadar(false);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(2))
+                .ResolveVisual(state.Player, state.Enemy, TimeOfDay.Am), Is.True);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(3))
+                .ResolveVisual(state.Player, state.Enemy, TimeOfDay.Am), Is.False);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(1))
+                .ResolveVisual(state.Player, state.Enemy, TimeOfDay.Night), Is.False);
+        }
+
+        [Test]
+        public void UndetectedTargetsCannotBeAttackedOrInspected()
+        {
+            var game = new ScenarioOneGame(1, null, true, true,
+                new SequenceDieRoller(1, 1, 1, 1, 1, 1));
+            Assert.That(game.DrawMovementChit().Accepted, Is.True);
+            Assert.That(game.State.ActiveSide, Is.EqualTo(Side.UsNavy));
+            Assert.That(game.Execute(new GameCommand(GameCommandType.RadiateRadar, Side.UsNavy,
+                game.State.Revision, enabled: false)).Accepted, Is.True);
+            Assert.That(game.DeclareSpeed(Side.UsNavy, 0).Accepted, Is.True);
+            Assert.That(game.ViewFor(Side.UsNavy).OpposingFormation.IsKnown, Is.False);
+            Assert.That(game.ViewFor(Side.UsNavy).OpposingFormation.Units, Is.Empty);
+            var hiddenAttack = game.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                game.State.Revision));
+            Assert.That(hiddenAttack.Violation.Code, Is.EqualTo(RuleViolationCode.TargetUndetected));
+            game.State.Detection.Detect(Side.UsNavy, game.State.Enemy,
+                DetectionMethod.Esm, game.State.Turn);
+            Assert.That(game.ViewFor(Side.UsNavy).OpposingFormation.Units.Count, Is.EqualTo(2));
+            Assert.That(game.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                game.State.Revision)).Accepted, Is.True);
+        }
+
+        [Test]
+        public void SurfaceRadarAutomaticallyDetectsSameHexShips()
+        {
+            var game = new ScenarioOneGame(1, null, true, true, new SequenceDieRoller(1));
+            game.State.Enemy.MoveTo(game.State.Player.Position);
+            Assert.That(game.DrawMovementChit().Accepted, Is.True);
+            var declaration = game.Execute(new GameCommand(GameCommandType.RadiateRadar,
+                Side.UsNavy, game.State.Revision, enabled: true));
+            Assert.That(declaration.Accepted, Is.True);
+            Assert.That(game.State.Detection.IsDetected(Side.UsNavy, game.State.Enemy.Id), Is.True);
+            Assert.That(game.State.Detection.ContactFor(Side.UsNavy, game.State.Enemy.Id).Method,
+                Is.EqualTo(DetectionMethod.SurfaceSearchRadar));
         }
     }
 }

@@ -53,15 +53,16 @@ namespace Harpoon.Editor
             Require(report.InterceptedFactors == 3 && report.HullHits == 0,
                 "Layered defenses must be able to stop the full raid.");
 
-            var game = new ScenarioOneGame(8);
+            var game = new ScenarioOneGame(1, null, true);
             Require(!game.TryMovePlayer(new HexCoord(3, 13), out _),
                 "Movement beyond the slowest ship's speed must be rejected.");
             Require(game.State.Transactions.Count >= 5 &&
-                    game.State.Transactions.Exists(item => item.Category == "DIE") &&
+                    game.State.Transactions.Exists(item => item.Category == "TURN") &&
                     game.State.Transactions.Exists(item => item.Category == "REJECTED"),
-                "The debug trace must retain setup, die, and rejected-command transactions.");
+                "The debug trace must retain setup, turn, and rejected-command transactions.");
 
-            var manual = new ScenarioOneGame(8, null, true);
+            var manual = new ScenarioOneGame(1, null, true);
+            Require(manual.DrawMovementChit().Accepted, "The first movement chit must be drawable.");
             var activeForce = manual.State.ForceFor(manual.State.ActiveSide);
             Require(manual.DeclareSpeed(manual.State.ActiveSide, 1).Accepted,
                 "A manually controlled active side must declare legal speed.");
@@ -113,9 +114,11 @@ namespace Harpoon.Editor
 
             ValidateCommandArchitecture();
             ValidateBoardAndMovement();
+            ValidateMovementChitSequence();
+            ValidateSurfaceDetection();
 
             ValidateLoopbackTransport();
-            Debug.Log("HARPOON RULE VALIDATION PASSED (Section 3 map/movement, command/event/replay/private-view, and TCP loopback included).");
+            Debug.Log("HARPOON RULE VALIDATION PASSED (Sections 3-5 movement, chits/time, surface detection, replay/private-view, and TCP loopback included).");
         }
 
         public static void BuildWindowsPlayer()
@@ -195,7 +198,11 @@ namespace Harpoon.Editor
 
         private static void ValidateCommandArchitecture()
         {
-            IRulesEngine engine = new ScenarioOneGame(8, null, true);
+            IRulesEngine engine = new ScenarioOneGame(1, null, true);
+            var draw = engine.Execute(new GameCommand(GameCommandType.DrawMovementChit, Side.UsNavy,
+                engine.State.Revision, id: "architecture-draw"));
+            Require(draw.Accepted && draw.Events.Any(item => item.Type == RuleEventType.ChitDrawn),
+                "The first activation must be selected by a typed movement-chit event.");
             var active = engine.State.ActiveSide;
             var force = engine.State.ForceFor(active);
             var declaration = engine.Execute(new GameCommand(GameCommandType.DeclareSpeed, active,
@@ -206,8 +213,8 @@ namespace Harpoon.Editor
             var move = new GameCommand(GameCommandType.Move, active, engine.State.Revision,
                 destination, id: "architecture-move");
             var moveResult = engine.Execute(move);
-            Require(moveResult.Accepted && engine.State.Revision == 2 &&
-                    engine.State.CommandLog.Count == 2,
+            Require(moveResult.Accepted && engine.State.Revision == 3 &&
+                    engine.State.CommandLog.Count == 3,
                 "A legal command must advance the authoritative revision and enter the command log.");
             Require(moveResult.Events.Count > 0 &&
                     moveResult.Events.All(item => item.CommandId == move.Id) &&
@@ -218,7 +225,7 @@ namespace Harpoon.Editor
             var stale = engine.Execute(new GameCommand(GameCommandType.EndActivation, active, 0,
                 id: "stale-command"));
             Require(!stale.Accepted && stale.Violation.Code == RuleViolationCode.StaleRevision &&
-                    engine.State.Revision == 2,
+                    engine.State.Revision == 3,
                 "A stale command must return a structured violation without mutating revision state.");
             var wrongSide = active == Side.UsNavy ? Side.Plan : Side.UsNavy;
             var wrong = engine.Execute(new GameCommand(GameCommandType.EndActivation, wrongSide,
@@ -247,8 +254,9 @@ namespace Harpoon.Editor
             Require(scenarioView.OpposingFormation.IsKnown && scenarioView.OpposingFormation.Units.Count > 0,
                 "Scenario 1's explicit no-detection setup must publish both formations.");
 
-            var planFirstSolo = new ScenarioOneGame(1);
-            Require(planFirstSolo.State.ActiveSide == Side.UsNavy && planFirstSolo.State.Revision >= 3,
+            var planFirstSolo = new ScenarioOneGame(2);
+            Require(planFirstSolo.DrawMovementChit().Accepted &&
+                    planFirstSolo.State.ActiveSide == Side.UsNavy && planFirstSolo.State.Revision >= 4,
                 "A PLAN-first solo turn must complete through the same command API without recursive AI activation.");
 
             var original = (ScenarioOneGame)engine;
@@ -285,7 +293,8 @@ namespace Harpoon.Editor
                     coastPath.All(hex => map.IsNavigable(hex, Side.UsNavy)),
                 "Core pathfinding must route step-by-step around the Taiwan coastline.");
 
-            var terrainGame = new ScenarioOneGame(8, null, true);
+            var terrainGame = new ScenarioOneGame(1, null, true);
+            Require(terrainGame.DrawMovementChit().Accepted, "Terrain test must draw the US chit.");
             var side = terrainGame.State.ActiveSide;
             Require(terrainGame.DeclareSpeed(side, 1).Accepted, "A legal speed must be accepted.");
             var landMove = terrainGame.Execute(new GameCommand(GameCommandType.Move, side,
@@ -293,7 +302,8 @@ namespace Harpoon.Editor
             Require(!landMove.Accepted && landMove.Violation.Code == RuleViolationCode.ImpassableTerrain,
                 "Movement into a printed land hex must be rejected by the core.");
 
-            var edgeGame = new ScenarioOneGame(8, null, true);
+            var edgeGame = new ScenarioOneGame(1, null, true);
+            Require(edgeGame.DrawMovementChit().Accepted, "Edge test must draw the US chit.");
             side = edgeGame.State.ActiveSide;
             edgeGame.State.ForceFor(side).MoveTo(new HexCoord(15, 10));
             Require(edgeGame.DeclareSpeed(side, 1).Accepted, "Edge movement test must declare speed.");
@@ -302,7 +312,8 @@ namespace Harpoon.Editor
             Require(!offMapMove.Accepted && offMapMove.Violation.Code == RuleViolationCode.OutsideMap,
                 "An adjacent step beyond the printed map edge must be rejected by the core.");
 
-            var farGame = new ScenarioOneGame(8, null, true);
+            var farGame = new ScenarioOneGame(1, null, true);
+            Require(farGame.DrawMovementChit().Accepted, "Adjacency test must draw the US chit.");
             side = farGame.State.ActiveSide;
             Require(farGame.DeclareSpeed(side, 2).Accepted, "Speed two must be legal for the US formation.");
             var farMove = farGame.Execute(new GameCommand(GameCommandType.Move, side,
@@ -314,13 +325,15 @@ namespace Harpoon.Editor
             Require(!incompleteEnd.Accepted && incompleteEnd.Violation.Code == RuleViolationCode.MovementIncomplete,
                 "A task force must spend every movement point it declared before ending activation.");
 
-            var speedGame = new ScenarioOneGame(8, null, true);
+            var speedGame = new ScenarioOneGame(1, null, true);
+            Require(speedGame.DrawMovementChit().Accepted, "Speed test must draw the US chit.");
             side = speedGame.State.ActiveSide;
             var excessive = speedGame.DeclareSpeed(side, 3);
             Require(!excessive.Accepted && excessive.Violation.Code == RuleViolationCode.InvalidSpeed,
                 "Declared speed must not exceed the slowest active ship's effective speed.");
 
-            var actionGame = new ScenarioOneGame(8, null, true);
+            var actionGame = new ScenarioOneGame(1, null, true);
+            Require(actionGame.DrawMovementChit().Accepted, "Action-window test must draw the US chit.");
             side = actionGame.State.ActiveSide;
             Require(actionGame.DeclareSpeed(side, 2).Accepted, "Action-window test must declare speed.");
             Require(actionGame.TryMove(side, new HexCoord(7, 12), out _), "First movement step must be legal.");
@@ -340,7 +353,8 @@ namespace Harpoon.Editor
                         actionGame.State.Revision)).Accepted,
                 "Entering the next hex must open a fresh action/search opportunity.");
 
-            var coexistence = new ScenarioOneGame(8, null, true);
+            var coexistence = new ScenarioOneGame(1, null, true);
+            Require(coexistence.DrawMovementChit().Accepted, "Coexistence test must draw the US chit.");
             side = coexistence.State.ActiveSide;
             coexistence.State.ForceFor(side == Side.UsNavy ? Side.Plan : Side.UsNavy)
                 .MoveTo(new HexCoord(7, 12));
@@ -357,6 +371,197 @@ namespace Harpoon.Editor
                 new HexCoord(5, 5), new[] { new UnitState(oneHexDefinition) });
             Require(oneHexForce.EffectiveSpeed == 1,
                 "An otherwise eligible task force must retain the rules minimum of one movement hex.");
+        }
+
+        private static void ValidateMovementChitSequence()
+        {
+            var customChits = new[]
+            {
+                new MovementChit("US Surface TF", Side.UsNavy),
+                new MovementChit("PLAN Surface TF", Side.Plan),
+                new MovementChit("P-8A Patrol", Side.UsNavy)
+            };
+            var firstCup = new MovementChitCup(new SeededDieRoller(44));
+            var secondCup = new MovementChitCup(new SeededDieRoller(44));
+            firstCup.Reset(customChits);
+            secondCup.Reset(customChits);
+            var firstOrder = Enumerable.Range(0, customChits.Length).Select(_ => firstCup.Draw().FormationId).ToArray();
+            var secondOrder = Enumerable.Range(0, customChits.Length).Select(_ => secondCup.Draw().FormationId).ToArray();
+            Require(firstOrder.SequenceEqual(secondOrder) && firstOrder.Distinct().Count() == customChits.Length &&
+                    firstCup.IsEmpty,
+                "Task-force and patrol-aircraft chits must draw reproducibly without replacement.");
+
+            var splitGame = new ScenarioOneGame(1, null, true);
+            Require(splitGame.State.Phase == ActivationPhase.AwaitingChit &&
+                    splitGame.State.MovementCup.TotalCount == 2 && splitGame.State.MovementCup.Drawn.Count == 0,
+                "Each turn must begin with one eligible chit per task force and no preselected activation.");
+            var split = splitGame.Execute(new GameCommand(GameCommandType.SplitTaskForce, Side.UsNavy,
+                splitGame.State.Revision, id: "split-before-draw", formationId: "US Task Force",
+                newFormationId: "US Task Force 2", unitIds: new[] { "us-burke-iia" }));
+            Require(split.Accepted && splitGame.State.Forces.Count == 3 &&
+                    splitGame.State.MovementCup.TotalCount == 3 &&
+                    splitGame.State.Formation("US Task Force 2").Position == splitGame.State.Formation("US Task Force").Position,
+                "A legal pre-draw split must form a colocated force and add exactly one chit to the cup.");
+            Require(splitGame.DrawMovementChit().Accepted, "The split cup must permit its first random draw.");
+            var lateSplit = splitGame.Execute(new GameCommand(GameCommandType.SplitTaskForce, Side.Plan,
+                splitGame.State.Revision, formationId: "PLAN Task Force", newFormationId: "PLAN Task Force 2",
+                unitIds: new[] { "plan-type-054a" }));
+            Require(!lateSplit.Accepted && lateSplit.Violation.Code == RuleViolationCode.SplitWindowClosed,
+                "Task-force splitting must close immediately after the first chit is drawn.");
+            var splitMirror = new ScenarioOneGame(99, null, true);
+            splitMirror.ApplySnapshot(splitGame.CaptureSnapshot());
+            Require(splitMirror.State.Forces.Count == 3 && splitMirror.State.MovementCup.TotalCount == 3 &&
+                    splitMirror.State.ActiveFormationId == splitGame.State.ActiveFormationId,
+                "Snapshots must preserve split formations, cup state, and the named active formation.");
+
+            var sequence = new ScenarioOneGame(1, null, true);
+            Require(sequence.State.TimeOfDay == TimeOfDay.Am && sequence.State.Day == 1 &&
+                    sequence.DrawMovementChit().Accepted,
+                "Turn 1 must begin on Day 1 AM and draw its first chit from the full cup.");
+            var firstFormation = sequence.State.ActiveFormationId;
+            Require(firstFormation == sequence.State.MovementCup.Drawn.Last().FormationId,
+                "Only the formation named on the drawn chit may activate.");
+            var inactiveSide = sequence.State.ActiveSide == Side.UsNavy ? Side.Plan : Side.UsNavy;
+            var wrongFormation = sequence.DeclareSpeed(inactiveSide, 0);
+            Require(!wrongFormation.Accepted && wrongFormation.Violation.Code == RuleViolationCode.WrongSide,
+                "A side whose formation was not drawn must not activate.");
+            Require(sequence.DeclareSpeed(sequence.State.ActiveSide, 0).Accepted,
+                "The drawn formation must be able to declare speed zero.");
+            var firstSide = sequence.State.ActiveSide;
+            sequence.EndActivation(firstSide);
+            Require(sequence.State.Turn == 1 && sequence.State.Phase == ActivationPhase.DeclareSpeed &&
+                    sequence.State.ActiveFormationId != firstFormation && sequence.State.MovementCup.IsEmpty,
+                "Ending the first activation must draw the sole remaining chit without ending the turn.");
+            Require(sequence.DeclareSpeed(sequence.State.ActiveSide, 0).Accepted,
+                "The second drawn formation must activate.");
+            sequence.EndActivation(sequence.State.ActiveSide);
+            Require(sequence.State.Turn == 2 && sequence.State.TimeOfDay == TimeOfDay.Pm &&
+                    sequence.State.Phase == ActivationPhase.AwaitingChit &&
+                    sequence.State.MovementCup.Remaining.Count == 2 && sequence.State.MovementCup.Drawn.Count == 0,
+                "The turn must advance to PM only after the cup is empty and return every eligible chit.");
+
+            CompleteZeroSpeedTurn(sequence);
+            Require(sequence.State.Turn == 3 && sequence.State.Day == 1 &&
+                    sequence.State.TimeOfDay == TimeOfDay.Night,
+                "Three eight-hour turns must progress AM, PM, then Night within one day.");
+            Require(sequence.DrawMovementChit().Accepted &&
+                    sequence.DeclareSpeed(sequence.State.ActiveSide, 0).Accepted,
+                "Night search test must activate a formation.");
+            var visualAtNight = sequence.Execute(new GameCommand(GameCommandType.Search,
+                sequence.State.ActiveSide, sequence.State.Revision, targetId: "visual"));
+            Require(!visualAtNight.Accepted && visualAtNight.Violation.Code == RuleViolationCode.NightRestricted,
+                "Visual searches must be prohibited during Night turns.");
+        }
+
+        private static void CompleteZeroSpeedTurn(ScenarioOneGame game)
+        {
+            Require(game.State.Phase == ActivationPhase.AwaitingChit && game.DrawMovementChit().Accepted,
+                "A complete turn helper must draw the first chit.");
+            Require(game.DeclareSpeed(game.State.ActiveSide, 0).Accepted,
+                "First formation must hold at speed zero.");
+            game.EndActivation(game.State.ActiveSide);
+            Require(game.State.Phase == ActivationPhase.DeclareSpeed &&
+                    game.DeclareSpeed(game.State.ActiveSide, 0).Accepted,
+                "Second formation must be drawn and hold at speed zero.");
+            game.EndActivation(game.State.ActiveSide);
+        }
+
+        private static void ValidateSurfaceDetection()
+        {
+            var direct = ScenarioOne.Create(true);
+            direct.Player.MoveTo(new HexCoord(7, 13));
+            direct.Enemy.MoveTo(new HexCoord(8, 13));
+            direct.Enemy.DeclareRadar(true);
+            var located = direct.Detection.Detect(Side.UsNavy, direct.Enemy,
+                DetectionMethod.Esm, direct.Turn, classified: false);
+            Require(located.Level == ContactLevel.Located && located.IsDetected,
+                "A sensor contact must support a located state before its contents are classified.");
+            direct.Detection.Restore(Array.Empty<ContactSnapshotData>());
+            var esmSuccess = new DetectionResolver(new SequenceDieRoller(5));
+            var esmFailure = new DetectionResolver(new SequenceDieRoller(6));
+            Require(esmSuccess.ResolveEsm(direct.Player, direct.Enemy) &&
+                    !esmFailure.ResolveEsm(direct.Player, direct.Enemy),
+                "Adjacent ESM must detect a radiating enemy on 1-5 and fail on 6.");
+
+            direct.Enemy.MoveTo(direct.Player.Position);
+            direct.Enemy.DeclareRadar(false);
+            Require(new DetectionResolver(new SequenceDieRoller(2)).ResolveVisual(
+                        direct.Player, direct.Enemy, TimeOfDay.Am) &&
+                    !new DetectionResolver(new SequenceDieRoller(3)).ResolveVisual(
+                        direct.Player, direct.Enemy, TimeOfDay.Am) &&
+                    !new DetectionResolver(new SequenceDieRoller(1)).ResolveVisual(
+                        direct.Player, direct.Enemy, TimeOfDay.Night),
+                "Visual search must detect on 1-2 by day, fail on 3-6, and be unavailable at Night.");
+
+            var attackGate = new ScenarioOneGame(1, null, true, true,
+                new SequenceDieRoller(1, 1, 1, 1, 1, 1, 1, 1));
+            Require(attackGate.DrawMovementChit().Accepted && attackGate.State.ActiveSide == Side.UsNavy,
+                "Detection attack-gate test must activate the US formation.");
+            Require(attackGate.Execute(new GameCommand(GameCommandType.RadiateRadar, Side.UsNavy,
+                        attackGate.State.Revision, enabled: false)).Accepted,
+                "A formation must be able to declare radar silent.");
+            Require(attackGate.DeclareSpeed(Side.UsNavy, 0).Accepted,
+                "Radar declaration must permit the following speed declaration.");
+            var hiddenAttack = attackGate.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                attackGate.State.Revision));
+            Require(!hiddenAttack.Accepted && hiddenAttack.Violation.Code == RuleViolationCode.TargetUndetected,
+                "Attacks must reject against undetected task forces.");
+            Require(!attackGate.ViewFor(Side.UsNavy).OpposingFormation.IsKnown &&
+                    attackGate.ViewFor(Side.UsNavy).OpposingFormation.Units.Count == 0,
+                "An undetected opponent must expose no formation contents in its enemy's private view.");
+            attackGate.State.Detection.Detect(Side.UsNavy, attackGate.State.Enemy,
+                DetectionMethod.Esm, attackGate.State.Turn);
+            Require(attackGate.ViewFor(Side.UsNavy).OpposingFormation.Units.Count == 2,
+                "A classified contact must reveal its task-force contents to all friendly forces.");
+            var detectedAttack = attackGate.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                attackGate.State.Revision));
+            Require(detectedAttack.Accepted,
+                "A detected target in weapon range must become attackable.");
+
+            var radar = new ScenarioOneGame(1, null, true, true, new SequenceDieRoller(1));
+            radar.State.Enemy.MoveTo(radar.State.Player.Position);
+            Require(radar.DrawMovementChit().Accepted && radar.State.ActiveSide == Side.UsNavy,
+                "SSR test must activate the US formation.");
+            var missingRadarDeclaration = radar.DeclareSpeed(Side.UsNavy, 0);
+            Require(!missingRadarDeclaration.Accepted &&
+                    missingRadarDeclaration.Violation.Code == RuleViolationCode.RadarDeclarationRequired,
+                "Detection play must require the beginning-of-activation radar declaration.");
+            Require(radar.Execute(new GameCommand(GameCommandType.RadiateRadar, Side.UsNavy,
+                        radar.State.Revision, enabled: true)).Accepted &&
+                    radar.State.Detection.IsDetected(Side.UsNavy, radar.State.Enemy.Id),
+                "Radiating SSR must automatically classify surface ships in the same hex.");
+
+            var repeatVisual = new ScenarioOneGame(1, null, true, true,
+                new SequenceDieRoller(1, 6, 1));
+            repeatVisual.State.Enemy.MoveTo(repeatVisual.State.Player.Position);
+            Require(repeatVisual.DrawMovementChit().Accepted && repeatVisual.State.ActiveSide == Side.UsNavy,
+                "Repeat-visual test must activate the US formation.");
+            Require(repeatVisual.Execute(new GameCommand(GameCommandType.RadiateRadar, Side.UsNavy,
+                        repeatVisual.State.Revision, enabled: false)).Accepted &&
+                    repeatVisual.DeclareSpeed(Side.UsNavy, 2).Accepted,
+                "Visual search test must begin radar silent with movement available.");
+            var firstVisual = repeatVisual.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                repeatVisual.State.Revision, targetId: repeatVisual.State.Enemy.Id, searchMode: "visual"));
+            var secondVisual = repeatVisual.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                repeatVisual.State.Revision, targetId: repeatVisual.State.Enemy.Id, searchMode: "visual"));
+            Require(firstVisual.Accepted && secondVisual.Accepted &&
+                    repeatVisual.State.Player.MovementPointsSpent == 1 &&
+                    repeatVisual.State.Detection.IsDetected(Side.UsNavy, repeatVisual.State.Enemy.Id),
+                "A failed visual search may spend another remaining movement point and roll again.");
+
+            repeatVisual.State.Detection.Lose(Side.UsNavy, repeatVisual.State.Enemy,
+                DetectionMethod.Sonar, repeatVisual.State.Turn);
+            var lost = repeatVisual.State.Detection.ContactFor(Side.UsNavy, repeatVisual.State.Enemy.Id);
+            Require(lost.Level == ContactLevel.LostContact && !lost.IsDetected &&
+                    repeatVisual.ViewFor(Side.UsNavy).OpposingFormation.Units.Count == 0,
+                "Lost contact must retain only the last known location and hide formation contents again.");
+
+            var snapshot = repeatVisual.CaptureSnapshot();
+            var mirror = new ScenarioOneGame(99, null, true, true);
+            mirror.ApplySnapshot(snapshot);
+            Require(mirror.State.Detection.ContactFor(Side.UsNavy, mirror.State.Enemy.Id).Level ==
+                    ContactLevel.LostContact && mirror.State.Player.RadarDeclaredThisActivation,
+                "Snapshots must preserve contacts, lost-contact state, and radar declarations.");
         }
 
         private static void Require(bool condition, string message)

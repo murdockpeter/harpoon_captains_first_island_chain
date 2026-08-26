@@ -18,18 +18,19 @@ Modern unit cards and the optional EA-18G rule necessarily come from the supplem
 | Rule/data | Authoritative source | Current code | Automated evidence | Status |
 |---|---|---|---|---|
 | Scenario name, forces, setup, objective | First Island Chain pp. 25; cards pp. 15, 18–19, 21 | `ScenarioOne.Create` | `RulesTests.ScenarioStartsThreeHexesApart`; batch card audit | Partial: setup/data present, full scoring pending |
-| Task-force grouping and hidden stacks | Captain's Rules p. 3 | `TaskForceState` | none | Partial |
-| Random movement chits | Captain's Rules p. 3 | `ScenarioOneGame.BeginTurn` | seeded smoke validation | Prototype shortcut; full cup pending |
+| Task-force grouping and hidden stacks | Captain's Rules p. 3 | `TaskForceState`, `ScenarioOneGame.SplitTaskForceInternal` | pre-draw split and snapshot tests | Grouping and splitting complete; hidden stacks await detection rules |
+| Random movement chits and period sequence | Captain's Rules p. 3 | `MovementChitCup`, `ScenarioOneGame.DrawMovementChitInternal`, `BeginTurn` | no-replacement, named activation, split-window, turn-rollover, Night, and seeded-order tests | Complete for surface task forces; cup also accepts patrol-aircraft chits for later air rules |
 | Declared speed, slowest ship, one-hex movement | Captain's Rules p. 3 | `TaskForceState`, `ScenarioOneGame.DeclareSpeedInternal`, `TryMoveInternal` | declaration, adjacency, incomplete-movement, damaged-speed tests | Complete for Scenario 1 |
 | Map topology, terrain, bases, and land restriction | Captain's Rules p. 3; supplement map p. 6 | `OperationalMap`, `FirstIslandChainMap`, `HexCoord` | 15×20 bounds, axial setup, base, coastline, land, and edge tests | Complete for Scenario 1 |
 | Per-entered-hex combat/search timing | Captain's Rules p. 3 | movement-opportunity events; attack/search commands remain legal between steps | per-hex action-window batch test | Movement hook complete; detailed counterattack procedure remains section 6 |
+| Surface detection, SSR, ESM, and visual search | Captain's Rules p. 8; supplement p. 4 | `DetectionTracker`, `DetectionResolver`, `ScenarioOneGame` sensor commands/triggers | radar declaration/automatic detection, ESM 1–5, visual 1–2/Night/repeat, attack-gating, private-view, snapshot tests | Complete; available through solo Detection Test Mode because Scenario 1 itself omits detection |
 | Attack/counterattack timing and simultaneity | Captain's Rules pp. 3–4 | `ScenarioOneGame`, `CombatResolver` | none | Incomplete |
 | Ship damage | Captain's Rules p. 4 | `UnitState` | batch threshold audit | Partial; capability values corrected, full tests pending |
 | SSM values, range, splitting, ammunition | Captain's Rules pp. 4–5 | `UnitState.CommitMissiles` | missile smoke test | Values/range established; player allocation pending |
 | Defensive pairing | Captain's Rules pp. 5–6 | `CombatResolver` | layered-defense smoke test | Simplified |
 | Missile procedure and combat table | Captain's Rules p. 6; supplement p. 11 | `CombatResolver` | table fixture plus smoke test | Partial; allocation choices pending |
 | Naval gunfire | Captain's Rules p. 7 | `CombatResolver.ResolveGuns` | none | Simplified |
-| Detection exemption for learning scenarios 1–2 | Captain's Rules pp. 3 and 6 | attacks are not detection-gated | documented scenario interpretation | Complete for Scenario 1 |
+| Detection exemption for learning scenarios 1–2 | Captain's Rules pp. 3 and 6 | default Scenario 1 configuration bypasses detection; debug mode enables the general subsystem | exemption and attack-gating tests | Complete for Scenario 1 |
 | Scenario 1 victory and tie-break | First Island Chain p. 25; analogous original scenario on Briefing p. 4 | `ScenarioOneGame.EndByScore`, `CompareScore` | `ScenarioOneUsesCombatantDamageOnlyAsATieBreak` | Implemented for available end states |
 | Scenario stopping condition | No explicit limit in either Scenario 1 text | unlimited `MaximumTurns = 0` | batch state audit | Interpretation adopted; disengage/concede UI pending |
 
