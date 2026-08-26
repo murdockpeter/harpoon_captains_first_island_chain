@@ -1,0 +1,14 @@
+{
+  "name": "Harpoon.Editor",
+  "rootNamespace": "Harpoon.Editor",
+  "references": ["Harpoon.Runtime", "Harpoon.Core"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

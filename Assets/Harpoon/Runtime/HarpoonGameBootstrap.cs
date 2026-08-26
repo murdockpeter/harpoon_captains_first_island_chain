@@ -1,0 +1,1320 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using Harpoon.Core;
+using UnityEngine;
+
+namespace Harpoon.Runtime
+{
+    public sealed class HarpoonGameBootstrap : MonoBehaviour
+    {
+        private enum SessionMode { SinglePlayer, Host, Client, PublicHost, PublicClient }
+        private const float HexRadius = 1.12f;
+        private readonly Dictionary<HexCoord, HexTileView> _tiles = new Dictionary<HexCoord, HexTileView>();
+        private ScenarioOneGame _game;
+        private Transform _playerMarker;
+        private Transform _enemyMarker;
+        private LineRenderer _movementPathPreview;
+        private GUIStyle _titleStyle;
+        private GUIStyle _labelStyle;
+        private GUIStyle _buttonStyle;
+        private GUIStyle _cardHeaderStyle;
+        private GUIStyle _cardStatStyle;
+        private GUIStyle _tooltipStyle;
+        private GUIStyle _debugStyle;
+        private GUIStyle _debugHeaderStyle;
+        private GUIStyle _activationStyle;
+        private Side _selectedFormation = Side.UsNavy;
+        private HexCoord? _hoveredHex;
+        private bool _showDebug;
+        private Vector2 _debugScroll;
+        private int _lastDebugCount;
+        private readonly MultiplayerNetwork _network = new MultiplayerNetwork();
+        private readonly PublicRelayNetwork _publicNetwork = new PublicRelayNetwork();
+        private readonly List<string> _chat = new List<string>();
+        private readonly Dictionary<string, GameCommand> _pendingCommands = new Dictionary<string, GameCommand>();
+        private SessionMode _sessionMode;
+        private bool _showMultiplayer;
+        private bool _wasConnected;
+        private string _lastNetworkStatus = "Offline";
+        private string _ipAddress = "127.0.0.1";
+        private string _portText = "7777";
+        private string _chatInput = string.Empty;
+        private string _publicSessionName = "Harpoon Scenario 1";
+        private string _publicPassword = string.Empty;
+        private string _joinCode = string.Empty;
+        private bool _publicDiscoverable = true;
+        private Side _hostSideChoice = Side.UsNavy;
+        private Side _localSide = Side.UsNavy;
+        private bool _muteOpponent;
+        private float _lastChatSentAt = -10f;
+        private float _lastSoundSentAt = -10f;
+        private Vector2 _chatScroll;
+        private Vector2 _lobbyScroll;
+        private AudioSource _soundboardSource;
+        private AudioClip[] _soundboardClips;
+        private AudioSource _gameAudioSource;
+        private AudioClip _moveClip;
+        private AudioClip _attackClip;
+        private AudioClip _impactClip;
+        private AudioClip _actionClip;
+        private AudioClip _rejectClip;
+        private object _speechVoice;
+        private static readonly string[] SoundboardNames =
+        {
+            "You sank my battleship!", "Incoming!", "All hands brace!", "Good hunting!"
+        };
+        private string _status = "Declare task-force speed to begin the activation.";
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void EnsureBootstrap()
+        {
+            if (FindFirstObjectByType<HarpoonGameBootstrap>() == null)
+                new GameObject("Harpoon Game").AddComponent<HarpoonGameBootstrap>();
+        }
+
+        private void Awake()
+        {
+            if (!Application.isEditor) EnterBorderlessFullscreen();
+            Application.targetFrameRate = 60;
+            QualitySettings.shadowDistance = 80f;
+            BuildLightingAndCamera();
+            BuildBoard();
+            BuildTaskForceMarkers();
+            BuildSoundboard();
+            BuildGameAudio();
+            Restart();
+        }
+
+        private void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                if (_showDebug) _showDebug = false;
+                else QuitGame();
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.F3)) _showDebug = !_showDebug;
+            if (Input.GetKeyDown(KeyCode.F11)) ToggleFullscreen();
+            ProcessNetwork();
+            UpdateHoveredHex();
+            if (!Input.GetMouseButtonDown(0) || IsPointerOverPanel()) { HighlightMovement(); return; }
+            var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+            if (Physics.Raycast(ray, out var hit, 200f))
+            {
+                var formation = hit.collider.GetComponentInParent<FormationView>();
+                if (formation != null)
+                {
+                    SelectFormation(formation.Side);
+                    HighlightMovement();
+                    return;
+                }
+                var tile = hit.collider.GetComponent<HexTileView>();
+                if (tile != null)
+                {
+                    TryLocalMove(tile.Coordinate);
+                    RefreshViews();
+                }
+            }
+            HighlightMovement();
+        }
+
+        private void Restart()
+        {
+            _pendingCommands.Clear();
+            _game = new ScenarioOneGame(2026, null, _sessionMode != SessionMode.SinglePlayer);
+            _game.AttackResolved += OnAttackResolved;
+            _game.CommandProcessed += OnCommandProcessed;
+            _selectedFormation = LocalSide;
+            _status = "Declare task-force speed to begin the activation.";
+            _debugScroll = Vector2.zero;
+            _lastDebugCount = 0;
+            RefreshViews();
+            if (IsHostSession && NetworkConnected) BroadcastSnapshot();
+        }
+
+        private bool IsPublicSession => _sessionMode == SessionMode.PublicHost || _sessionMode == SessionMode.PublicClient;
+        private bool IsHostSession => _sessionMode == SessionMode.Host || _sessionMode == SessionMode.PublicHost;
+        private bool IsClientSession => _sessionMode == SessionMode.Client || _sessionMode == SessionMode.PublicClient;
+        private Side LocalSide => _sessionMode == SessionMode.SinglePlayer ? Side.UsNavy : _localSide;
+        private static Side OpposingSide(Side side) => side == Side.UsNavy ? Side.Plan : Side.UsNavy;
+        private bool NetworkConnected => IsPublicSession ? _publicNetwork.IsConnected : _network.IsConnected;
+        private string NetworkStatus => IsPublicSession ? _publicNetwork.Status : _network.Status;
+
+        private void NetworkSend(NetworkMessage message)
+        {
+            if (IsPublicSession) _publicNetwork.Send(message);
+            else _network.Send(message);
+        }
+
+        private bool NetworkTryReceive(out NetworkMessage message) =>
+            IsPublicSession ? _publicNetwork.TryReceive(out message) : _network.TryReceive(out message);
+
+        private void TryLocalMove(HexCoord destination)
+        {
+            if (IsClientSession)
+            {
+                SendCommand(GameCommandType.Move, destination);
+                _status = $"Move to {destination} sent to host.";
+                return;
+            }
+            var result = _game.Execute(new GameCommand(GameCommandType.Move, LocalSide,
+                _game.State.Revision, destination));
+            if (result.Accepted)
+            {
+                _status = $"Moved to {destination}. Attack or end activation.";
+                if (IsHostSession) BroadcastSnapshot();
+            }
+            else _status = result.Summary;
+        }
+
+        private void DeclareLocalSpeed(int speed)
+        {
+            if (IsClientSession)
+            {
+                SendCommand(GameCommandType.DeclareSpeed, declaredSpeed: speed);
+                _status = $"Speed {speed} declaration sent to host.";
+                return;
+            }
+            var result = _game.Execute(new GameCommand(GameCommandType.DeclareSpeed, LocalSide,
+                _game.State.Revision, declaredSpeed: speed));
+            _status = result.Accepted
+                ? speed == 0 ? "Holding position. Attack, search, or end activation."
+                    : $"Speed {speed} declared. Enter one highlighted adjacent hex at a time."
+                : result.Summary;
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void StartHosting()
+        {
+            if (!TryReadPort(out var port)) return;
+            _sessionMode = SessionMode.Host;
+            _localSide = _hostSideChoice;
+            _network.StartHost(port);
+            _chat.Clear();
+            _chat.Add($"SYSTEM: Hosting as {SideLabel(_localSide)} on port {port}.");
+            _showMultiplayer = false;
+            Restart();
+        }
+
+        private void JoinHost()
+        {
+            if (!TryReadPort(out var port)) return;
+            _sessionMode = SessionMode.Client;
+            _localSide = Side.Plan;
+            _network.StartClient(_ipAddress.Trim(), port);
+            _chat.Clear();
+            _chat.Add($"SYSTEM: Joining {_ipAddress.Trim()}:{port}; awaiting side assignment.");
+            _showMultiplayer = false;
+            Restart();
+        }
+
+        private void StartPublicHost()
+        {
+            if (_publicPassword.Length > 0 && _publicPassword.Length < 8)
+            {
+                _status = "Public session passwords must be at least eight characters.";
+                return;
+            }
+            _network.Stop();
+            _sessionMode = SessionMode.PublicHost;
+            _localSide = _hostSideChoice;
+            _chat.Clear();
+            _chat.Add($"SYSTEM: Creating public encrypted Relay session as {SideLabel(_localSide)}.");
+            _showMultiplayer = false;
+            _publicNetwork.Host(_publicSessionName, _publicPassword, _publicDiscoverable);
+            Restart();
+        }
+
+        private void JoinPublicByCode()
+        {
+            if (_joinCode.Trim().Length < 6) { _status = "Enter the host's Relay join code."; return; }
+            _network.Stop();
+            _sessionMode = SessionMode.PublicClient;
+            _localSide = Side.Plan;
+            _chat.Clear();
+            _chat.Add("SYSTEM: Joining public encrypted Relay session; awaiting side assignment.");
+            _showMultiplayer = false;
+            _publicNetwork.JoinByCode(_joinCode, _publicPassword);
+            Restart();
+        }
+
+        private void JoinPublicListing(string sessionId)
+        {
+            _network.Stop();
+            _sessionMode = SessionMode.PublicClient;
+            _localSide = Side.Plan;
+            _chat.Clear();
+            _chat.Add("SYSTEM: Joining selected public session; awaiting side assignment.");
+            _publicNetwork.JoinById(sessionId, _publicPassword);
+            Restart();
+        }
+
+        private bool TryReadPort(out int port)
+        {
+            if (int.TryParse(_portText, out port) && port >= 1024 && port <= 65535) return true;
+            _status = "Enter a port from 1024 through 65535.";
+            return false;
+        }
+
+        private void ReturnToSinglePlayer()
+        {
+            _network.Stop();
+            _publicNetwork.Stop();
+            _sessionMode = SessionMode.SinglePlayer;
+            _wasConnected = false;
+            _showMultiplayer = false;
+            Restart();
+        }
+
+        private void ProcessNetwork()
+        {
+            if (_sessionMode == SessionMode.SinglePlayer) return;
+            if (IsPublicSession && _publicNetwork.IsConnected)
+                _sessionMode = _publicNetwork.IsHost ? SessionMode.PublicHost : SessionMode.PublicClient;
+            if (NetworkStatus != _lastNetworkStatus)
+            {
+                _lastNetworkStatus = NetworkStatus;
+                _game.State.Trace("NETWORK", _lastNetworkStatus);
+                _status = _lastNetworkStatus;
+            }
+            if (NetworkConnected && !_wasConnected)
+            {
+                _wasConnected = true;
+                _chat.Add("SYSTEM: Opponent connected. Chat and soundboard are live.");
+                if (IsHostSession)
+                {
+                    NetworkSend(new NetworkMessage
+                    {
+                        kind = "assignment", side = OpposingSide(LocalSide).ToString()
+                    });
+                    _game.State.Trace("NETWORK", $"Assigned opponent to {SideLabel(OpposingSide(LocalSide))}; host controls {SideLabel(LocalSide)}.");
+                    BroadcastSnapshot();
+                }
+            }
+            else if (!NetworkConnected && _wasConnected)
+            {
+                _wasConnected = false;
+                _chat.Add("SYSTEM: Opponent disconnected.");
+            }
+
+            while (NetworkTryReceive(out var message))
+            {
+                switch (message.kind)
+                {
+                    case "assignment":
+                        if (IsClientSession && Enum.TryParse(message.side, true, out Side assignedSide))
+                        {
+                            _localSide = assignedSide;
+                            _selectedFormation = assignedSide;
+                            _chat.Add($"SYSTEM: You command {SideLabel(assignedSide)}.");
+                            _game.State.Trace("NETWORK", $"Side assignment received: {assignedSide}.");
+                            RefreshViews();
+                        }
+                        break;
+                    case "command":
+                        if (IsHostSession) ExecuteRemoteCommand(message);
+                        break;
+                    case "snapshot":
+                        if (IsClientSession)
+                        {
+                            var knownCommands = _game.State.CommandLog.Count;
+                            var snapshot = JsonUtility.FromJson<ScenarioOneSnapshot>(message.snapshot);
+                            _game.ApplySnapshot(snapshot);
+                            foreach (var observed in _game.State.CommandLog.Skip(knownCommands)
+                                         .Where(item => item.actor != LocalSide))
+                                PlayClientCommandFeedback(GameCommand.FromData(observed), true);
+                            RefreshViews();
+                            _status = _game.State.ActiveSide == LocalSide ? "Your activation." : "Waiting for opponent.";
+                        }
+                        break;
+                    case "commandResult":
+                        _status = message.text;
+                        if (_pendingCommands.TryGetValue(message.commandId, out var pendingCommand))
+                        {
+                            PlayClientCommandFeedback(pendingCommand, string.IsNullOrEmpty(message.violationCode));
+                            _pendingCommands.Remove(message.commandId);
+                        }
+                        _game.State.Trace("NETWORK", string.IsNullOrEmpty(message.violationCode)
+                            ? $"Host accepted command {message.commandId}."
+                            : $"Host rejected command {message.commandId}: {message.violationCode} - {message.text}");
+                        break;
+                    case "chat":
+                        if (!_muteOpponent && !string.IsNullOrEmpty(message.text))
+                            _chat.Add(message.text.Substring(0, Mathf.Min(240, message.text.Length)));
+                        _chatScroll.y = float.MaxValue;
+                        break;
+                    case "sound":
+                        if (!_muteOpponent)
+                        {
+                            PlaySoundboard(message.soundId);
+                            _chat.Add($"SOUNDBOARD · Opponent: {SoundboardLabel(message.soundId)}");
+                        }
+                        _chatScroll.y = float.MaxValue;
+                        break;
+                }
+            }
+        }
+
+        private void ExecuteRemoteCommand(NetworkMessage message)
+        {
+            if (message.command == null)
+            {
+                _game.State.Trace("NETWORK", "Rejected network message without a command payload.");
+                return;
+            }
+            var command = GameCommand.FromData(message.command);
+            var remoteSide = command.Actor;
+            if (remoteSide != OpposingSide(LocalSide))
+            {
+                _game.State.Trace("NETWORK", $"Rejected command with invalid side claim '{remoteSide}'.");
+                NetworkSend(new NetworkMessage
+                {
+                    kind = "commandResult",
+                    commandId = command.Id,
+                    text = $"This connection controls {SideLabel(OpposingSide(LocalSide))}, not {SideLabel(remoteSide)}.",
+                    violationCode = RuleViolationCode.WrongSide.ToString()
+                });
+                BroadcastSnapshot();
+                return;
+            }
+            var result = _game.Execute(command);
+            _status = result.Summary;
+            _game.State.Trace("NETWORK", $"{remoteSide} command '{command.Type}' processed; accepted={result.Accepted}.");
+            NetworkSend(new NetworkMessage
+            {
+                kind = "commandResult",
+                commandId = command.Id,
+                text = result.Summary,
+                violationCode = result.Violation?.Code.ToString() ?? string.Empty
+            });
+            RefreshViews();
+            BroadcastSnapshot();
+        }
+
+        private void SendCommand(GameCommandType type, HexCoord coordinate = default, int declaredSpeed = 0)
+        {
+            if (!NetworkConnected)
+            {
+                _status = "No opponent connection.";
+                return;
+            }
+            var command = new GameCommand(type, LocalSide, _game.State.Revision, coordinate,
+                declaredSpeed: declaredSpeed);
+            _pendingCommands[command.Id] = command;
+            NetworkSend(new NetworkMessage
+            {
+                kind = "command", command = command.ToData()
+            });
+            _game.State.Trace("NETWORK", $"Sent {LocalSide} command '{type}' at expected revision {_game.State.Revision}.");
+        }
+
+        private void BroadcastSnapshot()
+        {
+            if (!NetworkConnected || !IsHostSession) return;
+            NetworkSend(new NetworkMessage
+            {
+                kind = "snapshot", snapshot = JsonUtility.ToJson(_game.CaptureSnapshotFor(OpposingSide(LocalSide)))
+            });
+        }
+
+        private void SendChat()
+        {
+            var text = _chatInput.Trim();
+            if (text.Length == 0 || !NetworkConnected || Time.unscaledTime - _lastChatSentAt < 0.4f) return;
+            _lastChatSentAt = Time.unscaledTime;
+            var line = $"{SideLabel(LocalSide)}: {text}";
+            _chat.Add(line);
+            NetworkSend(new NetworkMessage { kind = "chat", text = line });
+            _chatInput = string.Empty;
+            _chatScroll.y = float.MaxValue;
+        }
+
+        private void SendSoundboard(int soundId)
+        {
+            if (!NetworkConnected || Time.unscaledTime - _lastSoundSentAt < 1f) return;
+            _lastSoundSentAt = Time.unscaledTime;
+            PlaySoundboard(soundId);
+            _chat.Add($"SOUNDBOARD · You: {SoundboardLabel(soundId)}");
+            NetworkSend(new NetworkMessage { kind = "sound", soundId = soundId });
+            _chatScroll.y = float.MaxValue;
+        }
+
+        private void BuildSoundboard()
+        {
+            _soundboardSource = gameObject.AddComponent<AudioSource>();
+            _soundboardSource.spatialBlend = 0f;
+            _soundboardSource.volume = 0.6f;
+            try
+            {
+                var speechType = Type.GetTypeFromProgID("SAPI.SpVoice");
+                if (speechType != null) _speechVoice = Activator.CreateInstance(speechType);
+            }
+            catch { _speechVoice = null; }
+            _soundboardClips = new AudioClip[SoundboardNames.Length];
+            for (var cue = 0; cue < _soundboardClips.Length; cue++)
+            {
+                const int sampleRate = 22050;
+                var length = sampleRate * 2 / 3;
+                var samples = new float[length];
+                for (var index = 0; index < length; index++)
+                {
+                    var time = index / (float)sampleRate;
+                    var envelope = Mathf.Min(1f, time * 18f) * Mathf.Clamp01(1f - time / 0.68f);
+                    var frequency = 220f + cue * 85f + (index > length / 2 ? 110f : 0f);
+                    samples[index] = Mathf.Sin(time * frequency * Mathf.PI * 2f) * envelope * 0.28f;
+                }
+                var clip = AudioClip.Create("Soundboard " + cue, length, 1, sampleRate, false);
+                clip.SetData(samples, 0);
+                _soundboardClips[cue] = clip;
+            }
+        }
+
+        private void BuildGameAudio()
+        {
+            _gameAudioSource = gameObject.AddComponent<AudioSource>();
+            _gameAudioSource.spatialBlend = 0f;
+            _gameAudioSource.volume = 0.55f;
+            _moveClip = CreateProceduralClip("Movement - wake and engines", 0.48f, time =>
+            {
+                var envelope = Mathf.Sin(Mathf.Clamp01(time / 0.48f) * Mathf.PI);
+                var engine = Mathf.Sin(time * Mathf.PI * 2f * 72f) * 0.18f +
+                             Mathf.Sin(time * Mathf.PI * 2f * 37f) * 0.09f;
+                var water = Mathf.Sin(time * 1733f) * Mathf.Sin(time * 927f) * 0.07f;
+                return (engine + water) * envelope;
+            });
+            _attackClip = CreateProceduralClip("Attack - missile launch", 0.52f, time =>
+            {
+                var normalized = time / 0.52f;
+                var frequency = 180f + normalized * 780f;
+                var envelope = Mathf.Clamp01(time * 25f) * (1f - normalized);
+                return (Mathf.Sin(time * frequency * Mathf.PI * 2f) * 0.28f +
+                        Mathf.Sin(time * 1319f) * 0.09f) * envelope;
+            });
+            _impactClip = CreateProceduralClip("Attack - impact", 0.62f, time =>
+            {
+                var envelope = Mathf.Exp(-time * 6f);
+                var noise = Mathf.Sin(time * 9173f) * Mathf.Sin(time * 3137f);
+                return (noise * 0.38f + Mathf.Sin(time * Mathf.PI * 2f * 54f) * 0.32f) * envelope;
+            });
+            _actionClip = CreateProceduralClip("Action - command ping", 0.38f, time =>
+                Mathf.Sin(time * Mathf.PI * 2f * 620f) * Mathf.Exp(-time * 9f) * 0.32f);
+            _rejectClip = CreateProceduralClip("Action - rejected", 0.26f, time =>
+            {
+                var frequency = time < 0.13f ? 190f : 125f;
+                return Mathf.Sin(time * Mathf.PI * 2f * frequency) * 0.22f;
+            });
+        }
+
+        private static AudioClip CreateProceduralClip(string name, float duration, Func<float, float> sample)
+        {
+            const int sampleRate = 22050;
+            var length = Mathf.CeilToInt(duration * sampleRate);
+            var samples = new float[length];
+            for (var index = 0; index < length; index++)
+                samples[index] = Mathf.Clamp(sample(index / (float)sampleRate), -0.9f, 0.9f);
+            var clip = AudioClip.Create(name, length, 1, sampleRate, false);
+            clip.SetData(samples, 0);
+            return clip;
+        }
+
+        private void PlayGameSound(AudioClip clip, float volume = 1f)
+        {
+            if (_gameAudioSource != null && clip != null)
+                _gameAudioSource.PlayOneShot(clip, volume);
+        }
+
+        private void PlaySoundboard(int soundId)
+        {
+            if (_soundboardSource == null || soundId < 0 || soundId >= _soundboardClips.Length) return;
+            _soundboardSource.PlayOneShot(_soundboardClips[soundId]);
+            if (_speechVoice == null) return;
+            try
+            {
+                _speechVoice.GetType().InvokeMember("Speak", BindingFlags.InvokeMethod, null,
+                    _speechVoice, new object[] { SoundboardLabel(soundId), 1 });
+            }
+            catch { }
+        }
+
+        private static string SoundboardLabel(int soundId) =>
+            soundId >= 0 && soundId < SoundboardNames.Length ? SoundboardNames[soundId] : "Unknown cue";
+
+        private static string SideLabel(Side side) => side == Side.UsNavy ? "US NAVY" : "PLAN";
+
+        private void BuildLightingAndCamera()
+        {
+            RenderSettings.ambientLight = new Color(0.38f, 0.45f, 0.52f);
+            RenderSettings.fog = true;
+            RenderSettings.fogColor = new Color(0.055f, 0.12f, 0.17f);
+            RenderSettings.fogMode = FogMode.ExponentialSquared;
+            RenderSettings.fogDensity = 0.006f;
+            var lightObject = new GameObject("Sun");
+            var sun = lightObject.AddComponent<Light>();
+            sun.type = LightType.Directional;
+            sun.color = new Color(1f, 0.94f, 0.84f);
+            sun.intensity = 1.3f;
+            sun.shadows = LightShadows.Soft;
+            lightObject.transform.rotation = Quaternion.Euler(48f, -32f, 0f);
+            if (Camera.main != null) Destroy(Camera.main.gameObject);
+            var cameraObject = new GameObject("Main Camera");
+            cameraObject.tag = "MainCamera";
+            var camera = cameraObject.AddComponent<Camera>();
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0.018f, 0.035f, 0.06f);
+            var focus = new Vector3(12.5f, 0f, 28f);
+            camera.fieldOfView = 44f;
+            camera.nearClipPlane = 0.15f;
+            camera.farClipPlane = 180f;
+            cameraObject.AddComponent<TacticalCamera>().Initialize(focus);
+        }
+
+        private void BuildBoard()
+        {
+            var boardRoot = new GameObject("Operational Map").transform;
+            var ocean = GameObject.CreatePrimitive(PrimitiveType.Plane);
+            ocean.name = "Ocean Surface";
+            ocean.transform.SetParent(boardRoot);
+            ocean.transform.position = new Vector3(11f, -0.32f, 27f);
+            ocean.transform.localScale = new Vector3(4.2f, 1f, 7f);
+            ocean.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(new Color(0.018f, 0.12f, 0.19f), 0.15f, 0.88f);
+            foreach (var coordinate in FirstIslandChainMap.Instance.AllHexes)
+            {
+                var terrain = FirstIslandChainMap.Instance.TerrainAt(coordinate);
+                var isLand = terrain == TerrainType.Land || terrain == TerrainType.NavalBase;
+                var height = isLand ? 0.28f + ((coordinate.Column * 17 + coordinate.Row * 11) % 4) * 0.1f : 0.055f;
+                var tile = CreateHexTile(height);
+                tile.name = $"Hex {coordinate}";
+                tile.transform.SetParent(boardRoot);
+                tile.transform.position = WorldPosition(coordinate);
+                var renderer = tile.GetComponent<Renderer>();
+                renderer.sharedMaterial = VisualFactory.Material(isLand
+                    ? new Color(0.42f, 0.38f + height * 0.15f, 0.22f)
+                    : new Color(0.025f, 0.25f, 0.37f), isLand ? 0.02f : 0.12f, isLand ? 0.18f : 0.75f);
+                var view = tile.AddComponent<HexTileView>();
+                view.Initialize(coordinate);
+                _tiles.Add(coordinate, view);
+            }
+            BuildBaseMarkers(boardRoot);
+        }
+
+        private static void BuildBaseMarkers(Transform boardRoot)
+        {
+            foreach (var navalBase in FirstIslandChainMap.Instance.Bases)
+            {
+                var marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                marker.name = navalBase.Name;
+                marker.transform.SetParent(boardRoot);
+                marker.transform.position = WorldPosition(navalBase.Position) + Vector3.up * 0.72f;
+                marker.transform.localScale = new Vector3(0.16f, 0.42f, 0.16f);
+                var color = navalBase.Side == Side.UsNavy
+                    ? new Color(0.18f, 0.62f, 1f) : new Color(1f, 0.24f, 0.16f);
+                marker.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(color, 0.25f, 0.55f);
+                var beacon = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                beacon.name = navalBase.Name + " Beacon";
+                beacon.transform.SetParent(marker.transform);
+                beacon.transform.localPosition = Vector3.up * 0.58f;
+                beacon.transform.localScale = Vector3.one * 1.7f;
+                beacon.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(color * 1.25f, 0f, 0.2f);
+            }
+        }
+
+        private static GameObject CreateHexTile(float height)
+        {
+            var tile = new GameObject("Hex Tile");
+            var vertices = new Vector3[12];
+            for (var i = 0; i < 6; i++)
+            {
+                var angle = Mathf.Deg2Rad * (60f * i);
+                var x = Mathf.Cos(angle) * (HexRadius * 0.97f);
+                var z = Mathf.Sin(angle) * (HexRadius * 0.97f);
+                vertices[i] = new Vector3(x, height, z);
+                vertices[i + 6] = new Vector3(x, -0.08f, z);
+            }
+
+            var triangles = new List<int>(60);
+            for (var i = 1; i < 5; i++)
+            {
+                triangles.Add(0); triangles.Add(i + 1); triangles.Add(i);
+                triangles.Add(6); triangles.Add(6 + i); triangles.Add(6 + i + 1);
+            }
+            for (var i = 0; i < 6; i++)
+            {
+                var next = (i + 1) % 6;
+                triangles.Add(i); triangles.Add(i + 6); triangles.Add(next);
+                triangles.Add(next); triangles.Add(i + 6); triangles.Add(next + 6);
+            }
+
+            var mesh = new Mesh { name = "Operational Hex" };
+            mesh.vertices = vertices;
+            mesh.triangles = triangles.ToArray();
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            tile.AddComponent<MeshFilter>().sharedMesh = mesh;
+            tile.AddComponent<MeshRenderer>();
+            tile.AddComponent<MeshCollider>().sharedMesh = mesh;
+            return tile;
+        }
+
+        private void BuildTaskForceMarkers()
+        {
+            _playerMarker = VisualFactory.CreateFormation("US Task Force", new Color(0.08f, 0.46f, 0.95f), false);
+            _enemyMarker = VisualFactory.CreateFormation("PLAN Task Force", new Color(0.9f, 0.12f, 0.08f), true);
+            _playerMarker.gameObject.AddComponent<FormationView>().Initialize(Side.UsNavy);
+            _enemyMarker.gameObject.AddComponent<FormationView>().Initialize(Side.Plan);
+            var previewObject = new GameObject("Movement Step Preview");
+            _movementPathPreview = previewObject.AddComponent<LineRenderer>();
+            _movementPathPreview.useWorldSpace = true;
+            _movementPathPreview.positionCount = 0;
+            _movementPathPreview.startWidth = 0.14f;
+            _movementPathPreview.endWidth = 0.05f;
+            _movementPathPreview.sharedMaterial = VisualFactory.Material(new Color(0.15f, 0.9f, 1f), 0f, 0.18f);
+        }
+
+        private void HighlightMovement()
+        {
+            if (_game == null) return;
+            foreach (var pair in _tiles)
+            {
+                var terrain = _game.State.Map.TerrainAt(pair.Key);
+                var isLand = !_game.State.Map.IsNavigable(pair.Key, LocalSide);
+                var hovered = _hoveredHex.HasValue && _hoveredHex.Value == pair.Key;
+                var localForce = _game.State.ForceFor(LocalSide);
+                var movable = CanLocalAct() && _game.State.Phase == ActivationPhase.PlayerMove && !isLand &&
+                              localForce.MovementRemaining > 0 && localForce.Position.IsAdjacentTo(pair.Key);
+                pair.Value.GetComponent<Renderer>().material.color = isLand
+                    ? hovered ? new Color(0.7f, 0.66f, 0.3f)
+                    : terrain == TerrainType.NavalBase ? new Color(0.34f, 0.4f, 0.24f) : new Color(0.42f, 0.43f, 0.22f)
+                    : hovered ? new Color(0.12f, 0.72f, 0.8f)
+                    : movable ? new Color(0.04f, 0.48f, 0.58f) : new Color(0.025f, 0.25f, 0.37f);
+            }
+            UpdateMovementPreview();
+        }
+
+        private void UpdateMovementPreview()
+        {
+            if (_movementPathPreview == null || !_hoveredHex.HasValue || !CanLocalAct() ||
+                _game.State.Phase != ActivationPhase.PlayerMove)
+            {
+                if (_movementPathPreview != null) _movementPathPreview.positionCount = 0;
+                return;
+            }
+            var force = _game.State.ForceFor(LocalSide);
+            if (!force.Position.IsAdjacentTo(_hoveredHex.Value) ||
+                !_game.State.Map.IsNavigable(_hoveredHex.Value, LocalSide))
+            {
+                _movementPathPreview.positionCount = 0;
+                return;
+            }
+            _movementPathPreview.positionCount = 2;
+            _movementPathPreview.SetPosition(0, WorldPosition(force.Position) + Vector3.up * 0.34f);
+            _movementPathPreview.SetPosition(1, WorldPosition(_hoveredHex.Value) + Vector3.up * 0.34f);
+        }
+
+        private void UpdateHoveredHex()
+        {
+            _hoveredHex = null;
+            if (IsPointerOverPanel() || Camera.main == null) return;
+            var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+            foreach (var hit in Physics.RaycastAll(ray, 200f).OrderBy(result => result.distance))
+            {
+                var tile = hit.collider.GetComponent<HexTileView>();
+                if (tile == null) continue;
+                _hoveredHex = tile.Coordinate;
+                return;
+            }
+        }
+
+        private void RefreshViews()
+        {
+            if (_game == null || _playerMarker == null) return;
+            _playerMarker.position = WorldPosition(_game.State.Player.Position) + Vector3.up * 0.75f;
+            _enemyMarker.position = WorldPosition(_game.State.Enemy.Position) + Vector3.up * 0.75f;
+            _playerMarker.gameObject.SetActive(!_game.State.Player.IsDestroyed);
+            _enemyMarker.gameObject.SetActive(!_game.State.Enemy.IsDestroyed);
+            _playerMarker.localScale = _selectedFormation == Side.UsNavy ? Vector3.one * 1.16f : Vector3.one;
+            _enemyMarker.localScale = _selectedFormation == Side.Plan ? Vector3.one * 1.16f : Vector3.one;
+        }
+
+        private void SelectFormation(Side side)
+        {
+            _selectedFormation = side;
+            _status = side == Side.UsNavy ? "Inspecting US formation cards." : "Inspecting PLAN formation cards.";
+            RefreshViews();
+        }
+
+        private void OnAttackResolved(Side attacker, AttackReport report)
+        {
+            PlayGameSound(_attackClip);
+            var origin = attacker == Side.UsNavy ? _playerMarker.position : _enemyMarker.position;
+            var target = attacker == Side.UsNavy ? _enemyMarker.position : _playerMarker.position;
+            StartCoroutine(PlayAttackEffect(origin, target, report));
+        }
+
+        private IEnumerator PlayAttackEffect(Vector3 origin, Vector3 target, AttackReport report)
+        {
+            var count = Mathf.Clamp(report.AttackFactors, 1, 4);
+            var missiles = new GameObject[count];
+            for (var i = 0; i < count; i++)
+            {
+                missiles[i] = VisualFactory.CreateMissile(new Color(1f, 0.3f + i * 0.08f, 0.05f));
+                missiles[i].transform.position = origin + Vector3.up * (0.7f + i * 0.08f);
+            }
+            const float duration = 0.9f;
+            var elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.deltaTime;
+                var t = Mathf.Clamp01(elapsed / duration);
+                for (var i = 0; i < missiles.Length; i++)
+                {
+                    if (missiles[i] == null) continue;
+                    var offset = Vector3.right * ((i - (count - 1) * 0.5f) * 0.12f);
+                    missiles[i].transform.position = Vector3.Lerp(origin, target, t) + offset +
+                                                     Vector3.up * (0.8f + Mathf.Sin(t * Mathf.PI) * 4f);
+                }
+                yield return null;
+            }
+            foreach (var missile in missiles) if (missile != null) Destroy(missile);
+            if (report.HullHits <= 0) yield break;
+            PlayGameSound(_impactClip);
+            var burst = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            burst.name = "Impact";
+            burst.transform.position = target + Vector3.up * 0.7f;
+            burst.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(new Color(1f, 0.3f, 0.02f), 0f, 0.2f);
+            for (var t = 0f; t < 0.35f; t += Time.deltaTime)
+            {
+                burst.transform.localScale = Vector3.one * (0.2f + t * 4f);
+                yield return null;
+            }
+            Destroy(burst);
+        }
+
+        private void OnCommandProcessed(GameCommand command, CommandResult result)
+        {
+            if (!result.Accepted)
+            {
+                PlayGameSound(_rejectClip, 0.8f);
+                return;
+            }
+            if (command == null) return;
+            switch (command.Type)
+            {
+                case GameCommandType.Move:
+                    PlayGameSound(_moveClip, 0.85f);
+                    var marker = command.Actor == Side.UsNavy ? _playerMarker : _enemyMarker;
+                    if (marker != null)
+                        StartCoroutine(PlayWakeEffect(marker.position,
+                            WorldPosition(command.Destination) + Vector3.up * 0.12f, command.Actor));
+                    break;
+                case GameCommandType.Attack:
+                    // Successful attacks play through OnAttackResolved so launch timing matches the animation.
+                    break;
+                default:
+                    PlayGameSound(_actionClip, 0.8f);
+                    break;
+            }
+        }
+
+        private void PlayClientCommandFeedback(GameCommand command, bool accepted)
+        {
+            if (!accepted)
+            {
+                PlayGameSound(_rejectClip, 0.8f);
+                return;
+            }
+            if (command.Type == GameCommandType.Move)
+            {
+                PlayGameSound(_moveClip, 0.85f);
+                var marker = command.Actor == Side.UsNavy ? _playerMarker : _enemyMarker;
+                if (marker != null)
+                    StartCoroutine(PlayWakeEffect(marker.position,
+                        WorldPosition(command.Destination) + Vector3.up * 0.12f, command.Actor));
+            }
+            else if (command.Type == GameCommandType.Attack) PlayGameSound(_attackClip);
+            else PlayGameSound(_actionClip, 0.8f);
+        }
+
+        private IEnumerator PlayWakeEffect(Vector3 origin, Vector3 destination, Side side)
+        {
+            const int count = 6;
+            var wakes = new GameObject[count];
+            var color = side == Side.UsNavy
+                ? new Color(0.35f, 0.82f, 1f) : new Color(1f, 0.56f, 0.36f);
+            for (var index = 0; index < count; index++)
+            {
+                var wake = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                wake.name = "Formation Wake";
+                Destroy(wake.GetComponent<Collider>());
+                var t = (index + 1f) / (count + 1f);
+                wake.transform.position = Vector3.Lerp(origin, destination, t) + Vector3.down * 0.5f;
+                wake.transform.localScale = new Vector3(0.3f + t * 0.35f, 0.035f, 0.12f + t * 0.15f);
+                wake.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(color, 0f, 0.15f);
+                wakes[index] = wake;
+            }
+            for (var elapsed = 0f; elapsed < 0.7f; elapsed += Time.deltaTime)
+            {
+                var fade = 1f - elapsed / 0.7f;
+                foreach (var wake in wakes)
+                    if (wake != null) wake.transform.localScale *= 0.985f * fade + 0.015f;
+                yield return null;
+            }
+            foreach (var wake in wakes) if (wake != null) Destroy(wake);
+        }
+
+        private static Vector3 WorldPosition(HexCoord coordinate)
+        {
+            var point = coordinate.ToMapPoint(HexRadius);
+            return new Vector3((float)point.X, 0f, (float)point.Y);
+        }
+
+        private bool IsPointerOverPanel()
+        {
+            var overLeft = Input.mousePosition.x < 390f && Input.mousePosition.y > Screen.height - 670f;
+            var overRight = Input.mousePosition.x > Screen.width - 410f && Input.mousePosition.y > Screen.height - 680f;
+            var overDebug = _showDebug && Input.mousePosition.x > 406f &&
+                            Input.mousePosition.x < Screen.width - 406f &&
+                            Input.mousePosition.y > 24f && Input.mousePosition.y < Screen.height - 24f;
+            var overLobby = _showMultiplayer && Input.mousePosition.x > (Screen.width - 620f) * 0.5f &&
+                            Input.mousePosition.x < (Screen.width + 620f) * 0.5f &&
+                            Input.mousePosition.y > 30f && Input.mousePosition.y < Screen.height - 30f;
+            return overLeft || overRight || overDebug || overLobby;
+        }
+
+        private void OnGUI()
+        {
+            if (_game == null) return;
+            EnsureStyles();
+            GUI.Box(new Rect(18, 18, 370, 650), GUIContent.none);
+            GUILayout.BeginArea(new Rect(34, 30, 338, 622));
+            GUILayout.Label("HARPOON", _titleStyle);
+            GUILayout.Label(_sessionMode == SessionMode.SinglePlayer
+                ? "SOLO - US NAVY"
+                : $"ONLINE - {LocalSide.ToString().ToUpperInvariant()} - {NetworkStatus}", _labelStyle);
+            GUILayout.Label("FIRST ISLAND CHAIN · SCENARIO 1", _labelStyle);
+            GUILayout.Label("WASD pan · wheel zoom · RMB/Q/E orbit · F11 display", _labelStyle);
+            GUILayout.Space(10);
+            var turnLimit = _game.State.MaximumTurns > 0 ? _game.State.MaximumTurns.ToString() : "∞";
+            GUILayout.Label($"TURN {_game.State.Turn}/{turnLimit}   ·   {_game.State.Phase}", _labelStyle);
+            GUILayout.Label(_status, _labelStyle);
+            GUILayout.Space(10);
+            DrawForce(_game.State.Player);
+            GUILayout.Space(7);
+            DrawForce(_game.State.Enemy);
+            GUILayout.Space(8);
+            DrawSpeedDeclaration();
+            GUILayout.Space(8);
+            var actionPhase = _game.State.Phase == ActivationPhase.PlayerMove ||
+                              _game.State.Phase == ActivationPhase.PlayerAction;
+            GUI.enabled = CanLocalAct() && actionPhase && !_game.State.PlayerHasAttacked;
+            if (GUILayout.Button("ATTACK", _buttonStyle))
+            {
+                if (IsClientSession)
+                {
+                    SendCommand(GameCommandType.Attack);
+                    _status = "Attack command sent to host.";
+                }
+                else
+                {
+                    var commandResult = _game.Execute(new GameCommand(GameCommandType.Attack,
+                        LocalSide, _game.State.Revision));
+                    _status = commandResult.Summary;
+                    RefreshViews();
+                    if (IsHostSession) BroadcastSnapshot();
+                }
+            }
+            var activeForce = _game.State.ForceFor(LocalSide);
+            GUI.enabled = !_game.State.IsGameOver && CanLocalAct() &&
+                          activeForce.DeclaredSpeed >= 0 && activeForce.MovementRemaining == 0;
+            if (GUILayout.Button("END ACTIVATION", _buttonStyle))
+            {
+                if (IsClientSession)
+                {
+                    SendCommand(GameCommandType.EndActivation);
+                    _status = "End activation sent to host.";
+                }
+                else
+                {
+                    var commandResult = _game.Execute(new GameCommand(GameCommandType.EndActivation,
+                        LocalSide, _game.State.Revision));
+                    _status = commandResult.Summary;
+                    if (commandResult.Accepted)
+                        _status = _game.State.IsGameOver ? _game.State.Result : "Waiting for the other activation.";
+                    RefreshViews();
+                    if (IsHostSession) BroadcastSnapshot();
+                }
+            }
+            GUI.enabled = true;
+            GUI.enabled = !IsClientSession;
+            if (GUILayout.Button("RESTART SCENARIO", _buttonStyle)) Restart();
+            GUI.enabled = true;
+            if (GUILayout.Button(_sessionMode == SessionMode.SinglePlayer ? "MULTIPLAYER" : "MULTIPLAYER / CONNECTION", _buttonStyle))
+                _showMultiplayer = !_showMultiplayer;
+            if (GUILayout.Button(_showDebug ? "CLOSE DEBUG TRACE  [F3]" : "DEBUG TRACE  [F3]", _buttonStyle))
+                _showDebug = !_showDebug;
+            if (GUILayout.Button("EXIT GAME", _buttonStyle)) QuitGame();
+            GUILayout.Space(12);
+            if (_game.State.IsGameOver) GUILayout.Label(_game.State.Result, _titleStyle);
+            GUILayout.Label("EVENT LOG", _labelStyle);
+            foreach (var entry in _game.State.Log.Skip(System.Math.Max(0, _game.State.Log.Count - 7)))
+                GUILayout.Label("• " + entry, _labelStyle);
+            GUILayout.EndArea();
+            DrawFormationCards();
+            DrawActivationRibbon();
+            if (_sessionMode != SessionMode.SinglePlayer) DrawChatAndSoundboard();
+            if (_showMultiplayer) DrawMultiplayerLobby();
+            if (_showDebug) DrawDebugPanel();
+            if (_hoveredHex.HasValue && !IsPointerOverPanel())
+            {
+                var mouse = Event.current.mousePosition;
+                GUI.Label(new Rect(mouse.x + 16f, mouse.y + 14f, 118f, 28f), $"HEX {_hoveredHex.Value}", _tooltipStyle);
+            }
+        }
+
+        private bool CanLocalAct()
+        {
+            if (_game.State.IsGameOver || _game.State.ActiveSide != LocalSide) return false;
+            return _sessionMode == SessionMode.SinglePlayer || NetworkConnected;
+        }
+
+        private void DrawSpeedDeclaration()
+        {
+            var force = _game.State.ForceFor(LocalSide);
+            if (_game.State.ActiveSide != LocalSide)
+            {
+                var opponentForce = _game.State.ForceFor(_game.State.ActiveSide);
+                GUILayout.Label($"OPPONENT SPEED  {(opponentForce.DeclaredSpeed < 0 ? "PENDING" : opponentForce.DeclaredSpeed.ToString())}",
+                    _cardStatStyle);
+                return;
+            }
+            if (_game.State.Phase == ActivationPhase.DeclareSpeed)
+            {
+                GUILayout.Label($"DECLARE SPEED  ·  MAX {force.EffectiveSpeed}", _cardHeaderStyle);
+                GUILayout.BeginHorizontal();
+                GUI.enabled = CanLocalAct();
+                for (var speed = 0; speed <= force.EffectiveSpeed; speed++)
+                {
+                    var selectedSpeed = speed;
+                    if (GUILayout.Button(speed.ToString(), _buttonStyle)) DeclareLocalSpeed(selectedSpeed);
+                }
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+            else
+            {
+                GUILayout.Label($"SPEED {force.DeclaredSpeed}  ·  STEPS {force.MovementPointsSpent}/{force.DeclaredSpeed}  ·  REMAINING {force.MovementRemaining}",
+                    _cardStatStyle);
+            }
+        }
+
+        private void DrawActivationRibbon()
+        {
+            const float width = 390f;
+            const float height = 54f;
+            var left = (Screen.width - width) * 0.5f;
+            var active = _game.State.ActiveSide;
+            var oldColor = GUI.color;
+            GUI.color = active == Side.UsNavy
+                ? new Color(0.12f, 0.48f, 0.86f, 0.94f)
+                : new Color(0.82f, 0.18f, 0.14f, 0.94f);
+            GUI.Box(new Rect(left, 18f, width, height), GUIContent.none);
+            GUI.color = oldColor;
+
+            var ownership = _game.State.IsGameOver
+                ? "ACTION COMPLETE"
+                : active == LocalSide ? "YOUR COMMAND" : "OPPONENT COMMAND";
+            var side = active == Side.UsNavy ? "US NAVY" : "PLAN";
+            GUI.Label(new Rect(left + 8f, 22f, width - 16f, 28f),
+                $"{side} ACTIVATION  -  {ownership}", _activationStyle);
+            GUI.Label(new Rect(left + 8f, 47f, width - 16f, 20f),
+                $"TURN {_game.State.Turn}  -  {_game.State.Phase}  -  REV {_game.State.Revision:0000}",
+                _cardStatStyle);
+        }
+
+        private void DrawMultiplayerLobby()
+        {
+            const float width = 620f;
+            var height = Mathf.Min(720f, Screen.height - 60f);
+            var left = (Screen.width - width) * 0.5f;
+            var top = (Screen.height - height) * 0.5f;
+            GUI.Box(new Rect(left, top, width, height), GUIContent.none);
+            var sideSelectorColor = GUI.color;
+            GUI.color = new Color(0.1f, 0.76f, 0.92f, 0.95f);
+            GUI.Box(new Rect(left, top, width, 5f), GUIContent.none);
+            GUI.color = sideSelectorColor;
+            GUILayout.BeginArea(new Rect(left + 24f, top + 22f, width - 48f, height - 42f));
+            _lobbyScroll = GUILayout.BeginScrollView(_lobbyScroll);
+            GUILayout.Label("ONE vs ONE - PUBLIC & DIRECT", _titleStyle);
+            GUILayout.Label("The host owns the authoritative rules state and chooses a side. The joining player is assigned the opposing side.", _labelStyle);
+            GUILayout.BeginHorizontal(GUI.skin.box);
+            GUILayout.Label("HOST COMMAND", _cardHeaderStyle, GUILayout.Width(124f));
+            var oldColor = GUI.color;
+            GUI.enabled = _sessionMode == SessionMode.SinglePlayer;
+            GUI.color = _hostSideChoice == Side.UsNavy ? new Color(0.32f, 0.68f, 1f) : Color.white;
+            if (GUILayout.Button("US NAVY", _buttonStyle)) _hostSideChoice = Side.UsNavy;
+            GUI.color = _hostSideChoice == Side.Plan ? new Color(1f, 0.38f, 0.3f) : Color.white;
+            if (GUILayout.Button("PLAN", _buttonStyle)) _hostSideChoice = Side.Plan;
+            GUI.color = oldColor;
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            GUILayout.Label($"Host: {SideLabel(_hostSideChoice)}    Joining player: {SideLabel(OpposingSide(_hostSideChoice))}", _cardStatStyle);
+            GUILayout.Space(8f);
+            GUILayout.Label("PUBLIC RELAY (RECOMMENDED)", _debugHeaderStyle);
+            GUILayout.Label("Encrypted DTLS, anonymous Unity authentication, join codes, discovery, and reconnect. No IP address or router setup is shared with the opponent.", _labelStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("SESSION", _cardStatStyle, GUILayout.Width(82f));
+            _publicSessionName = GUILayout.TextField(_publicSessionName, 64, GUILayout.Height(27f));
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("PASSWORD", _cardStatStyle, GUILayout.Width(82f));
+            _publicPassword = GUILayout.PasswordField(_publicPassword, '*', 64, GUILayout.Height(27f));
+            GUILayout.EndHorizontal();
+            _publicDiscoverable = GUILayout.Toggle(_publicDiscoverable, " List this match in the public session browser", _labelStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("HOST PUBLIC", _buttonStyle)) StartPublicHost();
+            if (GUILayout.Button("REFRESH BROWSER", _buttonStyle)) _publicNetwork.RefreshListings();
+            if (GUILayout.Button("RECONNECT", _buttonStyle))
+            {
+                _sessionMode = SessionMode.PublicClient;
+                _publicNetwork.Reconnect();
+                _showMultiplayer = false;
+                Restart();
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("JOIN CODE", _cardStatStyle, GUILayout.Width(82f));
+            _joinCode = GUILayout.TextField(_joinCode, 12, GUILayout.Height(27f));
+            if (GUILayout.Button("JOIN BY CODE", _buttonStyle, GUILayout.Width(170f))) JoinPublicByCode();
+            GUILayout.EndHorizontal();
+            if (_publicNetwork.JoinCode.Length > 0)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("HOST CODE: " + _publicNetwork.JoinCode, _debugHeaderStyle);
+                if (GUILayout.Button("COPY", _buttonStyle, GUILayout.Width(72f)))
+                    GUIUtility.systemCopyBuffer = _publicNetwork.JoinCode;
+                GUILayout.EndHorizontal();
+            }
+            foreach (var listing in _publicNetwork.Listings.Take(4))
+            {
+                GUILayout.BeginHorizontal(GUI.skin.box);
+                GUILayout.Label($"{listing.Name} - {listing.AvailableSlots} slot - {(listing.HasPassword ? "locked" : "open")}", _cardStatStyle);
+                if (GUILayout.Button("JOIN", _buttonStyle, GUILayout.Width(70f))) JoinPublicListing(listing.Id);
+                GUILayout.EndHorizontal();
+            }
+            foreach (var notification in _publicNetwork.ServiceNotifications.Take(2))
+                GUILayout.Label("UNITY SERVICE NOTICE: " + notification, _labelStyle);
+            GUILayout.Label("RELAY STATUS - " + _publicNetwork.Status, _debugStyle);
+            GUILayout.Space(6f);
+            GUILayout.Label("DIRECT IP (LOCAL / TRUSTED LAN)", _cardHeaderStyle);
+            GUILayout.Label("HOST IP ADDRESS", _cardHeaderStyle);
+            GUILayout.BeginHorizontal();
+            _ipAddress = GUILayout.TextField(_ipAddress, 64, GUILayout.Height(28f));
+            _portText = GUILayout.TextField(_portText, 5, GUILayout.Width(72f), GUILayout.Height(28f));
+            if (GUILayout.Button("HOST DIRECT", _buttonStyle)) StartHosting();
+            if (GUILayout.Button("JOIN DIRECT", _buttonStyle)) JoinHost();
+            GUILayout.EndHorizontal();
+            if (_sessionMode != SessionMode.SinglePlayer && GUILayout.Button("DISCONNECT / SOLO", _buttonStyle))
+                ReturnToSinglePlayer();
+            GUILayout.Label("Direct status - " + _network.Status, _cardStatStyle);
+            if (GUILayout.Button("CLOSE", _buttonStyle)) _showMultiplayer = false;
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
+        }
+
+        private void DrawChatAndSoundboard()
+        {
+            const float panelWidth = 384f;
+            const float top = 680f;
+            var height = Mathf.Max(202f, Screen.height - top - 18f);
+            GUI.Box(new Rect(Screen.width - panelWidth - 18f, top, panelWidth, height), GUIContent.none);
+            GUILayout.BeginArea(new Rect(Screen.width - panelWidth - 2f, top + 12f, panelWidth - 32f, height - 22f));
+            GUILayout.Label("COMMS - CHAT & SOUNDBOARD", _cardHeaderStyle);
+            _muteOpponent = GUILayout.Toggle(_muteOpponent, " Mute opponent chat and sounds", _cardStatStyle);
+            _chatScroll = GUILayout.BeginScrollView(_chatScroll, GUI.skin.box, GUILayout.MinHeight(62f));
+            foreach (var line in _chat.Skip(System.Math.Max(0, _chat.Count - 40)))
+                GUILayout.Label(line, _cardStatStyle);
+            GUILayout.EndScrollView();
+            GUILayout.BeginHorizontal();
+            _chatInput = GUILayout.TextField(_chatInput, 180, GUILayout.Height(28f));
+            if (GUILayout.Button("SEND", _buttonStyle, GUILayout.Width(72f))) SendChat();
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            for (var index = 0; index < SoundboardNames.Length; index++)
+            {
+                var soundId = index;
+                if (GUILayout.Button($"S{index + 1}", _buttonStyle, GUILayout.Width(54f))) SendSoundboard(soundId);
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Label("S1 Sink - S2 Incoming - S3 Brace - S4 Good hunting", _cardStatStyle);
+            GUILayout.EndArea();
+        }
+
+        private void DrawDebugPanel()
+        {
+            var left = 406f;
+            var width = Mathf.Max(420f, Screen.width - 812f);
+            var height = Mathf.Max(360f, Screen.height - 48f);
+            GUI.Box(new Rect(left, 24f, width, height), GUIContent.none);
+            var oldColor = GUI.color;
+            GUI.color = new Color(0.08f, 0.78f, 0.92f, 0.95f);
+            GUI.Box(new Rect(left, 24f, width, 4f), GUIContent.none);
+            GUI.color = oldColor;
+
+            GUILayout.BeginArea(new Rect(left + 16f, 38f, width - 32f, height - 28f));
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("RULES TRANSACTION TRACE", _debugHeaderStyle);
+            GUILayout.FlexibleSpace();
+            GUILayout.Label($"{_game.State.Transactions.Count} TRANSACTIONS", _labelStyle);
+            if (GUILayout.Button("COPY ALL", _buttonStyle, GUILayout.Width(108f)))
+                GUIUtility.systemCopyBuffer = string.Join("\n", _game.State.Transactions.Select(item => item.ToString()));
+            if (GUILayout.Button("CLOSE", _buttonStyle, GUILayout.Width(82f))) _showDebug = false;
+            GUILayout.EndHorizontal();
+            GUILayout.Label("Complete deterministic rules activity. Rejected commands and every die result are retained.", _labelStyle);
+            GUILayout.Space(7f);
+
+            if (_game.State.Transactions.Count != _lastDebugCount)
+            {
+                _lastDebugCount = _game.State.Transactions.Count;
+                _debugScroll.y = float.MaxValue;
+            }
+            _debugScroll = GUILayout.BeginScrollView(_debugScroll, GUI.skin.box);
+            foreach (var transaction in _game.State.Transactions)
+                GUILayout.Label(transaction.ToString(), _debugStyle);
+            GUILayout.EndScrollView();
+            GUILayout.Space(4f);
+            GUILayout.Label("F3 toggles this trace. Escape closes it before exiting the game.", _labelStyle);
+            GUILayout.EndArea();
+        }
+
+        private void DrawFormationCards()
+        {
+            var panelWidth = 384f;
+            GUI.Box(new Rect(Screen.width - panelWidth - 18f, 18f, panelWidth, 650f), GUIContent.none);
+            GUILayout.BeginArea(new Rect(Screen.width - panelWidth - 2f, 30f, panelWidth - 32f, 626f));
+            GUILayout.Label("FORMATION CARDS", _titleStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("US NAVY", _buttonStyle)) SelectFormation(Side.UsNavy);
+            if (GUILayout.Button("PLAN", _buttonStyle)) SelectFormation(Side.Plan);
+            GUILayout.EndHorizontal();
+            GUILayout.Space(8);
+
+            var force = _selectedFormation == Side.UsNavy ? _game.State.Player : _game.State.Enemy;
+            var sideColor = _selectedFormation == Side.UsNavy
+                ? new Color(0.32f, 0.68f, 1f) : new Color(1f, 0.38f, 0.3f);
+            var previousHeaderColor = _cardHeaderStyle.normal.textColor;
+            _cardHeaderStyle.normal.textColor = sideColor;
+            GUILayout.Label($"{force.Id.ToUpperInvariant()} · HEX {force.Position}", _cardHeaderStyle);
+            GUILayout.Label(force.DeclaredSpeed < 0
+                ? $"MAX SPEED {force.EffectiveSpeed} · AWAITING DECLARATION"
+                : $"DECLARED {force.DeclaredSpeed} · MOVED {force.MovementPointsSpent} · REMAINING {force.MovementRemaining}",
+                _cardStatStyle);
+            _cardHeaderStyle.normal.textColor = previousHeaderColor;
+
+            foreach (var unit in force.Units) DrawUnitCard(unit, sideColor);
+            GUILayout.FlexibleSpace();
+            GUILayout.Label("Click either 3D formation or use the tabs above.", _labelStyle);
+            GUILayout.EndArea();
+        }
+
+        private void DrawUnitCard(UnitState unit, Color sideColor)
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            var oldColor = _cardHeaderStyle.normal.textColor;
+            _cardHeaderStyle.normal.textColor = unit.IsSunk ? Color.gray : sideColor;
+            GUILayout.Label(unit.Definition.DisplayName.ToUpperInvariant(), _cardHeaderStyle);
+            _cardHeaderStyle.normal.textColor = oldColor;
+            GUILayout.Label($"{unit.Definition.Role} · {(unit.IsSunk ? "SUNK" : unit.WeaponsDisabled ? "MISSION KILL" : "OPERATIONAL")}", _cardStatStyle);
+            GUILayout.Space(3);
+            GUILayout.Label($"HULL   {HullBoxes(unit)}   {unit.HullRemaining}/{unit.Definition.Hull}", _cardStatStyle);
+            GUILayout.Label($"ASR {unit.Definition.AirSearchRadar}    SSR {unit.Definition.SurfaceSearchRadar}    SON {unit.Definition.Sonar}    ASW {unit.Definition.AntiSubmarineWarfare}", _cardStatStyle);
+            GUILayout.Label($"SAM {unit.Definition.ShortSam}-{unit.Definition.LongSam}    PD {unit.Definition.PointDefense}    GUNS {unit.Definition.Guns}", _cardStatStyle);
+            GUILayout.Label($"SSM {unit.Definition.ShortSsm}-{unit.Definition.LongSsm}    SPEED {unit.EffectiveSpeed}/{unit.Definition.Speed}", _cardStatStyle);
+            GUILayout.Label($"MISSILES REMAINING   SR {unit.ShortMissilesRemaining} · LR {unit.LongMissilesRemaining}", _cardStatStyle);
+            GUILayout.EndVertical();
+            GUILayout.Space(6);
+        }
+
+        private static string HullBoxes(UnitState unit)
+        {
+            var boxes = string.Empty;
+            for (var index = 0; index < unit.Definition.Hull; index++)
+                boxes += index < unit.HullRemaining ? "■" : "□";
+            return boxes;
+        }
+
+        private void DrawForce(TaskForceState force)
+        {
+            GUILayout.Label($"{force.Id} · HEX {force.Position}", _labelStyle);
+            foreach (var unit in force.Units)
+                GUILayout.Label($"  {unit.Definition.DisplayName}: {unit.HullRemaining}/{unit.Definition.Hull} hull", _labelStyle);
+        }
+
+        private void EnsureStyles()
+        {
+            if (_titleStyle != null) return;
+            _titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold };
+            _titleStyle.normal.textColor = new Color(0.87f, 0.94f, 1f);
+            _labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, wordWrap = true };
+            _labelStyle.normal.textColor = new Color(0.85f, 0.9f, 0.94f);
+            _buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 14, fixedHeight = 34f };
+            _cardHeaderStyle = new GUIStyle(GUI.skin.label) { fontSize = 15, fontStyle = FontStyle.Bold, wordWrap = true };
+            _cardHeaderStyle.normal.textColor = new Color(0.87f, 0.94f, 1f);
+            _cardStatStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, wordWrap = true };
+            _cardStatStyle.normal.textColor = new Color(0.82f, 0.87f, 0.9f);
+            _tooltipStyle = new GUIStyle(GUI.skin.box) { fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            _tooltipStyle.normal.textColor = new Color(0.9f, 0.98f, 1f);
+            _debugHeaderStyle = new GUIStyle(_titleStyle) { fontSize = 18 };
+            _debugHeaderStyle.normal.textColor = new Color(0.18f, 0.88f, 1f);
+            _activationStyle = new GUIStyle(_cardHeaderStyle)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 15
+            };
+            _activationStyle.normal.textColor = Color.white;
+            _debugStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 12,
+                font = Font.CreateDynamicFontFromOSFont("Consolas", 12),
+                wordWrap = true,
+                richText = false,
+                padding = new RectOffset(7, 7, 3, 3)
+            };
+            _debugStyle.normal.textColor = new Color(0.72f, 0.94f, 0.98f);
+        }
+
+        private void OnDestroy()
+        {
+            _network.Dispose();
+            _publicNetwork.Dispose();
+        }
+
+        private void QuitGame()
+        {
+            _network.Stop();
+            _publicNetwork.Stop();
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
+        }
+
+        private static void ToggleFullscreen()
+        {
+            if (Screen.fullScreen)
+                Screen.SetResolution(1600, 900, FullScreenMode.Windowed);
+            else
+                EnterBorderlessFullscreen();
+        }
+
+        private static void EnterBorderlessFullscreen()
+        {
+            var display = Display.main;
+            Screen.SetResolution(display.systemWidth, display.systemHeight,
+                FullScreenMode.FullScreenWindow);
+        }
+    }
+}
