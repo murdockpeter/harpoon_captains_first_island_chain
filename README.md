@@ -2,7 +2,7 @@
 
 A Unity 6 operational naval wargame based on the **Harpoon Captain's Edition** rules and the supplied **First Island Chain** fan supplement.
 
-Rules implementation progress is tracked in [`TODO.md`](TODO.md).
+MVP 0.1 release scope and rule interpretations are recorded in [`docs/RELEASE_NOTES_MVP_0.1.md`](docs/RELEASE_NOTES_MVP_0.1.md). Future implementation progress is tracked in [`TODO.md`](TODO.md).
 
 ## Current playable slice
 
@@ -15,6 +15,7 @@ Scenario 1, **Contact off the Bashi Channel**, is playable as the US Navy agains
 - staged defensive pairing, defender-directed long-range SAM, pair-limited short-range SAM, self-only point defense, and counterattacks;
 - staged same-hex naval gunfire with speed-based engage/evade, firing and screened ships, explicit rollback targeting, strongest-battery order, and multi-round break-off decisions;
 - exact hull-1-through-6 damage thresholds, mission kills, carrier launch restrictions, sinking, and objective-ship victory scoring across the supplement's modern platform database;
+- data-driven Scenario 1 setup, exact objective scoring, hot-seat play, selectable deterministic seeds, and exportable command/event traces;
 - deterministic rules code with Edit Mode tests.
 
 Formation cards can be inspected from the right-side panel by selecting the US Navy or PLAN tab, or by clicking either 3D formation on the map.
@@ -26,6 +27,12 @@ Damage is shown using effective—not merely printed—card values, with `printe
 Scenario 1 officially omits detection. To exercise the general Section 5 rules on the Scenario 1 board, press **F3** and enable **Detection Test Mode**. This solo-only mode requires an SSR silent/radiating declaration before speed and prohibits attacks until the target has been detected.
 
 Run `play.cmd` from the project root to build and launch the Windows game in one step. Alternatively, open the project in Unity `6000.2.12f1`, open `Assets/Main.unity`, and press Play. Click a highlighted sea hex to move, then attack or end the activation. Use WASD/arrow keys to pan, the mouse wheel to zoom, and right-drag or Q/E to orbit the camera. Press Escape or use **Exit Game** to quit.
+
+Use **Hot-seat 1 vs 1** for two players on one computer. The command panel shows which side is active. The scenario panel can restart with a typed or random seed, request mutual scoring, or disengage and score. **Debug Trace** can copy or export the complete seed, snapshot, command log, event history, and rules transactions.
+
+Press **F1** for the operational briefing and Scenario 1 quick reference. Press **P** or Escape to pause; the pause menu provides deterministic save/load and confirmed restart/exit controls.
+
+Release validation is also one command: `release-check.cmd`. Use `test.cmd` for the standalone .NET core suite or `smoke.cmd` for only the Windows build/player smoke gate. Each command returns a nonzero exit code when its gate fails.
 
 ## Architecture
 

@@ -17,7 +17,7 @@ This is the living implementation checklist. Check an item only when its rules b
 - [x] Basic unit, task-force, hull-damage, and turn state types.
 - [x] Scenario 1 force names, printed combat values, and starting hexes entered.
 - [x] First-pass 3D map, low-poly formations, camera, combat effects, and command panel.
-- [x] Exit button and Escape-key exit.
+- [x] Pause menu plus confirmed restart/exit flow; Escape pauses or closes the active modal.
 - [x] Clickable formation-card panel with Scenario 1 sensors, weapons, speed, hull, and missile state.
 - [x] Toggleable rules-debug trace with ordered transactions, individual die results, rejected actions, and copy-to-clipboard export.
 - [x] Host-authoritative one-versus-one TCP foundation with IP join, host side selection, synchronized Scenario 1 commands, chat, and spoken soundboard cues.
@@ -25,7 +25,7 @@ This is the living implementation checklist. Check an item only when its rules b
 - [x] Unity compiles the core, runtime, editor, and test assemblies.
 - [x] Batch-safe rules, replay, side-view, and TCP loopback validations run successfully.
 
-> **Current rules status:** Scenario 1 is playable but not yet rules-complete. Several current behaviors are deliberate prototype shortcuts and must not be treated as authoritative.
+> **Current rules status:** Scenario 1 is rules-complete for MVP 0.1. Clearly labeled debug/test facilities are non-authoritative; later scenarios and advanced rules remain future scope.
 
 ---
 
@@ -154,33 +154,33 @@ This is the living implementation checklist. Check an item only when its rules b
 
 ## 9. Scenario 1 setup, AI, and victory
 
-- [ ] Load Scenario 1 from data instead of hard-coded constructors.
-- [ ] Set the exact US and PLAN formations and starting hexes.
-- [ ] Implement the printed objective: compare damage to the Merchant Ship and Type 071.
-- [ ] Implement the authoritative stopping condition determined during the rules audit.
-- [ ] Handle ties exactly as the rules specify.
-- [ ] Ensure escort damage does not incorrectly count toward the objective score.
-- [ ] Make the AI choose only legal movement, detection, targeting, firing, defense, counterattack, and break-off actions.
-- [ ] Add a hot-seat/manual-opponent mode for testing every decision branch without relying on AI.
-- [ ] Add scenario restart with a selectable/random seed.
-- [ ] Display the seed and exportable command/event log.
-- [ ] Add end-to-end deterministic tests for US win, PLAN win, tie, sunk objective, ammunition exhaustion, and disengagement.
+- [x] Load Scenario 1 from data instead of hard-coded constructors.
+- [x] Set the exact US and PLAN formations and starting hexes.
+- [x] Implement the printed objective: compare damage to the Merchant Ship and Type 071.
+- [x] Implement the authoritative stopping condition determined during the rules audit.
+- [x] Handle ties exactly as the rules specify.
+- [x] Ensure escort damage does not incorrectly count toward the objective score.
+- [x] Make the AI choose only legal movement, detection, targeting, firing, defense, counterattack, and break-off actions.
+- [x] Add a hot-seat/manual-opponent mode for testing every decision branch without relying on AI.
+- [x] Add scenario restart with a selectable/random seed.
+- [x] Display the seed and exportable command/event log.
+- [x] Add end-to-end deterministic tests for US win, PLAN win, tie, sunk objective, ammunition exhaustion, and disengagement.
 
 ## 10. MVP 0.1 usability and release gate
 
-- [ ] Present required decisions instead of making hidden automatic choices for the player.
-- [ ] Clearly highlight legal movement paths and legal targets.
-- [ ] Show detection/radar state, declared speed, ammunition, defenses, damage effects, and victory progress.
-- [ ] Provide a concise in-game Scenario 1 briefing and rules reference.
-- [ ] Add pause, restart confirmation, exit, and game-over flow.
-- [ ] Add save/load only if a Scenario 1 match proves too long for one sitting.
-- [ ] Establish a test runner independent of Unity's currently unavailable headless-test entitlement.
-- [ ] Run core tests from one command and fail with a nonzero exit code.
-- [ ] Run a Windows-player build smoke test from one command.
-- [ ] Run at least one scripted full match for every supported decision route.
-- [ ] Record all remaining rule interpretations in release notes.
-- [ ] Remove or label every prototype-only rule, especially the seven-turn cap.
-- [ ] Tag MVP 0.1 only when every Scenario 1-applicable item in sections 1–10 is complete; section 5 is explicitly deferred by the scenario rules.
+- [x] Present required decisions instead of making hidden automatic choices for the player.
+- [x] Clearly highlight legal movement paths and legal targets.
+- [x] Show detection/radar state, declared speed, ammunition, defenses, damage effects, and victory progress.
+- [x] Provide a concise in-game Scenario 1 briefing and rules reference.
+- [x] Add pause, restart confirmation, exit, and game-over flow.
+- [x] Add deterministic save/load through seed-and-command replay for long matches.
+- [x] Establish a test runner independent of Unity's currently unavailable headless-test entitlement.
+- [x] Run core tests from one command and fail with a nonzero exit code.
+- [x] Run a Windows-player build smoke test from one command.
+- [x] Run at least one scripted full match for every supported decision route.
+- [x] Record all remaining rule interpretations in release notes.
+- [x] Remove or label every prototype-only rule, especially the seven-turn cap.
+- [x] Tag MVP 0.1 only when every Scenario 1-applicable item in sections 1–10 is complete; section 5 is explicitly deferred by the scenario rules.
 
 ---
 

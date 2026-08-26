@@ -27,6 +27,8 @@ namespace Harpoon.Core
         FireGuns,
         BreakOff,
         EndActivation,
+        Disengage,
+        RequestScoring,
         Concede
     }
 

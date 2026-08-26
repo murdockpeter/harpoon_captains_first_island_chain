@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using Harpoon.Core;
@@ -10,7 +11,7 @@ namespace Harpoon.Runtime
 {
     public sealed class HarpoonGameBootstrap : MonoBehaviour
     {
-        private enum SessionMode { SinglePlayer, Host, Client, PublicHost, PublicClient }
+        private enum SessionMode { SinglePlayer, HotSeat, Host, Client, PublicHost, PublicClient }
         private const float HexRadius = 1.12f;
         private readonly Dictionary<HexCoord, HexTileView> _tiles = new Dictionary<HexCoord, HexTileView>();
         private ScenarioOneGame _game;
@@ -84,6 +85,14 @@ namespace Harpoon.Runtime
             "You sank my battleship!", "Incoming!", "All hands brace!", "Good hunting!"
         };
         private string _status = "Draw the first movement chit to begin the turn.";
+        private int _matchSeed = 2026;
+        private string _seedText = "2026";
+        private string _exportStatus = string.Empty;
+        private bool _isPaused;
+        private bool _showBriefing = true;
+        private bool _confirmRestart;
+        private bool _confirmExit;
+        private string _saveStatus = string.Empty;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureBootstrap()
@@ -110,12 +119,17 @@ namespace Harpoon.Runtime
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 if (_showDebug) _showDebug = false;
-                else QuitGame();
+                else if (_showBriefing) _showBriefing = false;
+                else if (_confirmRestart || _confirmExit) { _confirmRestart = false; _confirmExit = false; }
+                else SetPaused(!_isPaused);
                 return;
             }
+            if (Input.GetKeyDown(KeyCode.P)) SetPaused(!_isPaused);
+            if (Input.GetKeyDown(KeyCode.F1)) _showBriefing = !_showBriefing;
             if (Input.GetKeyDown(KeyCode.F3)) _showDebug = !_showDebug;
             if (Input.GetKeyDown(KeyCode.F11)) ToggleFullscreen();
             ProcessNetwork();
+            if (_isPaused || _showBriefing || _confirmRestart || _confirmExit) return;
             UpdateHoveredHex();
             if (!Input.GetMouseButtonDown(0) || IsPointerOverPanel()) { HighlightMovement(); return; }
             var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
@@ -140,8 +154,16 @@ namespace Harpoon.Runtime
 
         private void Restart()
         {
+            SetPaused(false);
+            _confirmRestart = false;
+            _confirmExit = false;
+            if (!int.TryParse(_seedText, out _matchSeed) || _matchSeed == 0)
+            {
+                _matchSeed = 2026;
+                _seedText = _matchSeed.ToString();
+            }
             _pendingCommands.Clear();
-            _game = new ScenarioOneGame(2026, null, _sessionMode != SessionMode.SinglePlayer,
+            _game = new ScenarioOneGame(_matchSeed, null, _sessionMode != SessionMode.SinglePlayer,
                 _detectionTestMode);
             _game.AttackResolved += OnAttackResolved;
             _game.CommandProcessed += OnCommandProcessed;
@@ -160,7 +182,8 @@ namespace Harpoon.Runtime
         private bool IsPublicSession => _sessionMode == SessionMode.PublicHost || _sessionMode == SessionMode.PublicClient;
         private bool IsHostSession => _sessionMode == SessionMode.Host || _sessionMode == SessionMode.PublicHost;
         private bool IsClientSession => _sessionMode == SessionMode.Client || _sessionMode == SessionMode.PublicClient;
-        private Side LocalSide => _sessionMode == SessionMode.SinglePlayer ? Side.UsNavy : _localSide;
+        private Side LocalSide => _sessionMode == SessionMode.HotSeat ? (_game?.State.ActiveSide ?? Side.UsNavy) :
+            _sessionMode == SessionMode.SinglePlayer ? Side.UsNavy : _localSide;
         private static Side OpposingSide(Side side) => side == Side.UsNavy ? Side.Plan : Side.UsNavy;
         private bool NetworkConnected => IsPublicSession ? _publicNetwork.IsConnected : _network.IsConnected;
         private string NetworkStatus => IsPublicSession ? _publicNetwork.Status : _network.Status;
@@ -403,7 +426,7 @@ namespace Harpoon.Runtime
 
         private void ProcessNetwork()
         {
-            if (_sessionMode == SessionMode.SinglePlayer) return;
+            if (_sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat) return;
             if (IsPublicSession && _publicNetwork.IsConnected)
                 _sessionMode = _publicNetwork.IsHost ? SessionMode.PublicHost : SessionMode.PublicClient;
             if (NetworkStatus != _lastNetworkStatus)
@@ -455,6 +478,8 @@ namespace Harpoon.Runtime
                             var knownCommands = _game.State.CommandLog.Count;
                             var snapshot = JsonUtility.FromJson<ScenarioOneSnapshot>(message.snapshot);
                             _game.ApplySnapshot(snapshot);
+                            _matchSeed = _game.Seed;
+                            _seedText = _matchSeed.ToString();
                             foreach (var observed in _game.State.CommandLog.Skip(knownCommands)
                                          .Where(item => item.actor != LocalSide))
                                 PlayClientCommandFeedback(GameCommand.FromData(observed), true);
@@ -909,6 +934,7 @@ namespace Harpoon.Runtime
                 var knownContact = force.Side != LocalSide && (!_game.State.DetectionRulesEnabled ||
                     _game.State.Detection.IsDetected(LocalSide, force.Id));
                 formationView?.SetSensorState(force.RadarRadiating, knownContact);
+                formationView?.SetTacticalState(IsLegalAttackTarget(force), active, selected);
                 var totalHull = Mathf.Max(1, force.Units.Sum(unit => unit.Definition.Hull));
                 var damageFraction = force.Units.Sum(unit => unit.HullDamage) / (float)totalHull;
                 formationView?.SetDamageState(damageFraction,
@@ -916,6 +942,23 @@ namespace Harpoon.Runtime
             }
             foreach (var pair in _formationMarkers)
                 if (_game.State.Formation(pair.Key) == null) pair.Value.gameObject.SetActive(false);
+        }
+
+        private bool IsLegalAttackTarget(TaskForceState target)
+        {
+            if (target == null || target.Side == LocalSide || target.IsDestroyed || !CanLocalAct()) return false;
+            if (_game.State.Phase != ActivationPhase.PlayerMove &&
+                _game.State.Phase != ActivationPhase.PlayerAction) return false;
+            if (_game.State.PlayerHasAttacked) return false;
+            if (_game.State.DetectionRulesEnabled && !_game.State.Detection.IsDetected(LocalSide, target.Id)) return false;
+            var attacker = _game.State.ForceFor(LocalSide);
+            var range = attacker.Position.DistanceTo(target.Position);
+            var missile = attacker.ActiveUnits.Any(unit =>
+                (range <= 1 && unit.AvailableShortSsm > 0) ||
+                (range <= 3 && unit.AvailableLongSsm > 0));
+            var guns = range == 0 && (attacker.ActiveUnits.Any(unit => unit.EffectiveGuns > 0) ||
+                target.ActiveUnits.Any(unit => unit.EffectiveGuns > 0));
+            return missile || guns;
         }
 
         private void SelectFormation(Side side)
@@ -1117,6 +1160,11 @@ namespace Harpoon.Runtime
                 return;
             }
             if (command == null) return;
+            if (_sessionMode == SessionMode.HotSeat && _game.State.ActiveFormationId.Length > 0)
+            {
+                _selectedFormation = _game.State.ActiveSide;
+                _selectedFormationId = _game.State.ActiveFormationId;
+            }
             switch (command.Type)
             {
                 case GameCommandType.DrawMovementChit:
@@ -1217,25 +1265,280 @@ namespace Harpoon.Runtime
             return overLeft || overRight || overDebug || overLobby;
         }
 
+        private void StartHotSeat()
+        {
+            _network.Stop();
+            _publicNetwork.Stop();
+            _wasConnected = false;
+            _sessionMode = SessionMode.HotSeat;
+            _showMultiplayer = false;
+            Restart();
+            _status = "Hot-seat enabled. The active side is shown at the top of the command panel.";
+        }
+
+        private void SetPaused(bool paused)
+        {
+            _isPaused = paused;
+            Time.timeScale = paused ? 0f : 1f;
+        }
+
+        private string SavePath => Path.Combine(Application.persistentDataPath, "Saves", "scenario-1-save.json");
+
+        private void SaveMatch()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(SavePath) ?? Application.persistentDataPath);
+                File.WriteAllText(SavePath, JsonUtility.ToJson(_game.CaptureSnapshot(), true));
+                _saveStatus = $"Saved seed {_game.Seed}: {SavePath}";
+                _status = "Scenario saved.";
+            }
+            catch (Exception exception)
+            {
+                _saveStatus = "Save failed: " + exception.Message;
+                _status = _saveStatus;
+            }
+        }
+
+        private void LoadMatch()
+        {
+            try
+            {
+                if (!File.Exists(SavePath))
+                {
+                    _saveStatus = "No Scenario 1 save exists yet.";
+                    _status = _saveStatus;
+                    return;
+                }
+                var snapshot = JsonUtility.FromJson<ScenarioOneSnapshot>(File.ReadAllText(SavePath));
+                _detectionTestMode = snapshot.detectionRulesEnabled;
+                var loaded = ScenarioOneGame.Replay(snapshot.seed, snapshot.commands, null,
+                    snapshot.detectionRulesEnabled, _sessionMode != SessionMode.SinglePlayer);
+                _game = loaded;
+                _game.AttackResolved += OnAttackResolved;
+                _game.CommandProcessed += OnCommandProcessed;
+                _matchSeed = _game.Seed;
+                _seedText = _matchSeed.ToString();
+                _selectedFormation = LocalSide;
+                _selectedFormationId = _game.State.Forces.First(force => force.Side == LocalSide).Id;
+                ResetCombatDrafts();
+                RefreshViews();
+                _saveStatus = $"Loaded seed {_game.Seed} from deterministic command replay.";
+                _status = _saveStatus;
+                SetPaused(false);
+                if (IsHostSession && NetworkConnected) BroadcastSnapshot();
+            }
+            catch (Exception exception)
+            {
+                _saveStatus = "Load failed: " + exception.Message;
+                _status = _saveStatus;
+            }
+        }
+
+        private void UseRandomSeed()
+        {
+            _matchSeed = unchecked(Environment.TickCount ^ DateTime.UtcNow.Ticks.GetHashCode());
+            if (_matchSeed == 0) _matchSeed = 1;
+            _seedText = _matchSeed.ToString();
+            Restart();
+        }
+
+        private string MatchLogText()
+        {
+            var snapshot = JsonUtility.ToJson(_game.CaptureSnapshot(), true);
+            var trace = string.Join("\n", _game.State.Transactions.Select(item => item.ToString()));
+            return $"HARPOON MATCH EXPORT\nScenario: {_game.State.Scenario?.Id}\nSeed: {_game.Seed}\n" +
+                   $"Result: {_game.State.Result}\nEnd reason: {_game.State.EndReason}\n\nSNAPSHOT\n{snapshot}\n\nRULES TRACE\n{trace}";
+        }
+
+        private void ExportMatchLog()
+        {
+            try
+            {
+                var directory = Path.Combine(Application.persistentDataPath, "Exports");
+                Directory.CreateDirectory(directory);
+                var path = Path.Combine(directory, $"harpoon-{DateTime.Now:yyyyMMdd-HHmmss}-seed-{_game.Seed}.txt");
+                File.WriteAllText(path, MatchLogText());
+                _exportStatus = $"Exported: {path}";
+                _status = _exportStatus;
+            }
+            catch (Exception exception)
+            {
+                _exportStatus = $"Export failed: {exception.Message}";
+                _status = _exportStatus;
+            }
+        }
+
+        private void SubmitScenarioCommand(GameCommandType type)
+        {
+            if (IsClientSession)
+            {
+                SendCommand(type);
+                _status = $"{type} sent to host.";
+                return;
+            }
+            var result = _game.Execute(new GameCommand(type, LocalSide, _game.State.Revision));
+            _status = result.Accepted ? (_game.State.IsGameOver ? _game.State.Result : result.Summary) : result.Summary;
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void DrawScenarioControls()
+        {
+            var score = _game.CurrentScore();
+            GUILayout.Label("SCENARIO OBJECTIVE", _cardHeaderStyle);
+            GUILayout.Label("Damage the opposing merchant / amphibious ship.", _cardStatStyle);
+            GUILayout.Label($"US {score.UsObjectiveDamage}   -   PLAN {score.PlanObjectiveDamage}", _labelStyle);
+            GUILayout.Label($"Escort tie-break: US {score.UsTieBreakDamage}   -   PLAN {score.PlanTieBreakDamage}", _cardStatStyle);
+            GUILayout.Label($"MATCH SEED {_game.Seed}", _cardStatStyle);
+            GUILayout.BeginHorizontal();
+            _seedText = GUILayout.TextField(_seedText, 16, GUILayout.Width(112f));
+            GUI.enabled = !IsClientSession;
+            if (GUILayout.Button("RESTART SEED", _buttonStyle)) Restart();
+            if (GUILayout.Button("RANDOM", _buttonStyle, GUILayout.Width(78f))) UseRandomSeed();
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            if (!_game.State.IsGameOver)
+            {
+                GUILayout.BeginHorizontal();
+                GUI.enabled = CanLocalAct() && _game.State.Phase != ActivationPhase.MissileCombat &&
+                              _game.State.Phase != ActivationPhase.GunCombat;
+                if (GUILayout.Button("DISENGAGE & SCORE", _buttonStyle)) SubmitScenarioCommand(GameCommandType.Disengage);
+                GUI.enabled = _sessionMode == SessionMode.HotSeat || NetworkConnected;
+                if (GUILayout.Button("REQUEST SCORE", _buttonStyle)) SubmitScenarioCommand(GameCommandType.RequestScoring);
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+            else
+                GUILayout.Label($"{_game.State.Result} - {_game.State.EndReason}", _titleStyle);
+            GUILayout.Space(8f);
+        }
+
+        private string CurrentDecisionPrompt()
+        {
+            if (_game.State.IsGameOver) return "SCENARIO COMPLETE - review the score or begin a new match.";
+            if (_game.State.Phase == ActivationPhase.MissileCombat)
+                return _game.State.PendingMissileCombat?.DecisionSide == LocalSide
+                    ? "DECISION REQUIRED - resolve the highlighted missile-combat stage."
+                    : "WAITING - opponent is resolving missile combat.";
+            if (_game.State.Phase == ActivationPhase.GunCombat)
+                return _game.State.PendingGunCombat?.DecisionSide == LocalSide
+                    ? "DECISION REQUIRED - resolve the highlighted close-action stage."
+                    : "WAITING - opponent is resolving close action.";
+            if (_game.State.Phase == ActivationPhase.AwaitingChit)
+                return "DECISION REQUIRED - split now if desired, then draw a movement chit.";
+            if (_game.State.ActiveSide != LocalSide) return "WAITING - opposing formation is active.";
+            if (_game.State.Phase == ActivationPhase.DeclareSpeed)
+                return _game.State.DetectionRulesEnabled && !_game.State.ForceFor(LocalSide).RadarDeclaredThisActivation
+                    ? "DECISION REQUIRED - declare SSR silent or radiating, then choose speed."
+                    : "DECISION REQUIRED - declare formation speed.";
+            var force = _game.State.ForceFor(LocalSide);
+            if (force.MovementRemaining > 0)
+                return "DECISION REQUIRED - enter a cyan adjacent hex; red-ringed formations are legal targets.";
+            return "DECISION REQUIRED - attack a red-ringed target or end activation.";
+        }
+
+        private void DrawBriefingOverlay()
+        {
+            GUI.Box(new Rect(0f, 0f, Screen.width, Screen.height), GUIContent.none);
+            var width = Mathf.Min(760f, Screen.width - 48f);
+            var height = Mathf.Min(680f, Screen.height - 48f);
+            var rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+            GUI.Box(rect, GUIContent.none);
+            GUILayout.BeginArea(new Rect(rect.x + 28f, rect.y + 24f, rect.width - 56f, rect.height - 48f));
+            GUILayout.Label("OPERATIONAL BRIEFING", _titleStyle);
+            GUILayout.Label("CONTACT OFF THE BASHI CHANNEL", _debugHeaderStyle);
+            GUILayout.Label(_game.State.Scenario?.Briefing ?? FirstIslandChainScenarios.ContactOffBashiChannel.Briefing, _labelStyle);
+            GUILayout.Space(10f);
+            GUILayout.Label("MISSION", _cardHeaderStyle);
+            GUILayout.Label("Inflict more hull damage on the opposing objective ship: the US Merchant Ship or PLAN Type 071. Escort damage is consulted only if objective damage is tied; equality after that is a draw.", _labelStyle);
+            GUILayout.Label("No turn limit is printed. The engagement ends through a sunk objective, destroyed force, fixed result, concession, disengagement, or mutual agreement to score.", _cardStatStyle);
+            GUILayout.Space(10f);
+            GUILayout.Label("CAPTAIN'S RULES - SCENARIO 1 QUICK REFERENCE", _cardHeaderStyle);
+            GUILayout.Label("1. Draw a named movement chit. That formation declares speed, limited by its slowest ship.\n" +
+                "2. Move one highlighted adjacent sea hex at a time. An attack opportunity exists after every entered hex.\n" +
+                "3. SSM range: short 1 hex, long 3 hexes. Missile ammunition is expended permanently.\n" +
+                "4. Defenses resolve LR SAM, assigned SR SAM, self-only point defense, then impacts.\n" +
+                "5. Same-hex forces may enter naval gunfire. Choose firing/screened ships, targets, and break-off decisions explicitly.\n" +
+                "6. Scenario 1 omits detection. Detection Test Mode in F3 exposes the general SSR/ESM/visual rules.", _labelStyle);
+            GUILayout.Space(10f);
+            GUILayout.Label("VISUAL LANGUAGE", _cardHeaderStyle);
+            GUILayout.Label("Cyan hex: legal next movement step   |   Red pulsing ring: legal attack target\n" +
+                "Green ring: active formation   |   Gold ring: selected formation   |   Cyan sensor ring: radiating SSR\n" +
+                "Amber/red damage ring and smoke: degraded or destroyed formation", _cardStatStyle);
+            GUILayout.FlexibleSpace();
+            GUILayout.Label("F1 briefing   P / Escape pause   F3 trace   F11 display", _cardStatStyle);
+            if (GUILayout.Button("BEGIN / RETURN TO ACTION", _buttonStyle)) _showBriefing = false;
+            GUILayout.EndArea();
+        }
+
+        private void DrawPauseOverlay()
+        {
+            var rect = new Rect((Screen.width - 430f) * 0.5f, (Screen.height - 350f) * 0.5f, 430f, 350f);
+            GUI.Box(rect, GUIContent.none);
+            GUILayout.BeginArea(new Rect(rect.x + 28f, rect.y + 24f, rect.width - 56f, rect.height - 48f));
+            GUILayout.Label("ACTION PAUSED", _titleStyle);
+            GUILayout.Label($"Scenario 1 - seed {_game.Seed}", _cardStatStyle);
+            if (GUILayout.Button("RESUME", _buttonStyle)) SetPaused(false);
+            if (GUILayout.Button("BRIEFING / RULES  [F1]", _buttonStyle)) { SetPaused(false); _showBriefing = true; }
+            GUI.enabled = !IsClientSession;
+            if (GUILayout.Button("SAVE MATCH", _buttonStyle)) SaveMatch();
+            if (GUILayout.Button("LOAD LAST SAVE", _buttonStyle)) LoadMatch();
+            if (GUILayout.Button("RESTART SCENARIO", _buttonStyle)) { SetPaused(false); _confirmRestart = true; }
+            GUI.enabled = true;
+            if (GUILayout.Button("EXIT GAME", _buttonStyle)) { SetPaused(false); _confirmExit = true; }
+            if (_saveStatus.Length > 0) GUILayout.Label(_saveStatus, _cardStatStyle);
+            GUILayout.EndArea();
+        }
+
+        private void DrawConfirmationOverlay(bool restart)
+        {
+            var rect = new Rect((Screen.width - 460f) * 0.5f, (Screen.height - 220f) * 0.5f, 460f, 220f);
+            GUI.Box(rect, GUIContent.none);
+            GUILayout.BeginArea(new Rect(rect.x + 28f, rect.y + 24f, rect.width - 56f, rect.height - 48f));
+            GUILayout.Label(restart ? "RESTART SCENARIO?" : "EXIT HARPOON?", _titleStyle);
+            GUILayout.Label(restart ? "Unsaved progress in the current match will be replaced." :
+                "Unsaved progress will be lost. You can return and save from the pause menu.", _labelStyle);
+            GUILayout.FlexibleSpace();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("CANCEL", _buttonStyle)) { _confirmRestart = false; _confirmExit = false; }
+            if (GUILayout.Button(restart ? "RESTART" : "EXIT", _buttonStyle))
+            {
+                if (restart) { _confirmRestart = false; Restart(); }
+                else QuitGame();
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.EndArea();
+        }
+
         private void OnGUI()
         {
             if (_game == null) return;
             EnsureStyles();
+            if (_showBriefing) { DrawBriefingOverlay(); return; }
+            if (_confirmRestart) { DrawConfirmationOverlay(true); return; }
+            if (_confirmExit) { DrawConfirmationOverlay(false); return; }
+            if (_isPaused) { DrawPauseOverlay(); return; }
             var commandPanelHeight = Mathf.Max(300f, Screen.height - 36f);
             GUI.Box(new Rect(18, 18, 370, commandPanelHeight), GUIContent.none);
             GUILayout.BeginArea(new Rect(28, 28, 350, commandPanelHeight - 20f));
             _commandPanelScroll = GUILayout.BeginScrollView(_commandPanelScroll, false, true);
             GUILayout.Label("HARPOON", _titleStyle);
-            GUILayout.Label(_sessionMode == SessionMode.SinglePlayer
-                ? "SOLO - US NAVY"
-                : $"ONLINE - {LocalSide.ToString().ToUpperInvariant()} - {NetworkStatus}", _labelStyle);
+            GUILayout.Label(_sessionMode == SessionMode.SinglePlayer ? "SOLO - US NAVY" :
+                _sessionMode == SessionMode.HotSeat ? $"HOT-SEAT - {LocalSide.ToString().ToUpperInvariant()} TO ACT" :
+                $"ONLINE - {LocalSide.ToString().ToUpperInvariant()} - {NetworkStatus}", _labelStyle);
             GUILayout.Label("FIRST ISLAND CHAIN · SCENARIO 1", _labelStyle);
             GUILayout.Label("WASD pan · wheel zoom · RMB/Q/E orbit · F11 display", _labelStyle);
             GUILayout.Space(10);
             var turnLimit = _game.State.MaximumTurns > 0 ? _game.State.MaximumTurns.ToString() : "∞";
             GUILayout.Label($"TURN {_game.State.Turn}/{turnLimit}   ·   {_game.State.Phase}", _labelStyle);
             GUILayout.Label(_status, _labelStyle);
+            var priorPrompt = GUI.color;
+            GUI.color = new Color(1f, 0.84f, 0.28f);
+            GUILayout.Label(CurrentDecisionPrompt(), _cardHeaderStyle);
+            GUI.color = priorPrompt;
             GUILayout.Space(10);
+            DrawScenarioControls();
             foreach (var force in _game.State.Forces)
             {
                 DrawForce(force);
@@ -1295,13 +1598,24 @@ namespace Harpoon.Runtime
             }
             GUI.enabled = true;
             GUI.enabled = !IsClientSession;
-            if (GUILayout.Button("RESTART SCENARIO", _buttonStyle)) Restart();
+            if (GUILayout.Button("PAUSE / SAVE  [P]", _buttonStyle)) SetPaused(true);
+            if (GUILayout.Button("BRIEFING / RULES  [F1]", _buttonStyle)) _showBriefing = true;
+            if (GUILayout.Button("RESTART SCENARIO", _buttonStyle)) _confirmRestart = true;
             GUI.enabled = true;
+            if (GUILayout.Button(_sessionMode == SessionMode.HotSeat ? "RETURN TO SOLO" : "HOT-SEAT 1 vs 1", _buttonStyle))
+            {
+                if (_sessionMode == SessionMode.HotSeat)
+                {
+                    _sessionMode = SessionMode.SinglePlayer;
+                    Restart();
+                }
+                else StartHotSeat();
+            }
             if (GUILayout.Button(_sessionMode == SessionMode.SinglePlayer ? "MULTIPLAYER" : "MULTIPLAYER / CONNECTION", _buttonStyle))
                 _showMultiplayer = !_showMultiplayer;
             if (GUILayout.Button(_showDebug ? "CLOSE DEBUG TRACE  [F3]" : "DEBUG TRACE  [F3]", _buttonStyle))
                 _showDebug = !_showDebug;
-            if (GUILayout.Button("EXIT GAME", _buttonStyle)) QuitGame();
+            if (GUILayout.Button("EXIT GAME", _buttonStyle)) _confirmExit = true;
             GUILayout.Space(12);
             if (_game.State.IsGameOver) GUILayout.Label(_game.State.Result, _titleStyle);
             GUILayout.Label("EVENT LOG", _labelStyle);
@@ -1314,7 +1628,8 @@ namespace Harpoon.Runtime
             DrawChitBanner();
             DrawMissileCombatRibbon();
             DrawGunCombatRibbon();
-            if (_sessionMode != SessionMode.SinglePlayer) DrawChatAndSoundboard();
+            DrawVictoryOverlay();
+            if (_sessionMode != SessionMode.SinglePlayer && _sessionMode != SessionMode.HotSeat) DrawChatAndSoundboard();
             if (_showMultiplayer) DrawMultiplayerLobby();
             if (_showDebug) DrawDebugPanel();
             if (_hoveredHex.HasValue && !IsPointerOverPanel())
@@ -1327,7 +1642,35 @@ namespace Harpoon.Runtime
         private bool CanLocalAct()
         {
             if (_game.State.IsGameOver || _game.State.ActiveSide != LocalSide) return false;
-            return _sessionMode == SessionMode.SinglePlayer || NetworkConnected;
+            return _sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat || NetworkConnected;
+        }
+
+        private void DrawVictoryOverlay()
+        {
+            if (!_game.State.IsGameOver || _showDebug || _showMultiplayer) return;
+            var width = Mathf.Min(620f, Screen.width - 820f);
+            if (width < 420f) width = Mathf.Min(420f, Screen.width - 40f);
+            var rect = new Rect((Screen.width - width) * 0.5f, Screen.height * 0.34f, width, 230f);
+            GUI.Box(rect, GUIContent.none);
+            var accent = GUI.color;
+            GUI.color = _game.State.Result.StartsWith("US") ? new Color(0.15f, 0.68f, 1f) :
+                _game.State.Result.StartsWith("PLAN") ? new Color(1f, 0.3f, 0.24f) : new Color(0.92f, 0.82f, 0.35f);
+            GUI.Box(new Rect(rect.x, rect.y, rect.width, 6f), GUIContent.none);
+            GUI.color = accent;
+            GUILayout.BeginArea(new Rect(rect.x + 24f, rect.y + 22f, rect.width - 48f, rect.height - 38f));
+            GUILayout.Label(_game.State.Result, _titleStyle);
+            GUILayout.Label($"SCENARIO COMPLETE - {_game.State.EndReason}", _cardHeaderStyle);
+            var score = _game.CurrentScore();
+            GUILayout.Label($"Objective damage   US {score.UsObjectiveDamage}   |   PLAN {score.PlanObjectiveDamage}", _labelStyle);
+            GUILayout.Label($"Escort tie-break   US {score.UsTieBreakDamage}   |   PLAN {score.PlanTieBreakDamage}", _cardStatStyle);
+            GUILayout.Label($"Seed {_game.Seed} - full deterministic record available in Debug Trace", _cardStatStyle);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("EXPORT MATCH", _buttonStyle)) ExportMatchLog();
+            GUI.enabled = !IsClientSession;
+            if (GUILayout.Button("PLAY AGAIN", _buttonStyle)) Restart();
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            GUILayout.EndArea();
         }
 
         private void DrawSpeedDeclaration()
@@ -1350,7 +1693,7 @@ namespace Harpoon.Runtime
                     force.Side == LocalSide && force.Units.Count > 1);
                 if (splittable != null)
                 {
-                    GUI.enabled = _sessionMode == SessionMode.SinglePlayer || NetworkConnected;
+                    GUI.enabled = _sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat || NetworkConnected;
                     foreach (var unit in splittable.Units.ToArray())
                     {
                         var selectedUnit = unit;
@@ -1360,7 +1703,7 @@ namespace Harpoon.Runtime
                     }
                     GUI.enabled = true;
                 }
-                GUI.enabled = _sessionMode == SessionMode.SinglePlayer || NetworkConnected;
+                GUI.enabled = _sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat || NetworkConnected;
                 if (GUILayout.Button("DRAW FIRST CHIT", _buttonStyle)) DrawLocalMovementChit();
                 GUI.enabled = true;
                 return;
@@ -1999,10 +2342,13 @@ namespace Harpoon.Runtime
             GUILayout.Label($"{_game.State.Transactions.Count} TRANSACTIONS", _labelStyle);
             if (GUILayout.Button("COPY ALL", _buttonStyle, GUILayout.Width(108f)))
                 GUIUtility.systemCopyBuffer = string.Join("\n", _game.State.Transactions.Select(item => item.ToString()));
+            if (GUILayout.Button("COPY MATCH", _buttonStyle, GUILayout.Width(118f)))
+                GUIUtility.systemCopyBuffer = MatchLogText();
+            if (GUILayout.Button("EXPORT", _buttonStyle, GUILayout.Width(86f))) ExportMatchLog();
             if (GUILayout.Button("CLOSE", _buttonStyle, GUILayout.Width(82f))) _showDebug = false;
             GUILayout.EndHorizontal();
             GUILayout.Label("Complete deterministic rules activity. Rejected commands and every die result are retained.", _labelStyle);
-            GUI.enabled = _sessionMode == SessionMode.SinglePlayer;
+            GUI.enabled = _sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat;
             if (GUILayout.Button(_detectionTestMode
                     ? "DETECTION TEST MODE: ON  (RESTART IN SCENARIO MODE)"
                     : "DETECTION TEST MODE: OFF  (RESTART WITH SECTION 5 RULES)", _buttonStyle))
@@ -2034,7 +2380,7 @@ namespace Harpoon.Runtime
         {
             var panelWidth = 384f;
             var availableHeight = Mathf.Max(300f, Screen.height - 36f);
-            var panelHeight = _sessionMode == SessionMode.SinglePlayer
+            var panelHeight = _sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat
                 ? availableHeight : Mathf.Min(644f, availableHeight);
             GUI.Box(new Rect(Screen.width - panelWidth - 18f, 18f, panelWidth, panelHeight), GUIContent.none);
             GUILayout.BeginArea(new Rect(Screen.width - panelWidth - 8f, 28f, panelWidth - 20f, panelHeight - 20f));
@@ -2092,6 +2438,12 @@ namespace Harpoon.Runtime
                 ? $"MAX SPEED {force.EffectiveSpeed} · AWAITING DECLARATION"
                 : $"DECLARED {force.DeclaredSpeed} · MOVED {force.MovementPointsSpent} · REMAINING {force.MovementRemaining}",
                 _cardStatStyle);
+            if (force.DefensePairs.Count > 0)
+                GUILayout.Label("DEFENSE PAIRS   " + string.Join("  |  ", force.DefensePairs.Select(pair =>
+                    $"{ShortUnitName(UnitName(force, pair.firstUnitId))} + {ShortUnitName(UnitName(force, pair.secondUnitId))}")),
+                    _cardStatStyle);
+            else
+                GUILayout.Label("DEFENSE PAIRS   NOT YET DEPLOYED", _cardStatStyle);
             _cardHeaderStyle.normal.textColor = previousHeaderColor;
 
             foreach (var unit in force.Units) DrawUnitCard(unit, sideColor);

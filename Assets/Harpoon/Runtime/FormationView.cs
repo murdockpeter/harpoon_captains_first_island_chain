@@ -11,6 +11,10 @@ namespace Harpoon.Runtime
         private bool _radiating;
         private bool _contactKnown;
         private LineRenderer _damageRing;
+        private LineRenderer _tacticalRing;
+        private bool _legalTarget;
+        private bool _active;
+        private bool _selected;
         private readonly List<Transform> _smokePuffs = new List<Transform>();
         private Renderer[] _shipRenderers;
         private Color[] _baseColors;
@@ -29,6 +33,15 @@ namespace Harpoon.Runtime
             _baseColors = _shipRenderers.Select(renderer => renderer.material.color).ToArray();
             BuildSensorRing();
             BuildDamageEffects();
+            BuildTacticalRing();
+        }
+
+        public void SetTacticalState(bool legalTarget, bool active, bool selected)
+        {
+            _legalTarget = legalTarget;
+            _active = active;
+            _selected = selected;
+            if (_tacticalRing != null) _tacticalRing.gameObject.SetActive(legalTarget || active || selected);
         }
 
         public void SetDamageState(float damageFraction, bool missionKilled, bool destroyed)
@@ -93,6 +106,21 @@ namespace Harpoon.Runtime
                         new Color(1f, 0.12f, 0.02f, 0.82f), _damageFraction);
                 _damageRing.startColor = _damageRing.endColor = color;
             }
+            if (_tacticalRing != null && _tacticalRing.gameObject.activeSelf)
+            {
+                var radius = (_legalTarget ? 1.28f : 1.08f) + Mathf.Sin(Time.time * 5f) * 0.07f;
+                for (var index = 0; index < segments; index++)
+                {
+                    var angle = index * Mathf.PI * 2f / segments;
+                    _tacticalRing.SetPosition(index, new Vector3(Mathf.Cos(angle) * radius,
+                        0.14f, Mathf.Sin(angle) * radius));
+                }
+                var color = _legalTarget ? new Color(1f, 0.28f, 0.12f, 0.95f)
+                    : _active ? new Color(0.18f, 1f, 0.58f, 0.82f)
+                    : new Color(1f, 0.86f, 0.22f, 0.72f);
+                _tacticalRing.startColor = _tacticalRing.endColor = color;
+                _tacticalRing.widthMultiplier = _legalTarget ? 0.085f : 0.052f;
+            }
             for (var index = 0; index < _smokePuffs.Count; index++)
             {
                 var puff = _smokePuffs[index];
@@ -141,6 +169,19 @@ namespace Harpoon.Runtime
             _sensorRing.widthMultiplier = 0.035f;
             _sensorRing.numCornerVertices = 2;
             _sensorRing.material = new Material(Shader.Find("Sprites/Default"));
+            ring.SetActive(false);
+        }
+
+        private void BuildTacticalRing()
+        {
+            var ring = new GameObject("Legal Target / Selection Ring");
+            ring.transform.SetParent(transform, false);
+            _tacticalRing = ring.AddComponent<LineRenderer>();
+            _tacticalRing.useWorldSpace = false;
+            _tacticalRing.loop = true;
+            _tacticalRing.positionCount = 48;
+            _tacticalRing.numCornerVertices = 3;
+            _tacticalRing.material = new Material(Shader.Find("Sprites/Default"));
             ring.SetActive(false);
         }
     }

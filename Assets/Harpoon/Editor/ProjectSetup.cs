@@ -120,9 +120,10 @@ namespace Harpoon.Editor
             ValidateSurfaceMissileCombat();
             ValidateNavalGunfire();
             ValidateShipDamageAndModernPlatforms();
+            ValidateScenarioOneRelease();
 
             ValidateLoopbackTransport();
-            Debug.Log("HARPOON RULE VALIDATION PASSED (Sections 3-8 movement, chits/time, detection, missile combat, naval gunfire, modern-platform damage, replay/private-view, and TCP loopback included).");
+            Debug.Log("HARPOON RULE VALIDATION PASSED (MVP 0.1 Sections 1-10 including data-driven Scenario 1, legal stopping/scoring, seed replay, hot-seat flow, and TCP loopback).");
         }
 
         public static void BuildWindowsPlayer()
@@ -248,6 +249,112 @@ namespace Harpoon.Editor
                     game.State.Revision, enabled: false)).Accepted &&
                     game.State.PendingGunCombat.Round == 2,
                 "If neither force breaks off, the same engagement must continue into another firing round.");
+        }
+
+        private static void ValidateScenarioOneRelease()
+        {
+            var definition = FirstIslandChainScenarios.ContactOffBashiChannel;
+            var state = ScenarioOne.Create();
+            Require(state.Scenario == definition && state.MaximumTurns == 0 &&
+                    state.Player.Position.Equals(new HexCoord(7, 13)) &&
+                    state.Enemy.Position.Equals(new HexCoord(10, 10)) &&
+                    state.Player.Units.Select(unit => unit.Definition.Id)
+                        .SequenceEqual(new[] { "us-burke-iia", "us-merchant" }) &&
+                    state.Enemy.Units.Select(unit => unit.Definition.Id)
+                        .SequenceEqual(new[] { "plan-type-054a", "plan-type-071" }),
+                "Scenario 1 must load its exact formations and starting hexes from the scenario definition.");
+
+            var usWin = ScoringGame(1, 0, 0, 0);
+            Require(usWin.Execute(new GameCommand(GameCommandType.Disengage, Side.UsNavy,
+                        usWin.State.Revision)).Accepted && usWin.State.Result == "US NAVY VICTORY" &&
+                    usWin.State.EndReason == ScenarioEndReason.Disengagement,
+                "A legal disengagement must score a US objective-damage win.");
+            var planWin = ScoringGame(0, 1, 0, 0);
+            Require(planWin.Execute(new GameCommand(GameCommandType.Disengage, Side.UsNavy,
+                        planWin.State.Revision)).Accepted && planWin.State.Result == "PLAN VICTORY",
+                "A legal disengagement must score a PLAN objective-damage win.");
+            var draw = ScoringGame(1, 1, 0, 0);
+            Require(draw.Execute(new GameCommand(GameCommandType.Disengage, Side.UsNavy,
+                        draw.State.Revision)).Accepted && draw.State.Result == "DRAW",
+                "Equal objective and analogous escort damage must score a draw.");
+
+            var escortTieBreak = ScoringGame(0, 0, 1, 0);
+            var escortScore = escortTieBreak.CurrentScore();
+            Require(escortScore.UsObjectiveDamage == 0 && escortScore.PlanObjectiveDamage == 0 &&
+                    escortTieBreak.Execute(new GameCommand(GameCommandType.Disengage, Side.UsNavy,
+                        escortTieBreak.State.Revision)).Accepted &&
+                    escortTieBreak.State.Result == "US NAVY VICTORY",
+                "Escort damage must remain outside the printed objective score and apply only as the documented tie-break.");
+
+            var mutual = ScoringGame(0, 0, 0, 0);
+            Require(mutual.Execute(new GameCommand(GameCommandType.RequestScoring, Side.UsNavy,
+                        mutual.State.Revision)).Accepted && !mutual.State.IsGameOver &&
+                    mutual.Execute(new GameCommand(GameCommandType.RequestScoring, Side.Plan,
+                        mutual.State.Revision)).Accepted && mutual.State.IsGameOver &&
+                    mutual.State.EndReason == ScenarioEndReason.MutualScoring,
+                "Both players must be able to agree to score the current position.");
+
+            var exhausted = ScoringGame(0, 0, 0, 0, exhaustAmmunition: true);
+            var noWeapon = exhausted.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                exhausted.State.Revision, targetId: exhausted.State.Enemy.Id));
+            Require(!noWeapon.Accepted && noWeapon.Violation.Code == RuleViolationCode.NoLegalWeapon &&
+                    exhausted.Execute(new GameCommand(GameCommandType.Disengage, Side.UsNavy,
+                        exhausted.State.Revision)).Accepted,
+                "Ammunition exhaustion must reject an illegal attack but retain the explicit disengagement route.");
+
+            var sunk = ScoringGame(0, 0, 0, 0, exhaustAmmunition: true, type071Damage: 2, sameHex: true,
+                dieRoller: new SequenceDieRoller(1, 5, 5, 5));
+            Require(sunk.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                        sunk.State.Revision, targetId: sunk.State.Enemy.Id)).Accepted &&
+                    sunk.Execute(new GameCommand(GameCommandType.ArrangeGunfire, Side.UsNavy,
+                        sunk.State.Revision, gunPairs: ScenarioOneGame.DefaultGunPairs(sunk.State.Player))).Accepted &&
+                    sunk.Execute(new GameCommand(GameCommandType.ArrangeGunfire, Side.Plan,
+                        sunk.State.Revision, gunPairs: ScenarioOneGame.DefaultGunPairs(sunk.State.Enemy))).Accepted,
+                "The objective-sinking test must enter a legal close-action firing sequence.");
+            var sinkingShot = sunk.Execute(new GameCommand(GameCommandType.FireGuns, Side.UsNavy,
+                sunk.State.Revision, targetId: "plan-type-071", sourceUnitId: "us-burke-iia"));
+            Require(sinkingShot.Accepted && sunk.State.Unit("plan-type-071").IsSunk &&
+                    sunk.State.IsGameOver && sunk.State.EndReason == ScenarioEndReason.ObjectiveSunk &&
+                    sunk.State.Result == "US NAVY VICTORY",
+                "Sinking the printed objective through legal combat must end and score the scenario immediately.");
+
+            var seeded = new ScenarioOneGame(918273, null, true);
+            var seededMirror = new ScenarioOneGame(1, null, true);
+            seededMirror.ApplySnapshot(seeded.CaptureSnapshot());
+            Require(seededMirror.Seed == 918273,
+                "The selected deterministic seed must survive snapshot export and multiplayer restore.");
+        }
+
+        private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,
+            int usTieBreakDamage, int planTieBreakDamage, bool exhaustAmmunition = false,
+            int type071Damage = -1, bool sameHex = false, IDieRoller dieRoller = null)
+        {
+            var game = new ScenarioOneGame(4242, null, true, false, dieRoller);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Task Force";
+            snapshot.phase = ActivationPhase.PlayerAction;
+            foreach (var unit in snapshot.units)
+            {
+                if (unit.id == "plan-type-071") unit.hullDamage = type071Damage >= 0 ? type071Damage : usObjectiveDamage;
+                else if (unit.id == "us-merchant") unit.hullDamage = planObjectiveDamage;
+                else if (unit.id == "plan-type-054a") unit.hullDamage = usTieBreakDamage;
+                else if (unit.id == "us-burke-iia") unit.hullDamage = planTieBreakDamage;
+                if (exhaustAmmunition)
+                {
+                    unit.shortMissiles = 0;
+                    unit.longMissiles = 0;
+                }
+            }
+            if (sameHex)
+            {
+                var us = snapshot.formations.First(item => item.side == Side.UsNavy);
+                var plan = snapshot.formations.First(item => item.side == Side.Plan);
+                us.column = plan.column;
+                us.row = plan.row;
+            }
+            game.ApplySnapshot(snapshot);
+            return game;
         }
 
         private static void ValidateShipDamageAndModernPlatforms()

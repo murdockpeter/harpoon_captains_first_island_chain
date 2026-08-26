@@ -340,6 +340,7 @@ namespace Harpoon.Core
         public TaskForceState ActiveForce => _forces.FirstOrDefault(force => force.Id == ActiveFormationId);
         public MovementChitCup MovementCup { get; internal set; }
         public bool DetectionRulesEnabled { get; }
+        public ScenarioDefinition Scenario { get; }
         public DetectionTracker Detection { get; } = new DetectionTracker();
         public MissileEngagement PendingMissileCombat { get; internal set; }
         public GunEngagement PendingGunCombat { get; internal set; }
@@ -351,6 +352,9 @@ namespace Harpoon.Core
         public bool PlanActivated { get; internal set; }
         public bool IsGameOver { get; internal set; }
         public string Result { get; internal set; } = string.Empty;
+        public ScenarioEndReason EndReason { get; internal set; }
+        public bool UsRequestedScoring { get; internal set; }
+        public bool PlanRequestedScoring { get; internal set; }
         public int Revision { get; internal set; }
         public List<string> Log { get; } = new List<string>();
         public List<RuleTransaction> Transactions { get; } = new List<RuleTransaction>();
@@ -359,7 +363,7 @@ namespace Harpoon.Core
         internal GameCommand CurrentCommand { get; set; }
 
         public GameState(TaskForceState player, TaskForceState enemy, int maximumTurns, OperationalMap map = null,
-            bool detectionRulesEnabled = false)
+            bool detectionRulesEnabled = false, ScenarioDefinition scenario = null)
         {
             Player = player;
             Enemy = enemy;
@@ -367,6 +371,7 @@ namespace Harpoon.Core
             MaximumTurns = maximumTurns;
             Map = map ?? FirstIslandChainMap.Instance;
             DetectionRulesEnabled = detectionRulesEnabled;
+            Scenario = scenario;
         }
 
         public void Trace(string category, string detail)
@@ -401,6 +406,9 @@ namespace Harpoon.Core
         public UnitState ObjectiveFor(Side side) => _forces.Where(force => force.Side == side)
             .SelectMany(force => force.Units)
             .First(unit => unit.Definition.Role == UnitRole.Objective);
+
+        public UnitState Unit(string id) => _forces.SelectMany(force => force.Units)
+            .FirstOrDefault(unit => string.Equals(unit.Definition.Id, id, StringComparison.Ordinal));
 
         public SideGameView ViewFor(Side viewer, bool? opponentKnown = null) =>
             new SideGameView(viewer, this, opponentKnown);

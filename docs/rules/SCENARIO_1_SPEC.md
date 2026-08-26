@@ -47,7 +47,8 @@ Scenario 1 teaches surface missile combat. Detection is not used. Captain's Rule
 - If primary damage is equal, compare hull damage inflicted on the opposing surface combatant (Arleigh Burke or Type 054A), following the analogous original Scenario 1 tie-break on Captain's Briefing p. 4.
 - If both comparisons are equal, the result is a draw.
 - Neither the modern nor analogous original Scenario 1 prints a turn limit. The project therefore uses no arbitrary turn cap.
-- The engagement ends when a primary result becomes mathematically fixed, one side has no ships afloat, a player concedes/disengages, or both sides agree to score the current state. The future command-driven implementation must expose disengage/concede; until then, the prototype ends when an objective ship sinks.
+- The engagement ends when a primary result becomes mathematically fixed, an objective ship sinks, one side has no ships afloat, a player concedes/disengages, both sides agree to score the current state, or a scenario with a printed turn limit reaches that limit. Scenario 1 has no printed turn limit.
+- `Disengage`, `RequestScoring`, and `Concede` are authoritative commands included in replay, snapshots, multiplayer synchronization, and the rules trace.
 
 ### Recorded interpretations
 
@@ -55,4 +56,3 @@ Scenario 1 teaches surface missile combat. Detection is not used. Captain's Rule
 2. **Tie-break:** import the analogous original Scenario 1 surface-combatant tie-break because the modern reskin omits any equal-damage instruction.
 3. **No turn cap:** omission is not permission to invent a duration; use disengagement/concession and fixed-result termination.
 4. **Map topology:** the source claims `1010` and `0713` are three hexes apart. The core currently honors that statement with axial distance, but the coordinate/render topology still requires a dedicated map audit before Section 3 can be completed.
-
