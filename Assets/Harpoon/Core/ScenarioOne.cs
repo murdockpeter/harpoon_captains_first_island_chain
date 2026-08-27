@@ -1964,6 +1964,9 @@ namespace Harpoon.Core
             if (airBase == null || !BaseCanLaunch(airBase))
                 return TacticalReject(RuleViolationCode.BaseDisabled,
                     "That base or carrier cannot launch aircraft.", out violation);
+            if (mission == TacticalAirMission.DeckInterceptor && !airBase.Definition.IsCarrier)
+                return TacticalReject(RuleViolationCode.AircraftUnavailable,
+                    "Deck-launched interceptors must be based aboard a carrier.", out violation);
             if (airBase.Definition.IsCarrier && State.TacticalFlights.Count(item => item.BaseId == flight.BaseId &&
                     item.Mission != TacticalAirMission.Destroyed) > airBase.Definition.FlightCapacity)
                 return TacticalReject(RuleViolationCode.DeckCapacityExceeded,
@@ -2021,7 +2024,11 @@ namespace Harpoon.Core
             if (source.DistanceTo(target) > flight.Definition.Radius + terminalRange)
                 return TacticalReject(RuleViolationCode.RadiusExceeded,
                     $"Target is beyond aircraft radius {flight.Definition.Radius} plus {terminalRange}-hex weapon reach.", out violation);
-            var requested = Math.Min(Math.Max(1, command.Factors), airBase.MaximumStrikeSize);
+            var requested = Math.Max(1, command.Factors);
+            if (requested > airBase.MaximumStrikeSize)
+                return TacticalReject(RuleViolationCode.BaseDisabled,
+                    $"{airBase.Definition.DisplayName} can launch at most {airBase.MaximumStrikeSize} aircraft in this strike.",
+                    out violation);
             var launched = flight.Launch(requested);
             if (launched == 0)
                 return TacticalReject(RuleViolationCode.AircraftUnavailable,
@@ -2051,6 +2058,7 @@ namespace Harpoon.Core
                 var escort = escorts.FirstOrDefault(item => item.AircraftRemaining > 0);
                 var victim = escort ?? flight;
                 var attackingAircraft = interceptor.Mission == TacticalAirMission.Cap ? 1 : interceptor.ReadyAircraft;
+                var escortCounterAircraft = escort == null ? 0 : Math.Min(escort.AircraftRemaining, 4);
                 var hits = ResolveAirToAir(interceptor, victim, attackingAircraft);
                 var losses = ApplyAircraftHits(victim, hits, victim == flight ? missionAircraft : victim.AircraftRemaining);
                 if (victim == flight)
@@ -2059,20 +2067,22 @@ namespace Harpoon.Core
                     report.AircraftShotDown += losses.shotDown;
                     report.AircraftAborted += losses.aborted;
                 }
-                if (escort != null && escort.AircraftRemaining > 0)
+                if (escort != null && escortCounterAircraft > 0)
                 {
-                    var counterHits = ResolveAirToAir(escort, interceptor, Math.Min(escort.AircraftRemaining, 4));
+                    var counterHits = ResolveAirToAir(escort, interceptor, escortCounterAircraft);
                     ApplyAircraftHits(interceptor, counterHits, interceptor.AircraftRemaining);
                 }
                 interceptor.MarkInterceptorUsed();
             }
 
+            var selectedTargetUnit = targetForce?.ActiveUnits.FirstOrDefault(unit =>
+                unit.Definition.Id == command.FormationId) ?? targetForce?.ActiveUnits.FirstOrDefault();
             var longDefense = targetBase != null ? targetBase.Definition.LongSam :
-                targetForce.ActiveUnits.Select(unit => unit.EffectiveLongSam).DefaultIfEmpty(0).Max();
+                targetForce.ActiveUnits.Sum(unit => unit.EffectiveLongSam);
             var shortDefense = targetBase != null ? targetBase.Definition.ShortSam :
-                targetForce.ActiveUnits.Select(unit => unit.EffectiveShortSam).DefaultIfEmpty(0).Max();
+                TacticalShortRangeDefense(targetForce, selectedTargetUnit);
             var pointDefense = targetBase != null ? targetBase.Definition.PointDefense :
-                targetForce.ActiveUnits.Select(unit => unit.EffectivePointDefense).DefaultIfEmpty(0).Max();
+                selectedTargetUnit?.EffectivePointDefense ?? 0;
 
             if (weapon != TacticalWeapon.LongAsm && missionAircraft > 0 && longDefense > 0)
             {
@@ -2105,11 +2115,14 @@ namespace Harpoon.Core
                 }
                 var lrHits = _missileCombat.RollDefense("LR SAM vs air-launched missiles", longDefense, CombatTableColumn.Sam);
                 attackFactors = Math.Max(0, attackFactors - lrHits);
+                report.MissileFactorsIntercepted += lrHits;
                 var srHits = _missileCombat.RollDefense("SR SAM vs air-launched missiles", shortDefense, CombatTableColumn.Sam);
                 attackFactors = Math.Max(0, attackFactors - srHits);
+                report.MissileFactorsIntercepted += srHits;
                 var pdHits = _missileCombat.RollDefense("Point defense vs air-launched missiles", pointDefense,
                     CombatTableColumn.PointDefense);
                 attackFactors = Math.Max(0, attackFactors - pdHits);
+                report.MissileFactorsIntercepted += pdHits;
             }
 
             var impactHits = 0;
@@ -2124,10 +2137,8 @@ namespace Harpoon.Core
                 report.RunwayHits = targetBase.ApplyRunwayHits(impactHits);
             else
             {
-                var targetUnit = targetForce.ActiveUnits.FirstOrDefault(unit => unit.Definition.Id == command.FormationId)
-                    ?? targetForce.ActiveUnits.FirstOrDefault();
-                if (targetUnit != null)
-                    report.HullHits = targetUnit.ApplyDamage(impactHits,
+                if (selectedTargetUnit != null)
+                    report.HullHits = selectedTargetUnit.ApplyDamage(impactHits,
                         weapon == TacticalWeapon.Bombs ? DamageSource.Bomb : DamageSource.Missile).AppliedHits;
             }
             report.Summary = $"{flight.Id} {weapon} strike: {launched} launched, {report.AircraftShotDown} shot down, " +
@@ -2135,10 +2146,24 @@ namespace Harpoon.Core
             AddLog(report.Summary);
             Trace("COMBAT", report.Summary);
             attackReport = new AttackReport { Fired = true, AttackFactors = attackFactors,
+                InterceptedFactors = report.MissileFactorsIntercepted,
                 HullHits = report.HullHits + report.RunwayHits, Summary = report.Summary };
             AttackResolved?.Invoke(command.Actor, attackReport);
             CheckGameOver();
             return true;
+        }
+
+        private int TacticalShortRangeDefense(TaskForceState force, UnitState target)
+        {
+            if (force == null || target == null) return 0;
+            var pair = force.DefensePairs.FirstOrDefault(item => item.firstUnitId == target.Definition.Id ||
+                item.secondUnitId == target.Definition.Id);
+            var pairId = pair == null ? string.Empty : pair.firstUnitId == target.Definition.Id
+                ? pair.secondUnitId : pair.firstUnitId;
+            var mate = force.ActiveUnits.FirstOrDefault(unit => unit.Definition.Id == pairId) ??
+                force.ActiveUnits.Where(unit => unit != target)
+                    .OrderByDescending(unit => unit.EffectiveShortSam).FirstOrDefault();
+            return target.EffectiveShortSam + (mate?.EffectiveShortSam ?? 0);
         }
 
         private IEnumerable<TacticalFlightState> EligibleInterceptors(Side defender, AirBaseState targetBase,
@@ -2148,8 +2173,7 @@ namespace Harpoon.Core
                          (item.Mission == TacticalAirMission.Cap || item.Mission == TacticalAirMission.DeckInterceptor)))
             {
                 var ownTarget = targetBase?.Definition.Id == flight.BaseId ||
-                    (targetForce != null && State.AirBase(flight.BaseId)?.Definition.IsCarrier == true &&
-                     targetForce.Side == defender);
+                    (targetForce != null && CarrierForceForBase(State.AirBase(flight.BaseId)) == targetForce);
                 var radarRange = Math.Max(0, flight.Definition.AirSearchRadar - (electronicAttack ? 1 : 0));
                 if (ownTarget || (flight.Mission == TacticalAirMission.Cap && flight.RadarOn &&
                     AirBasePosition(State.AirBase(flight.BaseId)).DistanceTo(target) <= radarRange)) yield return flight;
@@ -2191,11 +2215,17 @@ namespace Harpoon.Core
         {
             if (airBase == null) return default;
             if (!airBase.Definition.IsCarrier) return airBase.Definition.Position;
-            var side = airBase.Definition.Side;
-            var carrierForce = State.Forces.FirstOrDefault(force => force.Side == side && force.ActiveUnits.Any(unit =>
-                unit.Definition.Id == State.Scenario.UsObjectiveUnitId ||
-                unit.Definition.Id == State.Scenario.PlanObjectiveUnitId));
-            return carrierForce?.Position ?? State.ForceFor(side).Position;
+            var carrierForce = CarrierForceForBase(airBase);
+            return carrierForce?.Position ?? State.ForceFor(airBase.Definition.Side).Position;
+        }
+
+        private TaskForceState CarrierForceForBase(AirBaseState airBase)
+        {
+            if (airBase == null || !airBase.Definition.IsCarrier) return null;
+            var objectiveId = airBase.Definition.Side == Side.UsNavy
+                ? State.Scenario.UsObjectiveUnitId : State.Scenario.PlanObjectiveUnitId;
+            return State.Forces.FirstOrDefault(force => force.Side == airBase.Definition.Side &&
+                force.ActiveUnits.Any(unit => unit.Definition.Id == objectiveId));
         }
 
         private bool BaseCanLaunch(AirBaseState airBase)
@@ -2226,6 +2256,13 @@ namespace Harpoon.Core
             foreach (var force in State.Forces) force.ResetActivation();
             foreach (var unit in State.Forces.SelectMany(force => force.Units)) unit.BeginAircraftTurn(State.Turn);
             foreach (var flight in State.TacticalFlights) flight.BeginTurn();
+            if (!_manualOpponent && State.Scenario.TacticalAirEnabled)
+            {
+                var planCap = State.TacticalFlights.FirstOrDefault(flight => flight.Side == Side.Plan &&
+                    flight.IsFighter && flight.AircraftRemaining == 4);
+                if (planCap?.AssignDefensiveMission(TacticalAirMission.Cap, true) == true)
+                    Trace("AIR", $"PLAN assigned {planCap.Id} to persistent radar CAP for {State.TimeLabel}.");
+            }
             State.ActiveFormationId = string.Empty;
             State.MovementCup.Reset(State.Forces);
             State.Phase = ActivationPhase.AwaitingChit;
@@ -2296,6 +2333,8 @@ namespace Harpoon.Core
                             Execute(new GameCommand(GameCommandType.Attack, Side.Plan, State.Revision));
                     }
                     TryEnemyDetection(enemyForce);
+                    if (!State.IsGameOver && State.Phase == ActivationPhase.PlayerAction)
+                        TryEnemyTacticalStrike();
                     if (!State.IsGameOver && State.Phase == ActivationPhase.PlayerAction &&
                         !State.PlayerHasAttacked && CanOpenAttack(enemyForce, State.Player))
                         Execute(new GameCommand(GameCommandType.Attack, Side.Plan, State.Revision));
@@ -2306,6 +2345,29 @@ namespace Harpoon.Core
                 }
             }
             finally { _isActivatingEnemy = false; }
+        }
+
+        private void TryEnemyTacticalStrike()
+        {
+            if (!State.Scenario.TacticalAirEnabled || State.ActiveSide != Side.Plan) return;
+            var target = State.Forces.Where(force => force.Side == Side.UsNavy && !force.IsDestroyed &&
+                    !force.IsOffMap && State.Detection.IsDetected(Side.Plan, force.Id))
+                .OrderByDescending(force => force.ActiveUnits.Any(unit =>
+                    unit.Definition.Id == State.Scenario.UsObjectiveUnitId)).FirstOrDefault();
+            if (target == null) return;
+            var flight = State.TacticalFlights.Where(item => item.Side == Side.Plan &&
+                    item.Mission == TacticalAirMission.Ready && item.Definition.LongAsm > 0)
+                .OrderByDescending(item => item.Definition.LongAsm).FirstOrDefault();
+            if (flight == null) return;
+            var escorts = State.TacticalFlights.Where(item => item.Side == Side.Plan && item.IsFighter &&
+                item.BaseId == flight.BaseId && item.Id != flight.Id && item.Mission == TacticalAirMission.Ready)
+                .Take(1).Select(item => item.Id).ToArray();
+            var targetUnit = target.ActiveUnits.FirstOrDefault(unit =>
+                unit.Definition.Id == State.Scenario.UsObjectiveUnitId) ?? target.ActiveUnits.FirstOrDefault();
+            Execute(new GameCommand(GameCommandType.LaunchTacticalStrike, Side.Plan, State.Revision,
+                factors: Math.Min(4, flight.ReadyAircraft), targetId: target.Id,
+                sourceUnitId: flight.Id, formationId: targetUnit?.Definition.Id,
+                unitIds: escorts, searchMode: TacticalWeapon.LongAsm.ToString()));
         }
 
         private void ExecutePlanMissileDecision()
@@ -2515,23 +2577,6 @@ namespace Harpoon.Core
                     Execute(new GameCommand(GameCommandType.Search, observer.Side, State.Revision,
                         targetId: sonarTarget.Id, searchMode: "sonar"));
                     if (State.Detection.IsClassified(observer.Side, sonarTarget.Id)) return;
-                }
-            }
-            if (State.Scenario.ScoringMode == ScenarioScoringMode.CarrierPosition)
-            {
-                var carrier = State.Unit(State.Scenario.UsObjectiveUnitId);
-                var carrierForce = State.Forces.FirstOrDefault(force => force.Units.Contains(carrier));
-                if (carrier == null || carrier.IsSunk)
-                {
-                    EndByScore(ScenarioEndReason.ObjectiveSunk);
-                    return;
-                }
-                if (carrierForce != null && !carrierForce.IsOffMap && carrier.CanLaunchAircraft &&
-                    carrierForce.Position.DistanceTo(State.Scenario.CarrierObjectiveHex) <=
-                    State.Scenario.CarrierObjectiveRadius)
-                {
-                    EndByScore(ScenarioEndReason.DestinationReached);
-                    return;
                 }
             }
             if (State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape)
@@ -2748,6 +2793,23 @@ namespace Harpoon.Core
                 if (carrier == null || carrier.IsSunk)
                 {
                     EndByScore(ScenarioEndReason.ObjectiveSunk);
+                    return;
+                }
+            }
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.CarrierPosition)
+            {
+                var carrier = State.Unit(State.Scenario.UsObjectiveUnitId);
+                var carrierForce = State.Forces.FirstOrDefault(force => force.Units.Contains(carrier));
+                if (carrier == null || carrier.IsSunk)
+                {
+                    EndByScore(ScenarioEndReason.ObjectiveSunk);
+                    return;
+                }
+                if (carrierForce != null && !carrierForce.IsOffMap && carrier.CanLaunchAircraft &&
+                    carrierForce.Position.DistanceTo(State.Scenario.CarrierObjectiveHex) <=
+                    State.Scenario.CarrierObjectiveRadius)
+                {
+                    EndByScore(ScenarioEndReason.DestinationReached);
                     return;
                 }
             }
@@ -3047,6 +3109,18 @@ namespace Harpoon.Core
                 State.Detection.IsDetected(viewer, force.Id);
             Func<TaskForceState, bool> classified = force => force.Side == viewer || !redact ||
                 State.Detection.IsClassified(viewer, force.Id);
+            Func<TacticalFlightState, TacticalFlightSnapshot> tacticalSnapshot = flight =>
+            {
+                var snapshot = flight.Capture();
+                if (!redact || flight.Side == viewer) return snapshot;
+                snapshot.readyAircraft = snapshot.aircraftRemaining;
+                snapshot.flownAircraft = 0;
+                snapshot.abortedAircraft = 0;
+                snapshot.mission = snapshot.aircraftRemaining == 0
+                    ? TacticalAirMission.Destroyed : TacticalAirMission.Ready;
+                snapshot.radarOn = false;
+                return snapshot;
+            };
             var view = State.ViewFor(viewer);
             var publicScore = CurrentScore();
             var usVisible = visible(State.Player);
@@ -3175,7 +3249,7 @@ namespace Harpoon.Core
                 scoreUsTieBreak = publicScore.UsTieBreakDamage,
                 scorePlanTieBreak = publicScore.PlanTieBreakDamage,
                 scoreResult = publicScore.Result
-                ,tacticalFlights = State.TacticalFlights.Select(flight => flight.Capture()).ToArray()
+                ,tacticalFlights = State.TacticalFlights.Select(tacticalSnapshot).ToArray()
                 ,airBases = State.AirBases.Select(airBase => new AirBaseSnapshot
                 {
                     id = airBase.Definition.Id,

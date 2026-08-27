@@ -6,7 +6,7 @@ MVP 0.1 release scope and rule interpretations are recorded in [`docs/RELEASE_NO
 
 ## Current playable slice
 
-Scenarios 1–9 are playable from the **Match & System** scenario selector. The first three teach surface missiles, larger formations, and gunfire. Scenario 4 adds concealed deployment and convoy movement; Scenario 5 adds dummy deception; Scenario 6 adds modern undersea warfare; Scenario 7 adds independent convoy arrival; Scenario 8 adds carrier escape; and Scenario 9, **Patroller**, adds the Kadena-based P-8A, patrol-aircraft sensors and attacks, aircraft losses, and a four-submarine breakout. They include:
+Scenarios 1–10 are playable from the **Match & System** scenario selector. The first three teach surface combat; Scenarios 4–8 add detection, deception, undersea warfare, convoy arrival, and carrier escape; Scenario 9 adds patrol aircraft; and Scenario 10, **First Light**, adds tactical flights, CAP/DLI, escorts, air combat, bombing, runway damage, and Ford's arrival objective. They include:
 
 - a 15 × 20 three-dimensional hex map at 60 nautical miles per hex;
 - Captain's Edition task-force speed and random movement-chit initiative;
@@ -24,7 +24,7 @@ Close action has its own orange combat ribbon and command panel. Gun attacks use
 
 Damage is shown using effective—not merely printed—card values, with `printed→effective` reductions, amber/red card states, pulsing damage rings, smoke, persistent wreck markers, and a distinct sinking effect. See [`docs/rules/SHIP_DAMAGE.md`](docs/rules/SHIP_DAMAGE.md).
 
-Scenarios 1–3 precede the detection learning scenario and omit detection. To exercise Section 5 early on those boards, press **F3** and enable **Detection Test Mode**. Scenarios 4–9 enable detection authoritatively and seal the complete debug trace until game end.
+Scenarios 1–3 precede the detection learning scenario and omit detection. To exercise Section 5 early on those boards, press **F3** and enable **Detection Test Mode**. Scenarios 4–10 enable detection authoritatively and seal the complete debug trace until game end. Scenario 10's collapsible **Air Operations** panel handles CAP/DLI declarations and strike packages; see [`docs/rules/SCENARIO_10_SPEC.md`](docs/rules/SCENARIO_10_SPEC.md).
 
 Run `play.cmd` from the project root to build and launch the Windows game in one step. Alternatively, open the project in Unity `6000.2.12f1`, open `Assets/Main.unity`, and press Play. Click a highlighted sea hex to move, then attack or end the activation. Use WASD/arrow keys to pan, the mouse wheel to zoom, and right-drag or Q/E to orbit the camera. Press Escape or use **Exit Game** to quit.
 
@@ -44,6 +44,6 @@ The supplied PDFs remain in `rules/` as design references. Their original text a
 
 ## Multiplayer
 
-Scenarios 1–9 include host-authoritative one-versus-one play through either direct IP
+Scenarios 1–10 include host-authoritative one-versus-one play through either direct IP
 or encrypted Unity Relay, with join codes, public discovery, chat, and soundboard
-cues. Scenarios 4–9 redact undetected opposing state from network clients; Scenario 5 additionally protects dummy-card counts, while Scenarios 6–9 keep located-but-unclassified submarine cards private. Scenario 9 snapshots also synchronize aircraft serviceability, basing, and search use. See [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) for setup and testing.
+cues. Scenarios 4–10 redact undetected opposing formations from network clients; Scenario 5 additionally protects dummy-card counts, while Scenarios 6–10 keep located-but-unclassified submarine cards private. Scenario 10 snapshots synchronize tactical-flight missions, aircraft losses, radar declarations, and runway damage. See [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) for setup and testing.

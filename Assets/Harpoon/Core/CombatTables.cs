@@ -53,7 +53,7 @@ namespace Harpoon.Core
 
         public static int AirToAirHits(int modifiedResult)
         {
-            return modifiedResult >= 9 ? 2 : modifiedResult >= 6 ? 1 : 0;
+            return modifiedResult >= 8 ? 2 : modifiedResult >= 3 ? 1 : 0;
         }
 
         private static void RequireD6(int roll)

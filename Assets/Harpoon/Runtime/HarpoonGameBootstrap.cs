@@ -20,6 +20,7 @@ namespace Harpoon.Runtime
         private readonly Dictionary<string, Transform> _formationMarkers = new Dictionary<string, Transform>();
         private readonly Dictionary<string, int> _formationMarkerShipCounts = new Dictionary<string, int>();
         private LineRenderer _movementPathPreview;
+        private Transform _carrierObjectiveMarker;
         private GUIStyle _titleStyle;
         private GUIStyle _labelStyle;
         private GUIStyle _buttonStyle;
@@ -107,6 +108,14 @@ namespace Harpoon.Runtime
         private bool _showRosterSection;
         private bool _showSystemSection;
         private bool _showEventSection;
+        private bool _showAirOperations = true;
+        private string _selectedTacticalFlightId = string.Empty;
+        private string _selectedTacticalTargetId = string.Empty;
+        private string _selectedTacticalEscortId = string.Empty;
+        private TacticalWeapon _selectedTacticalWeapon = TacticalWeapon.LongAsm;
+        private int _selectedTacticalStrength = 4;
+        private bool _tacticalRadarOn = true;
+        private Side _airOperationsSide = Side.UsNavy;
         private ScenarioDefinition _selectedScenario = FirstIslandChainScenarios.ContactOffBashiChannel;
         private bool _placingPlanDeployment;
         private string _planDeploymentFormationId = "PLAN Picket Group";
@@ -196,6 +205,12 @@ namespace Harpoon.Runtime
             _commandPanelScroll = Vector2.zero;
             _formationPanelScroll = Vector2.zero;
             ResetCombatDrafts();
+            _selectedTacticalFlightId = string.Empty;
+            _selectedTacticalTargetId = string.Empty;
+            _selectedTacticalEscortId = string.Empty;
+            _selectedTacticalWeapon = TacticalWeapon.LongAsm;
+            _selectedTacticalStrength = 4;
+            _airOperationsSide = LocalSide;
             _lastDebugCount = 0;
             RefreshViews();
             if (IsHostSession && NetworkConnected) BroadcastSnapshot();
@@ -865,6 +880,34 @@ namespace Harpoon.Runtime
                 _tiles.Add(coordinate, view);
             }
             BuildBaseMarkers(boardRoot);
+            BuildCarrierObjectiveMarker(boardRoot);
+        }
+
+        private void BuildCarrierObjectiveMarker(Transform boardRoot)
+        {
+            var root = new GameObject("First Light Objective 0206").transform;
+            root.SetParent(boardRoot);
+            root.position = WorldPosition(new HexCoord(2, 6)) + Vector3.up * 0.32f;
+            var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            ring.name = "Carrier Arrival Ring";
+            ring.transform.SetParent(root);
+            ring.transform.localPosition = Vector3.zero;
+            ring.transform.localScale = new Vector3(0.88f, 0.025f, 0.88f);
+            ring.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(
+                new Color(1f, 0.72f, 0.08f, 0.86f), 0.18f, 0.75f);
+            for (var index = 0; index < 3; index++)
+            {
+                var beacon = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                beacon.name = "Objective Beacon";
+                beacon.transform.SetParent(root);
+                var angle = index * Mathf.PI * 2f / 3f;
+                beacon.transform.localPosition = new Vector3(Mathf.Cos(angle), 0.28f, Mathf.Sin(angle)) * 0.56f;
+                beacon.transform.localScale = Vector3.one * 0.12f;
+                beacon.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(
+                    new Color(1f, 0.86f, 0.24f), 0.05f, 0.9f);
+            }
+            _carrierObjectiveMarker = root;
+            root.gameObject.SetActive(false);
         }
 
         private static void BuildBaseMarkers(Transform boardRoot)
@@ -1067,6 +1110,9 @@ namespace Harpoon.Runtime
         private void RefreshViews()
         {
             if (_game == null || _playerMarker == null) return;
+            if (_carrierObjectiveMarker != null)
+                _carrierObjectiveMarker.gameObject.SetActive(
+                    _game.State.Scenario.ScoringMode == ScenarioScoringMode.CarrierPosition);
             foreach (var force in _game.State.Forces)
             {
                 var classified = force.Side == LocalSide || !_game.State.DetectionRulesEnabled ||
@@ -1178,6 +1224,18 @@ namespace Harpoon.Runtime
         {
             if (report.IsGunfire) PlayGameSound(_gunClip, 0.9f);
             else PlayGameSound(_attackClip);
+            var tactical = _game.State.LastTacticalStrike;
+            if (tactical != null && tactical.Summary == report.Summary)
+            {
+                var flight = _game.State.TacticalFlight(tactical.FlightId);
+                var tacticalOrigin = TacticalWorldPosition(flight?.BaseId);
+                var targetForce = _game.State.Formation(tactical.TargetId);
+                var targetBase = _game.State.AirBase(tactical.TargetId);
+                var tacticalTarget = targetForce != null ? WorldPosition(targetForce.Position) :
+                    targetBase != null ? WorldPosition(targetBase.Definition.Position) : tacticalOrigin + Vector3.forward * 4f;
+                StartCoroutine(PlayTacticalStrikeEffect(tacticalOrigin, tacticalTarget, tactical));
+                return;
+            }
             var engagement = _game.State.PendingMissileCombat;
             var attackingForce = engagement != null
                 ? _game.State.Formation(engagement.AttackerFormationId) : _game.State.ForceFor(attacker);
@@ -1195,6 +1253,61 @@ namespace Harpoon.Runtime
                     target - lateral * 0.85f, report));
             }
             else StartCoroutine(PlayAttackEffect(origin, target, report));
+        }
+
+        private Vector3 TacticalWorldPosition(string baseId)
+        {
+            var airBase = _game.State.AirBase(baseId);
+            if (airBase == null) return Vector3.zero;
+            if (!airBase.Definition.IsCarrier) return WorldPosition(airBase.Definition.Position);
+            var objectiveId = airBase.Definition.Side == Side.UsNavy
+                ? _game.State.Scenario.UsObjectiveUnitId : _game.State.Scenario.PlanObjectiveUnitId;
+            var force = _game.State.Forces.FirstOrDefault(item => item.Side == airBase.Definition.Side &&
+                item.ActiveUnits.Any(unit => unit.Definition.Id == objectiveId));
+            return force == null ? Vector3.zero : WorldPosition(force.Position);
+        }
+
+        private IEnumerator PlayTacticalStrikeEffect(Vector3 origin, Vector3 target, TacticalStrikeReport report)
+        {
+            var count = Mathf.Clamp(report.AircraftLaunched, 1, 4);
+            var aircraft = new GameObject[count];
+            var color = report.FlightId.StartsWith("FORD", StringComparison.Ordinal)
+                ? new Color(0.24f, 0.72f, 1f) : new Color(1f, 0.3f, 0.2f);
+            for (var index = 0; index < count; index++)
+            {
+                aircraft[index] = VisualFactory.CreateTacticalJet(color);
+                aircraft[index].transform.position = origin + Vector3.up * (1.1f + index * 0.12f);
+            }
+            const float outbound = 1.05f;
+            for (var elapsed = 0f; elapsed < outbound; elapsed += Time.deltaTime)
+            {
+                var t = Mathf.Clamp01(elapsed / outbound);
+                for (var index = 0; index < count; index++)
+                {
+                    var lateral = Vector3.Cross((target - origin).normalized, Vector3.up) *
+                                  ((index - (count - 1) * 0.5f) * 0.24f);
+                    aircraft[index].transform.position = Vector3.Lerp(origin, target, t) + lateral +
+                        Vector3.up * (1.05f + Mathf.Sin(t * Mathf.PI) * 2.2f);
+                    aircraft[index].transform.LookAt(target + Vector3.up);
+                }
+                yield return null;
+            }
+            if (report.HullHits + report.RunwayHits > 0)
+            {
+                PlayGameSound(_impactClip, 0.8f);
+                var blast = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                blast.name = "Tactical Air Strike Impact";
+                blast.transform.position = target + Vector3.up * 0.8f;
+                blast.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(
+                    new Color(1f, 0.38f, 0.04f), 0f, 0.1f);
+                for (var elapsed = 0f; elapsed < 0.55f; elapsed += Time.deltaTime)
+                {
+                    blast.transform.localScale = Vector3.one * (0.15f + elapsed * 1.8f);
+                    yield return null;
+                }
+                Destroy(blast);
+            }
+            foreach (var jet in aircraft) Destroy(jet);
         }
 
         private IEnumerator PlayGunfireEffect(Vector3 origin, Vector3 target, AttackReport report)
@@ -1596,7 +1709,8 @@ namespace Harpoon.Runtime
                 scoringMode == ScenarioScoringMode.GunfireHullHits ? "GUNFIRE HITS" :
                 scoringMode == ScenarioScoringMode.SubmarineSurvival ? "SUBMARINE CAMPAIGN" :
                 scoringMode == ScenarioScoringMode.CarrierEscape ? "FUJIAN ESCAPE STATUS" :
-                scoringMode == ScenarioScoringMode.SubmarineEscape ? "BREAKOUT STATUS" : "OBJECTIVE DAMAGE";
+                scoringMode == ScenarioScoringMode.SubmarineEscape ? "BREAKOUT STATUS" :
+                scoringMode == ScenarioScoringMode.CarrierPosition ? "FIRST LIGHT STATUS" : "OBJECTIVE DAMAGE";
             var scoreText = scoringMode == ScenarioScoringMode.ConvoyArrival
                 ? $"{scoreTitle}    ARRIVED {score.UsObjectiveDamage}   ·   LOST {score.PlanObjectiveDamage}"
                 : scoringMode == ScenarioScoringMode.ConvoySurvival
@@ -1607,6 +1721,9 @@ namespace Harpoon.Runtime
                     ? $"{scoreTitle}    HULL DAMAGE {score.UsTieBreakDamage}/6   ·   AIR GROUP {(score.PlanTieBreakDamage > 0 ? "LAUNCH READY" : "MISSION KILLED")}"
                 : scoringMode == ScenarioScoringMode.SubmarineEscape
                     ? $"{scoreTitle}    ESCAPED {score.UsObjectiveDamage}/3   ·   SUNK {score.PlanObjectiveDamage}"
+                : scoringMode == ScenarioScoringMode.CarrierPosition
+                    ? $"{scoreTitle}    FORD RANGE {score.UsTieBreakDamage} HEXES - " +
+                      (score.UsObjectiveDamage > 0 ? "OBJECTIVE REACHED" : "EN ROUTE")
                 : $"{scoreTitle}    US {score.UsObjectiveDamage}   -   PLAN {score.PlanObjectiveDamage}";
             GUILayout.Label(scoreText,
                 _cardHeaderStyle);
@@ -1624,6 +1741,9 @@ namespace Harpoon.Runtime
                     _cardStatStyle);
             if (scoringMode == ScenarioScoringMode.SubmarineEscape)
                 GUILayout.Label("PLAN: exit 3 submarines through the orange eastern edge by Turn 15. US: stop the breakout.",
+                    _cardStatStyle);
+            if (scoringMode == ScenarioScoringMode.CarrierPosition)
+                GUILayout.Label("US: move launch-capable Ford within 2 hexes of 0206 by Turn 12. PLAN: prevent arrival.",
                     _cardStatStyle);
             if (!_game.State.IsGameOver)
             {
@@ -1654,6 +1774,7 @@ namespace Harpoon.Runtime
 
         private void DrawCurrentOrders()
         {
+            DrawTacticalAirOperations();
             DrawDummyControls();
             DrawSpeedDeclaration();
             GUILayout.Space(6f);
@@ -1767,6 +1888,185 @@ namespace Harpoon.Runtime
             }
             GUI.enabled = true;
             GUI.backgroundColor = prior;
+        }
+
+        private void DrawTacticalAirOperations()
+        {
+            if (!_game.State.Scenario.TacticalAirEnabled) return;
+            var ownSide = _sessionMode == SessionMode.HotSeat && _game.State.Phase == ActivationPhase.AwaitingChit
+                ? _airOperationsSide : LocalSide;
+            var ownFlights = _game.State.TacticalFlights.Where(flight => flight.Side == ownSide).ToArray();
+            var ready = ownFlights.Sum(flight => flight.ReadyAircraft);
+            var airborne = ownFlights.Count(flight => flight.Mission == TacticalAirMission.Cap ||
+                flight.Mission == TacticalAirMission.DeckInterceptor);
+            if (DrawSectionHeader("AIR OPERATIONS", $"READY {ready} · DEFENSIVE {airborne}",
+                    new Color(0.12f, 0.54f, 0.72f), _showAirOperations))
+                _showAirOperations = !_showAirOperations;
+            if (!_showAirOperations) { GUILayout.Space(5f); return; }
+
+            GUILayout.BeginVertical(GUI.skin.box);
+            if (_sessionMode == SessionMode.HotSeat && _game.State.Phase == ActivationPhase.AwaitingChit)
+            {
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("US AIR SETUP", _buttonStyle)) { _airOperationsSide = Side.UsNavy; _selectedTacticalFlightId = string.Empty; }
+                if (GUILayout.Button("PLAN AIR SETUP", _buttonStyle)) { _airOperationsSide = Side.Plan; _selectedTacticalFlightId = string.Empty; }
+                GUILayout.EndHorizontal();
+                ownSide = _airOperationsSide;
+                ownFlights = _game.State.TacticalFlights.Where(flight => flight.Side == ownSide).ToArray();
+            }
+
+            foreach (var airBase in _game.State.AirBases.Where(item => item.Definition.Side == ownSide))
+            {
+                var status = airBase.Definition.IsCarrier
+                    ? $"DECK {ownFlights.Count(flight => flight.BaseId == airBase.Definition.Id)}/{airBase.Definition.FlightCapacity}"
+                    : $"RUNWAY {airBase.RunwayHits}/{airBase.Definition.RunwayCapacity}";
+                GUILayout.Label($"{airBase.Definition.DisplayName.ToUpperInvariant()} · {status} · " +
+                    $"LAUNCH {(airBase.CanLaunch ? "READY" : "CLOSED")}", _cardStatStyle);
+            }
+
+            var selectable = ownFlights.Where(flight => flight.Mission != TacticalAirMission.Destroyed).ToArray();
+            if (selectable.Length == 0)
+            {
+                GUILayout.Label("NO SERVICEABLE TACTICAL AIRCRAFT", _cardStatStyle);
+                GUILayout.EndVertical();
+                return;
+            }
+            var selected = selectable.FirstOrDefault(flight => flight.Id == _selectedTacticalFlightId) ??
+                selectable.FirstOrDefault(flight => flight.Mission == TacticalAirMission.Ready) ?? selectable[0];
+            _selectedTacticalFlightId = selected.Id;
+            var selectedIndex = Array.IndexOf(selectable, selected);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("◀", _buttonStyle, GUILayout.Width(42f)))
+                _selectedTacticalFlightId = selectable[(selectedIndex + selectable.Length - 1) % selectable.Length].Id;
+            GUILayout.Label($"{selected.Id} · {selected.Definition.DisplayName}", _cardHeaderStyle);
+            if (GUILayout.Button("▶", _buttonStyle, GUILayout.Width(42f)))
+                _selectedTacticalFlightId = selectable[(selectedIndex + 1) % selectable.Length].Id;
+            GUILayout.EndHorizontal();
+            GUILayout.Label($"{selected.Mission.ToString().ToUpperInvariant()} · READY {selected.ReadyAircraft} · " +
+                $"FLOWN {selected.FlownAircraft} · ABORT {selected.AbortedAircraft} · LOST {selected.DestroyedAircraft}",
+                _cardStatStyle);
+            GUILayout.Label($"ATA {selected.Definition.AirToAir} · DEF {selected.Definition.Defense} · " +
+                $"RADIUS {selected.Definition.Radius} · ASM {selected.Definition.ShortAsm}-{selected.Definition.LongAsm} · " +
+                $"BOMB {selected.Definition.Bombs}", _cardStatStyle);
+
+            var setupWindow = _game.State.Phase == ActivationPhase.AwaitingChit &&
+                              _game.State.MovementCup.FirstDrawPending;
+            if (setupWindow && selected.IsFighter)
+            {
+                GUILayout.BeginHorizontal();
+                _tacticalRadarOn = GUILayout.Toggle(_tacticalRadarOn, " RADAR CAP", GUILayout.Width(115f));
+                GUI.enabled = selected.Mission == TacticalAirMission.Ready && selected.ReadyAircraft == 4 &&
+                              (_sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat || NetworkConnected);
+                if (GUILayout.Button("ASSIGN CAP", _buttonStyle))
+                    SubmitTacticalCommand(new GameCommand(GameCommandType.AssignCap, ownSide,
+                        _game.State.Revision, sourceUnitId: selected.Id, enabled: _tacticalRadarOn));
+                GUI.enabled = GUI.enabled && _game.State.AirBase(selected.BaseId)?.Definition.IsCarrier == true;
+                if (GUILayout.Button("ASSIGN DLI", _buttonStyle))
+                    SubmitTacticalCommand(new GameCommand(GameCommandType.AssignDeckInterceptor, ownSide,
+                        _game.State.Revision, sourceUnitId: selected.Id));
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+
+            var canStrike = selected.Mission == TacticalAirMission.Ready && selected.ReadyAircraft > 0 &&
+                            _game.State.ActiveSide == ownSide && _game.State.Phase != ActivationPhase.AwaitingChit &&
+                            _game.State.Phase != ActivationPhase.MissileCombat &&
+                            _game.State.Phase != ActivationPhase.GunCombat;
+            if (canStrike || selected.Mission == TacticalAirMission.Ready)
+            {
+                GUILayout.Label("STRIKE PACKAGE", _cardHeaderStyle);
+                GUILayout.BeginHorizontal();
+                for (var strength = 1; strength <= Math.Min(4, selected.ReadyAircraft); strength++)
+                {
+                    var prior = GUI.backgroundColor;
+                    if (_selectedTacticalStrength == strength) GUI.backgroundColor = new Color(0.12f, 0.62f, 0.82f);
+                    if (GUILayout.Button(strength.ToString(), _buttonStyle)) _selectedTacticalStrength = strength;
+                    GUI.backgroundColor = prior;
+                }
+                GUILayout.EndHorizontal();
+                _selectedTacticalStrength = Math.Min(Math.Max(1, _selectedTacticalStrength),
+                    Math.Max(1, selected.ReadyAircraft));
+
+                GUILayout.BeginHorizontal();
+                DrawTacticalWeaponButton("LONG ASM", TacticalWeapon.LongAsm, selected.Definition.LongAsm > 0);
+                DrawTacticalWeaponButton("SHORT ASM", TacticalWeapon.ShortAsm, selected.Definition.ShortAsm > 0);
+                DrawTacticalWeaponButton("BOMBS", TacticalWeapon.Bombs, selected.Definition.Bombs > 0);
+                GUILayout.EndHorizontal();
+                if ((_selectedTacticalWeapon == TacticalWeapon.LongAsm && selected.Definition.LongAsm == 0) ||
+                    (_selectedTacticalWeapon == TacticalWeapon.ShortAsm && selected.Definition.ShortAsm == 0) ||
+                    (_selectedTacticalWeapon == TacticalWeapon.Bombs && selected.Definition.Bombs == 0))
+                    _selectedTacticalWeapon = selected.Definition.LongAsm > 0 ? TacticalWeapon.LongAsm :
+                        selected.Definition.ShortAsm > 0 ? TacticalWeapon.ShortAsm : TacticalWeapon.Bombs;
+
+                var targets = _game.State.Forces.Where(force => force.Side != ownSide && !force.IsDestroyed &&
+                        !force.IsOffMap && (!_game.State.DetectionRulesEnabled ||
+                        _game.State.Detection.IsDetected(ownSide, force.Id))).Select(force => force.Id)
+                    .Concat(_game.State.AirBases.Where(item => item.Definition.Side != ownSide &&
+                        !item.Definition.IsCarrier).Select(item => item.Definition.Id)).Distinct().ToArray();
+                if (!targets.Contains(_selectedTacticalTargetId)) _selectedTacticalTargetId = targets.FirstOrDefault() ?? string.Empty;
+                GUILayout.Label("TARGET", _cardStatStyle);
+                foreach (var targetId in targets)
+                {
+                    var prior = GUI.backgroundColor;
+                    if (_selectedTacticalTargetId == targetId) GUI.backgroundColor = new Color(0.72f, 0.22f, 0.16f);
+                    if (GUILayout.Button(targetId.ToUpperInvariant(), _buttonStyle)) _selectedTacticalTargetId = targetId;
+                    GUI.backgroundColor = prior;
+                }
+
+                var escorts = ownFlights.Where(flight => flight.Id != selected.Id && flight.IsFighter &&
+                    flight.BaseId == selected.BaseId && flight.Mission == TacticalAirMission.Ready).ToArray();
+                if (escorts.Length > 0)
+                {
+                    GUILayout.Label("ESCORT · OPTIONAL", _cardStatStyle);
+                    foreach (var escort in escorts)
+                    {
+                        var prior = GUI.backgroundColor;
+                        if (_selectedTacticalEscortId == escort.Id) GUI.backgroundColor = new Color(0.58f, 0.42f, 0.12f);
+                        if (GUILayout.Button(escort.Id == _selectedTacticalEscortId ? $"REMOVE {escort.Id}" : $"ADD {escort.Id}",
+                                _buttonStyle))
+                            _selectedTacticalEscortId = escort.Id == _selectedTacticalEscortId ? string.Empty : escort.Id;
+                        GUI.backgroundColor = prior;
+                    }
+                }
+                GUI.enabled = canStrike && !string.IsNullOrEmpty(_selectedTacticalTargetId) &&
+                              (_sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat || NetworkConnected);
+                var old = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(0.68f, 0.2f, 0.14f);
+                if (GUILayout.Button("LAUNCH TACTICAL STRIKE", _buttonStyle))
+                {
+                    var targetForce = _game.State.Formation(_selectedTacticalTargetId);
+                    var targetUnit = targetForce?.Objective ?? targetForce?.ActiveUnits.FirstOrDefault();
+                    SubmitTacticalCommand(new GameCommand(GameCommandType.LaunchTacticalStrike, ownSide,
+                        _game.State.Revision, factors: _selectedTacticalStrength,
+                        targetId: _selectedTacticalTargetId, sourceUnitId: selected.Id,
+                        formationId: targetUnit?.Definition.Id,
+                        unitIds: string.IsNullOrEmpty(_selectedTacticalEscortId)
+                            ? Array.Empty<string>() : new[] { _selectedTacticalEscortId },
+                        searchMode: _selectedTacticalWeapon.ToString()));
+                    _selectedTacticalEscortId = string.Empty;
+                }
+                GUI.backgroundColor = old;
+                GUI.enabled = true;
+            }
+            GUILayout.EndVertical();
+            GUILayout.Space(6f);
+        }
+
+        private void DrawTacticalWeaponButton(string label, TacticalWeapon weapon, bool available)
+        {
+            var oldEnabled = GUI.enabled;
+            var oldColor = GUI.backgroundColor;
+            GUI.enabled = oldEnabled && available;
+            if (_selectedTacticalWeapon == weapon) GUI.backgroundColor = new Color(0.68f, 0.34f, 0.1f);
+            if (GUILayout.Button(label, _buttonStyle)) _selectedTacticalWeapon = weapon;
+            GUI.backgroundColor = oldColor;
+            GUI.enabled = oldEnabled;
+        }
+
+        private void SubmitTacticalCommand(GameCommand command)
+        {
+            SubmitCombatCommand(command, $"{command.Type} sent to host.");
+            if (_game.State.LastTacticalStrike != null) _status = _game.State.LastTacticalStrike.Summary;
         }
 
         private void DrawDummyControls()
@@ -2129,6 +2429,8 @@ namespace Harpoon.Runtime
                 ? $"PLAN SUBS LOST {score.UsObjectiveDamage} · US SHIPS LOST {score.PlanObjectiveDamage}"
                 : _game.State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
                 ? $"FUJIAN DMG {score.UsTieBreakDamage}/6 · AIR {(score.PlanTieBreakDamage > 0 ? "READY" : "KILLED")}"
+                : _game.State.Scenario.ScoringMode == ScenarioScoringMode.CarrierPosition
+                ? $"FORD RANGE {score.UsTieBreakDamage} - {(score.UsObjectiveDamage > 0 ? "ARRIVED" : "EN ROUTE")}"
                 : $"US {score.UsObjectiveDamage} : {score.PlanObjectiveDamage} PLAN";
             if (DrawSectionHeader("VICTORY / OBJECTIVE",
                     objectiveSummary,

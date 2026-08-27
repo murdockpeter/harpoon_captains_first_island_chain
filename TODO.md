@@ -275,24 +275,24 @@ Each scenario is both playable content and the acceptance test for a new rules f
 
 ## Scenario 10 — First Light: tactical aircraft and bases
 
-- [ ] Add tactical aircraft flights of one to four aircraft.
-- [ ] Enforce shore/carrier basing and carrier deck capacity.
-- [ ] Track ready, flown, aborted, and destroyed aircraft.
-- [ ] Enforce one flight/attack per aircraft per turn and return to base.
-- [ ] Enforce tactical-aircraft radius.
-- [ ] Require a friendly detected target before tactical strike launch, except where overridden.
-- [ ] Implement air-launched ASM with normal layered missile defenses.
-- [ ] Implement bomb attacks, adjacency, and their distinct defense sequence.
-- [ ] Implement fighter ATA versus target Defense and the complete Air-to-Air table.
-- [ ] Implement CAP interception radius and persistence.
-- [ ] Implement deck-launched interceptors.
-- [ ] Implement strike escorts and engagement priority.
-- [ ] Implement aircraft-vs-missile combat with missile Defense zero.
-- [ ] Implement the optional EA-18G sensor-reduction rule as a scenario option.
-- [ ] Implement bases, base air defenses, runway damage, and launch restrictions.
-- [ ] Enter carrier air-wing and land-base aircraft inventories.
-- [ ] Implement Scenario 10 movement objective and twelve-turn limit.
-- [ ] Add deterministic Scenario 10 acceptance tests.
+- [x] Add tactical aircraft flights of one to four aircraft.
+- [x] Enforce shore/carrier basing and carrier deck capacity.
+- [x] Track ready, flown, aborted, and destroyed aircraft.
+- [x] Enforce one flight/attack per aircraft per turn and return to base.
+- [x] Enforce tactical-aircraft radius.
+- [x] Require a friendly detected target before tactical strike launch, except where overridden.
+- [x] Implement air-launched ASM with normal layered missile defenses.
+- [x] Implement bomb attacks, adjacency, and their distinct defense sequence.
+- [x] Implement fighter ATA versus target Defense and the complete Air-to-Air table.
+- [x] Implement CAP interception radius and persistence.
+- [x] Implement deck-launched interceptors.
+- [x] Implement strike escorts and engagement priority.
+- [x] Implement aircraft-vs-missile combat with missile Defense zero.
+- [x] Implement the optional EA-18G sensor-reduction rule as a scenario option.
+- [x] Implement bases, base air defenses, runway damage, and launch restrictions.
+- [x] Enter carrier air-wing and land-base aircraft inventories.
+- [x] Implement Scenario 10 movement objective and twelve-turn limit.
+- [x] Add deterministic Scenario 10 acceptance tests.
 
 ## MVP 1.0 shared data and release work
 

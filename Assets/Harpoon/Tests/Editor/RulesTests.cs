@@ -1012,5 +1012,116 @@ namespace Harpoon.Core.Tests
             Assert.That(target.HullDamage, Is.EqualTo(1));
             Assert.That(escort.HullDamage, Is.Zero);
         }
+
+        [Test]
+        public void ScenarioTenLoadsFirstLightOrderOfBattleAndAirInventories()
+        {
+            var game = new ScenarioOneGame(1010, null, true, false, null,
+                FirstIslandChainScenarios.FirstLight);
+            Assert.That(game.State.MaximumTurns, Is.EqualTo(12));
+            Assert.That(game.State.Forces.Count, Is.EqualTo(3));
+            Assert.That(game.State.Unit("us-ford"), Is.Not.Null);
+            Assert.That(game.State.Forces.Count(force => force.Side == Side.Plan && force.IsSubmarineOnly),
+                Is.EqualTo(2));
+            Assert.That(game.State.TacticalFlights.Count, Is.EqualTo(15));
+            Assert.That(game.State.TacticalFlights.Count(flight => flight.Side == Side.UsNavy), Is.EqualTo(12));
+            Assert.That(ModernAirBaseDatabase.Get("us-ford-wing").FlightCapacity, Is.EqualTo(14));
+            Assert.That(ModernAirBaseDatabase.Get("plan-ningbo").LongSam, Is.EqualTo(10));
+        }
+
+        [Test]
+        public void ScenarioTenAirToAirAndAircraftDamageTablesMatchPrintedRules()
+        {
+            Assert.That(Enumerable.Range(-2, 5).Select(CombatTables.AirToAirHits),
+                Is.All.EqualTo(0));
+            Assert.That(Enumerable.Range(3, 5).Select(CombatTables.AirToAirHits),
+                Is.All.EqualTo(1));
+            Assert.That(CombatTables.AirToAirHits(8), Is.EqualTo(2));
+            Assert.That(CombatTables.AircraftDamage(1), Is.EqualTo(AircraftDamageResult.NoEffect));
+            Assert.That(CombatTables.AircraftDamage(2), Is.EqualTo(AircraftDamageResult.Abort));
+            Assert.That(CombatTables.AircraftDamage(6), Is.EqualTo(AircraftDamageResult.ShotDown));
+        }
+
+        [Test]
+        public void ScenarioTenDefensiveFlightsAndSnapshotsRetainMissionState()
+        {
+            var game = new ScenarioOneGame(1011, null, true, false, null,
+                FirstIslandChainScenarios.FirstLight);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.AssignCap, Side.UsNavy,
+                game.State.Revision, sourceUnitId: "FORD-F35-1", enabled: true)).Accepted, Is.True);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.AssignDeckInterceptor, Side.UsNavy,
+                game.State.Revision, sourceUnitId: "FORD-F35-2")).Accepted, Is.True);
+            var restored = new ScenarioOneGame(1, null, true);
+            restored.ApplySnapshot(game.CaptureSnapshot());
+            Assert.That(restored.State.TacticalFlight("FORD-F35-1").Mission, Is.EqualTo(TacticalAirMission.Cap));
+            Assert.That(restored.State.TacticalFlight("FORD-F35-1").RadarOn, Is.True);
+            Assert.That(restored.State.TacticalFlight("FORD-F35-2").Mission,
+                Is.EqualTo(TacticalAirMission.DeckInterceptor));
+            var planView = game.CaptureSnapshotFor(Side.Plan);
+            var hiddenCap = planView.tacticalFlights.Single(flight => flight.id == "FORD-F35-1");
+            Assert.That(hiddenCap.mission, Is.EqualTo(TacticalAirMission.Ready));
+            Assert.That(hiddenCap.radarOn, Is.False);
+        }
+
+        [Test]
+        public void ScenarioTenBombingDamagesRunwayAndFlightCannotAttackTwice()
+        {
+            var dice = Enumerable.Repeat(1, 20).Concat(new[] { 6, 6 }).ToArray();
+            var game = new ScenarioOneGame(1012, null, true, false, new SequenceDieRoller(dice),
+                FirstIslandChainScenarios.FirstLight);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Ford Strike Group";
+            snapshot.phase = ActivationPhase.PlayerAction;
+            snapshot.formations.Single(force => force.id == "US Ford Strike Group").declaredSpeed = 0;
+            game.ApplySnapshot(snapshot);
+            var strike = game.Execute(new GameCommand(GameCommandType.LaunchTacticalStrike, Side.UsNavy,
+                game.State.Revision, factors: 1, targetId: "plan-ningbo", sourceUnitId: "FORD-F18-1",
+                searchMode: TacticalWeapon.Bombs.ToString()));
+            Assert.That(strike.Accepted, Is.True);
+            Assert.That(game.State.AirBase("plan-ningbo").RunwayHits, Is.EqualTo(4));
+            Assert.That(game.State.TacticalFlight("FORD-F18-1").Mission, Is.EqualTo(TacticalAirMission.Flown));
+            var repeat = game.Execute(new GameCommand(GameCommandType.LaunchTacticalStrike, Side.UsNavy,
+                game.State.Revision, factors: 1, targetId: "plan-ningbo", sourceUnitId: "FORD-F18-1",
+                searchMode: TacticalWeapon.Bombs.ToString()));
+            Assert.That(repeat.Violation.Code, Is.EqualTo(RuleViolationCode.AircraftUnavailable));
+        }
+
+        [Test]
+        public void ScenarioTenEnforcesRadiusAndLaunchCapableFordObjective()
+        {
+            var radius = new ScenarioOneGame(1013, null, true, false, null,
+                FirstIslandChainScenarios.FirstLight);
+            var far = radius.CaptureSnapshot();
+            far.activeSide = Side.UsNavy;
+            far.activeFormationId = "US Ford Strike Group";
+            far.phase = ActivationPhase.PlayerAction;
+            var farFord = far.formations.Single(force => force.id == "US Ford Strike Group");
+            farFord.column = 15;
+            farFord.row = 20;
+            farFord.declaredSpeed = 0;
+            radius.ApplySnapshot(far);
+            var rejected = radius.Execute(new GameCommand(GameCommandType.LaunchTacticalStrike, Side.UsNavy,
+                radius.State.Revision, factors: 1, targetId: "plan-ningbo", sourceUnitId: "FORD-F18-1",
+                searchMode: TacticalWeapon.Bombs.ToString()));
+            Assert.That(rejected.Violation.Code, Is.EqualTo(RuleViolationCode.RadiusExceeded));
+
+            var arrival = new ScenarioOneGame(1014, null, true, false, null,
+                FirstIslandChainScenarios.FirstLight);
+            var objective = arrival.CaptureSnapshot();
+            objective.activeSide = Side.UsNavy;
+            objective.activeFormationId = "US Ford Strike Group";
+            objective.phase = ActivationPhase.PlayerAction;
+            objective.remainingChits = System.Array.Empty<MovementChitData>();
+            var ford = objective.formations.Single(force => force.id == "US Ford Strike Group");
+            ford.column = 4;
+            ford.row = 6;
+            ford.declaredSpeed = 0;
+            arrival.ApplySnapshot(objective);
+            Assert.That(arrival.Execute(new GameCommand(GameCommandType.EndActivation, Side.UsNavy,
+                arrival.State.Revision)).Accepted, Is.True);
+            Assert.That(arrival.State.Result, Is.EqualTo("US NAVY VICTORY"));
+            Assert.That(arrival.State.EndReason, Is.EqualTo(ScenarioEndReason.DestinationReached));
+        }
     }
 }

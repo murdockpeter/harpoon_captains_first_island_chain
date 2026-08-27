@@ -116,6 +116,19 @@ Modern unit cards and the optional EA-18G rule necessarily come from the supplem
 | ASR-directed SAM and aircraft damage | Captain's Rules p. 13 | automatic ASR detection, SAM reaction, `AircraftDamage` | exact 1 / 2–3 / 4–6 table and persisted mission-state checks | Complete |
 | Xiamen setup, east exit, and fifteen turns | First Island Chain p. 26 | distance deployment and `SubmarineEscape` scoring | legal setup, three-escape PLAN win, and turn-limit US win | Complete |
 
+## Scenario 10 coverage
+
+| Rule/data | Authoritative source | Current code | Automated evidence | Status |
+|---|---|---|---|---|
+| Ford group, two Type 093Bs, Ningbo flights, and twelve turns | First Island Chain pp. 13–20, 23–24, 26 | `FirstLight`, tactical aircraft/base databases | exact formation, flight, factor, capacity, and turn-limit checks | Complete |
+| One-to-four aircraft flights, readiness, losses, basing, and radius | Captain's Rules pp. 14–16 | `TacticalFlightState`, `AirBaseState`, command validation | transition, repeat-sortie, snapshot, capacity, and radius tests | Complete |
+| CAP, carrier DLI, escorts, ATA, and Aircraft Damage | Captain's Rules pp. 14–16 | defensive mission and simultaneous interception resolver | Air-to-Air boundaries, mission persistence, Defense-0 interception, and damage-table tests | Complete |
+| Long/short ASM and bombs | Captain's Rules pp. 14–16 | tactical strike resolver and layered defenses | detected-target gate, long-ASM impact, bomb sequence, runway damage, and repeat rejection | Complete |
+| Optional EA-18G rule | First Island Chain p. 11 | scenario option and escort sensor reduction | rules trace and integration validation | Complete |
+| Bases, runway effects, and launch restrictions | First Island Chain pp. 13–14, 23–24 | six base charts, two wing charts, `AirBaseState` | inventory, defense, runway, launch, and snapshot checks | Complete; intermediate runway thresholds are documented project interpretation |
+| Launch-capable Ford reaches `0206` radius two | First Island Chain p. 26 | `CarrierPosition` scoring | arrival win, half-damage mission kill, and Turn-12 PLAN result | Complete |
+| Playable presentation and solo opponent | Project UI/AI | Air Operations panel, PLAN policy, objective/strike visuals | Unity compile, player smoke, and deterministic routes | Complete |
+
 ## Rules-family source index
 
 | Rules family | Captain's Rules | Supplement |

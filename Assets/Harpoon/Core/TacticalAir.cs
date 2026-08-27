@@ -211,12 +211,17 @@ namespace Harpoon.Core
 
         public void ApplyAirDamage(int shotDown, int aborted)
         {
+            var defensiveMission = Mission == TacticalAirMission.Cap || Mission == TacticalAirMission.DeckInterceptor;
             shotDown = Math.Min(Math.Max(0, shotDown), AircraftRemaining);
+            aborted = Math.Min(Math.Max(0, aborted), AircraftRemaining - shotDown);
             AircraftRemaining -= shotDown;
-            ReadyAircraft = Math.Min(ReadyAircraft, AircraftRemaining);
-            AbortedAircraft += Math.Min(Math.Max(0, aborted), AircraftRemaining - AbortedAircraft);
+            ReadyAircraft = defensiveMission
+                ? Math.Max(0, Math.Min(AircraftRemaining, ReadyAircraft - shotDown - aborted))
+                : Math.Min(ReadyAircraft, AircraftRemaining);
+            AbortedAircraft += Math.Min(aborted, AircraftRemaining - AbortedAircraft);
             if (AircraftRemaining == 0) Mission = TacticalAirMission.Destroyed;
-            else if (aborted > 0 && Mission != TacticalAirMission.Cap) Mission = TacticalAirMission.Aborted;
+            else if (defensiveMission && ReadyAircraft > 0) { }
+            else if (aborted > 0) Mission = TacticalAirMission.Aborted;
         }
 
         public void ReturnAborted(int aircraft)

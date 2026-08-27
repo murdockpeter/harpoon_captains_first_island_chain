@@ -23,6 +23,7 @@ static class Program
             ScenarioSevenRoute();
             ScenarioEightRoute();
             ScenarioNineRoute();
+            ScenarioTenRoute();
             ReleaseVersionRoute();
             Console.WriteLine($"HARPOON CORE VALIDATION PASSED: {_checks} checks; scripted movement, missile, gunfire, scoring, stopping, and replay routes complete.");
             return 0;
@@ -825,6 +826,153 @@ static class Program
               turnLimit.State.EndReason == ScenarioEndReason.TurnLimit &&
               turnLimit.State.Result == "US NAVY VICTORY",
             "Fewer than three escapes after Turn 15 gives Scenario 9 victory to the US");
+    }
+
+    private static void ScenarioTenRoute()
+    {
+        var definition = FirstIslandChainScenarios.FirstLight;
+        var game = new ScenarioOneGame(1010, null, true, false, new SequenceDieRoller(1, 1), definition);
+        Check(game.State.MaximumTurns == 12 && game.State.Forces.Count == 3 &&
+              game.State.Unit("us-ford") != null && game.State.Unit("plan-type-093b-first-light-2") != null,
+            "Scenario 10 printed carrier group, two Type 093B submarines, and twelve-turn limit");
+        Check(game.State.TacticalFlights.Count == 15 && game.State.AirBases.Count == 2 &&
+              game.State.TacticalFlights.Count(item => item.Side == Side.UsNavy) == 12,
+            "Scenario 10 carrier wing and Ningbo tactical-flight pools");
+        Check(ModernTacticalAircraftDatabase.Get("us-f35c").Radius == 10 &&
+              ModernTacticalAircraftDatabase.Get("plan-h6j").LongAsm == 5 &&
+              ModernAirBaseDatabase.Get("plan-ningbo").LongSam == 10 &&
+              ModernAirBaseDatabase.Get("us-ford-wing").FlightCapacity == 14,
+            "Scenario 10 modernized tactical aircraft, base defenses, and deck capacity");
+        Check(CombatTables.AirToAirHits(2) == 0 && CombatTables.AirToAirHits(3) == 1 &&
+              CombatTables.AirToAirHits(7) == 1 && CombatTables.AirToAirHits(8) == 2,
+            "Complete printed air-to-air modified-result table");
+        Check(game.Execute(new GameCommand(GameCommandType.AssignCap, Side.UsNavy, game.State.Revision,
+                sourceUnitId: "FORD-F35-1", enabled: true)).Accepted &&
+              game.State.TacticalFlight("FORD-F35-1").Mission == TacticalAirMission.Cap,
+            "Full ready fighter flight declares persistent radar CAP before first chit");
+        Check(game.Execute(new GameCommand(GameCommandType.AssignDeckInterceptor, Side.UsNavy, game.State.Revision,
+                sourceUnitId: "FORD-F35-2")).Accepted &&
+              game.State.TacticalFlight("FORD-F35-2").Mission == TacticalAirMission.DeckInterceptor,
+            "Full ready carrier fighter flight declares DLI before first chit");
+        var mirror = new ScenarioOneGame(1, null, true);
+        mirror.ApplySnapshot(game.CaptureSnapshot());
+        Check(mirror.State.Scenario.Id == "fic-10" &&
+              mirror.State.TacticalFlight("FORD-F35-1").Mission == TacticalAirMission.Cap &&
+              mirror.State.TacticalFlight("FORD-F35-2").Mission == TacticalAirMission.DeckInterceptor,
+            "Scenario 10 save/network snapshot retains flight missions and radar state");
+        var planProjection = game.CaptureSnapshotFor(Side.Plan);
+        var hiddenUsCap = planProjection.tacticalFlights.Single(item => item.id == "FORD-F35-1");
+        Check(hiddenUsCap.mission == TacticalAirMission.Ready && !hiddenUsCap.radarOn &&
+              hiddenUsCap.flownAircraft == 0,
+            "Scenario 10 side-private snapshot hides opposing CAP, DLI, and sortie state");
+
+        var rolls = Enumerable.Repeat(1, 20).Concat(new[] { 6, 6 }).ToArray();
+        var bombing = new ScenarioOneGame(1011, null, true, false, new SequenceDieRoller(rolls), definition);
+        var strikeState = bombing.CaptureSnapshot();
+        strikeState.activeSide = Side.UsNavy;
+        strikeState.activeFormationId = "US Ford Strike Group";
+        strikeState.phase = ActivationPhase.PlayerAction;
+        var fordForce = strikeState.formations.Single(item => item.id == "US Ford Strike Group");
+        fordForce.declaredSpeed = 0;
+        bombing.ApplySnapshot(strikeState);
+        var strike = bombing.Execute(new GameCommand(GameCommandType.LaunchTacticalStrike, Side.UsNavy,
+            bombing.State.Revision, factors: 1, targetId: "plan-ningbo", sourceUnitId: "FORD-F18-1",
+            searchMode: TacticalWeapon.Bombs.ToString()));
+        Check(strike.Accepted && bombing.State.LastTacticalStrike.AircraftLaunched == 1 &&
+              bombing.State.LastTacticalStrike.RunwayHits == 4,
+            $"Bomb strike follows LR/SR aircraft defenses, omits point defense, and damages runway " +
+            $"(accepted={strike.Accepted}, summary={strike.Summary}, runway={bombing.State.LastTacticalStrike?.RunwayHits})");
+        Check(bombing.State.TacticalFlight("FORD-F18-1").Mission == TacticalAirMission.Flown &&
+              !bombing.Execute(new GameCommand(GameCommandType.LaunchTacticalStrike, Side.UsNavy,
+                  bombing.State.Revision, factors: 1, targetId: "plan-ningbo", sourceUnitId: "FORD-F18-1",
+                  searchMode: TacticalWeapon.Bombs.ToString())).Accepted,
+            "A tactical aircraft attacks only once per turn and returns to its base pool");
+        var bombMirror = new ScenarioOneGame(1, null, true);
+        bombMirror.ApplySnapshot(bombing.CaptureSnapshot());
+        Check(bombMirror.State.AirBase("plan-ningbo").RunwayHits == 4 &&
+              bombMirror.State.TacticalFlight("FORD-F18-1").Mission == TacticalAirMission.Flown,
+            "Runway damage and flown aircraft survive save/network synchronization");
+
+        var capDice = new[] { 1, 5 }.Concat(Enumerable.Repeat(1, 24)).ToArray();
+        var capDefense = new ScenarioOneGame(10115, null, true, false,
+            new SequenceDieRoller(capDice), definition);
+        Check(capDefense.Execute(new GameCommand(GameCommandType.AssignCap, Side.Plan,
+            capDefense.State.Revision, sourceUnitId: "NINGBO-J16-1", enabled: true)).Accepted,
+            "PLAN declares a persistent Ningbo CAP");
+        var capState = capDefense.CaptureSnapshot();
+        capState.activeSide = Side.UsNavy;
+        capState.activeFormationId = "US Ford Strike Group";
+        capState.phase = ActivationPhase.PlayerAction;
+        capState.formations.Single(item => item.id == "US Ford Strike Group").declaredSpeed = 0;
+        capDefense.ApplySnapshot(capState);
+        var capStrike = capDefense.Execute(new GameCommand(GameCommandType.LaunchTacticalStrike,
+            Side.UsNavy, capDefense.State.Revision, factors: 1, targetId: "plan-ningbo",
+            sourceUnitId: "FORD-F35-1", searchMode: TacticalWeapon.LongAsm.ToString()));
+        Check(capStrike.Accepted && capDefense.State.LastTacticalStrike.MissileFactors == 2 &&
+              capDefense.State.LastTacticalStrike.MissileFactorsIntercepted >= 2 &&
+              capDefense.State.Transactions.Any(item => item.Detail.Contains("Defense 0")),
+            "Persistent CAP attacks tactical aircraft and then air-launched missiles at Defense zero");
+
+        var detection = new ScenarioOneGame(10116, null, true, false,
+            new SequenceDieRoller(6, 6), definition);
+        var detectionState = detection.CaptureSnapshot();
+        detectionState.activeSide = Side.UsNavy;
+        detectionState.activeFormationId = "US Ford Strike Group";
+        detectionState.phase = ActivationPhase.PlayerAction;
+        detectionState.formations.Single(item => item.id == "US Ford Strike Group").declaredSpeed = 0;
+        detection.ApplySnapshot(detectionState);
+        var hiddenStrike = detection.Execute(new GameCommand(GameCommandType.LaunchTacticalStrike,
+            Side.UsNavy, detection.State.Revision, factors: 1, targetId: "PLAN Type 093B 1",
+            sourceUnitId: "FORD-F35-1", formationId: "plan-type-093b-first-light-1",
+            searchMode: TacticalWeapon.LongAsm.ToString()));
+        Check(!hiddenStrike.Accepted && hiddenStrike.Violation.Code == RuleViolationCode.TargetUndetected,
+            "Tactical strike against a formation requires a friendly detection");
+        detection.State.Detection.Detect(Side.UsNavy, detection.State.Formation("PLAN Type 093B 1"),
+            DetectionMethod.Esm, detection.State.Turn);
+        var detectedStrike = detection.Execute(new GameCommand(GameCommandType.LaunchTacticalStrike,
+            Side.UsNavy, detection.State.Revision, factors: 1, targetId: "PLAN Type 093B 1",
+            sourceUnitId: "FORD-F35-1", formationId: "plan-type-093b-first-light-1",
+            searchMode: TacticalWeapon.LongAsm.ToString()));
+        Check(detectedStrike.Accepted && detection.State.Unit("plan-type-093b-first-light-1").IsSunk,
+            "Detected tactical target accepts air-launched ASM and normal impact damage");
+
+        var arrival = new ScenarioOneGame(1012, null, true, false, null, definition);
+        var arrivalState = arrival.CaptureSnapshot();
+        arrivalState.activeSide = Side.UsNavy;
+        arrivalState.activeFormationId = "US Ford Strike Group";
+        arrivalState.phase = ActivationPhase.PlayerAction;
+        arrivalState.remainingChits = Array.Empty<MovementChitData>();
+        arrivalState.formations.Single(item => item.id == "US Ford Strike Group").column = 4;
+        arrivalState.formations.Single(item => item.id == "US Ford Strike Group").row = 6;
+        arrivalState.formations.Single(item => item.id == "US Ford Strike Group").declaredSpeed = 0;
+        arrival.ApplySnapshot(arrivalState);
+        var arrivalResult = arrival.Execute(new GameCommand(GameCommandType.EndActivation, Side.UsNavy,
+                arrival.State.Revision));
+        Check(arrivalResult.Accepted && arrival.State.Result == "US NAVY VICTORY" &&
+              arrival.State.EndReason == ScenarioEndReason.DestinationReached,
+            $"Launch-capable Ford within two hexes of 0206 wins First Light (accepted={arrivalResult.Accepted}, " +
+            $"summary={arrivalResult.Summary}, result={arrival.State.Result}, reason={arrival.State.EndReason}, " +
+            $"distance={arrival.State.Formation("US Ford Strike Group").Position.DistanceTo(definition.CarrierObjectiveHex)}, " +
+            $"canLaunch={arrival.State.Unit("us-ford").CanLaunchAircraft}, cup={arrival.State.MovementCup.Remaining.Count})");
+
+        var missionKill = new ScenarioOneGame(1013, null, true, false, null, definition);
+        var finalState = missionKill.CaptureSnapshot();
+        finalState.turn = 12;
+        finalState.activeSide = Side.UsNavy;
+        finalState.activeFormationId = "US Ford Strike Group";
+        finalState.phase = ActivationPhase.PlayerAction;
+        finalState.remainingChits = Array.Empty<MovementChitData>();
+        var finalFord = finalState.formations.Single(item => item.id == "US Ford Strike Group");
+        finalFord.column = 4;
+        finalFord.row = 6;
+        finalFord.declaredSpeed = 0;
+        finalState.units.Single(item => item.id == "us-ford").hullDamage = 3;
+        missionKill.ApplySnapshot(finalState);
+        Check(!missionKill.State.Unit("us-ford").CanLaunchAircraft &&
+              missionKill.Execute(new GameCommand(GameCommandType.EndActivation, Side.UsNavy,
+                  missionKill.State.Revision)).Accepted && missionKill.State.Result == "PLAN VICTORY" &&
+              missionKill.State.EndReason == ScenarioEndReason.TurnLimit,
+            "Half-damaged launch-prohibited Ford cannot satisfy the objective at the Turn 12 limit");
     }
 
     private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,

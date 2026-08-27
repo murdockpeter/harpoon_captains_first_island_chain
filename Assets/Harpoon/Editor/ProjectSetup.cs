@@ -131,9 +131,10 @@ namespace Harpoon.Editor
             ValidateScenarioSevenRelease();
             ValidateScenarioEightRelease();
             ValidateScenarioNineRelease();
+            ValidateScenarioTenRelease();
 
             ValidateLoopbackTransport();
-            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-9 including hidden contacts, dummy deception, undersea combat, convoy arrival, carrier escape, patrol aircraft, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
+            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-10 including tactical air, hidden contacts, dummy deception, undersea combat, convoy arrival, carrier objectives, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
         }
 
         public static void BuildWindowsPlayer()
@@ -538,6 +539,33 @@ namespace Harpoon.Editor
                     ScenarioOneGame.IsLegalDeploymentHex(game.State.Scenario, game.State.Map,
                         Side.UsNavy, new HexCoord(15, 20)),
                 "Scenario 9 must enforce Xiamen-centered setup distances.");
+        }
+
+        private static void ValidateScenarioTenRelease()
+        {
+            var game = new ScenarioOneGame(1010, null, true, false, null,
+                FirstIslandChainScenarios.FirstLight);
+            Require(game.State.MaximumTurns == 12 && game.State.Forces.Count == 3 &&
+                    game.State.TacticalFlights.Count == 15 && game.State.AirBases.Count == 2,
+                "Scenario 10 must load Ford, two Type 093Bs, fifteen tactical flights, two active bases, and twelve turns.");
+            Require(ModernTacticalAircraftDatabase.Get("us-f35c").Radius == 10 &&
+                    ModernTacticalAircraftDatabase.Get("plan-h6j").LongAsm == 5 &&
+                    ModernAirBaseDatabase.Get("us-ford-wing").FlightCapacity == 14 &&
+                    ModernAirBaseDatabase.Get("plan-ningbo").LongSam == 10,
+                "Scenario 10 tactical aircraft, deck capacity, and Ningbo defenses must match the supplement.");
+            Require(CombatTables.AirToAirHits(2) == 0 && CombatTables.AirToAirHits(3) == 1 &&
+                    CombatTables.AirToAirHits(7) == 1 && CombatTables.AirToAirHits(8) == 2,
+                "Scenario 10 must use every printed Air-to-Air table boundary.");
+            Require(game.Execute(new GameCommand(GameCommandType.AssignCap, Side.UsNavy,
+                    game.State.Revision, sourceUnitId: "FORD-F35-1", enabled: true)).Accepted &&
+                    game.Execute(new GameCommand(GameCommandType.AssignDeckInterceptor, Side.UsNavy,
+                        game.State.Revision, sourceUnitId: "FORD-F35-2")).Accepted,
+                "Scenario 10 must accept pre-chit carrier CAP and DLI declarations.");
+            var mirror = new ScenarioOneGame(1, null, true);
+            mirror.ApplySnapshot(game.CaptureSnapshot());
+            Require(mirror.State.TacticalFlight("FORD-F35-1").Mission == TacticalAirMission.Cap &&
+                    mirror.State.TacticalFlight("FORD-F35-2").Mission == TacticalAirMission.DeckInterceptor,
+                "Scenario 10 snapshots must preserve tactical defensive missions.");
         }
 
         private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,

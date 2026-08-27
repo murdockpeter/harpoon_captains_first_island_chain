@@ -174,6 +174,27 @@ namespace Harpoon.Runtime
             return missile;
         }
 
+        public static GameObject CreateTacticalJet(Color sideColor)
+        {
+            var root = new GameObject("Tactical Strike Aircraft");
+            var body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            body.name = "Jet Fuselage";
+            body.transform.SetParent(root.transform);
+            body.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            body.transform.localScale = new Vector3(0.11f, 0.38f, 0.11f);
+            body.GetComponent<Renderer>().sharedMaterial = Material(Color.Lerp(Color.white, sideColor, 0.38f), 0.55f, 0.72f);
+            AddBox(root.transform, "Delta Wings", new Vector3(0f, 0f, -0.04f),
+                new Vector3(0.72f, 0.035f, 0.34f), Color.Lerp(sideColor, Color.white, 0.28f));
+            AddBox(root.transform, "Tail", new Vector3(0f, 0.12f, -0.3f),
+                new Vector3(0.28f, 0.22f, 0.04f), sideColor);
+            var trail = root.AddComponent<TrailRenderer>();
+            trail.time = 0.65f;
+            trail.startWidth = 0.055f;
+            trail.endWidth = 0.008f;
+            trail.material = Material(new Color(0.68f, 0.84f, 0.95f, 0.7f), 0f, 0f);
+            return root;
+        }
+
         private static void CreateShip(Transform parent, Vector3 localPosition, float scale,
             Color color, bool amphibious, bool carrier)
         {
