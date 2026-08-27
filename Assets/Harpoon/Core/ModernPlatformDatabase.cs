@@ -61,7 +61,7 @@ namespace Harpoon.Core
             ShortSsm, LongSsm, Guns, Speed, Hull, AirSearchRadar, SurfaceSearchRadar, Sonar,
             AntiSubmarineWarfare, esmEquipped: esmEquippedOverride ?? Domain != PlatformDomain.Auxiliary,
             isAircraftCarrier: LaunchesAircraft,
-            torpedoes: Torpedoes);
+            torpedoes: Torpedoes, isSubmarine: Domain == PlatformDomain.Submarine);
     }
 
     public static class ModernPlatformDatabase

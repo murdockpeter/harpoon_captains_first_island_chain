@@ -43,6 +43,8 @@ namespace Harpoon.Runtime
         private readonly Dictionary<string, int> _longRangeRemovalDraft = new Dictionary<string, int>();
         private readonly Dictionary<string, string> _shortRangeDefenseDraft = new Dictionary<string, string>();
         private readonly List<GunPairData> _gunPairDraft = new List<GunPairData>();
+        private string _underseaTargetUnitId = string.Empty;
+        private bool _preferSubmarineSsm;
         private string _pairSelection = string.Empty;
         private string _combatDraftMarker = string.Empty;
         private int _lastDebugCount;
@@ -161,7 +163,7 @@ namespace Harpoon.Runtime
                 var tile = hit.collider.GetComponent<HexTileView>();
                 if (tile != null)
                 {
-                    if (_placingPlanDeployment) DeployPlanFormation(tile.Coordinate);
+                    if (_placingPlanDeployment) DeployFormation(tile.Coordinate);
                     else TryLocalMove(tile.Coordinate);
                     RefreshViews();
                 }
@@ -182,6 +184,9 @@ namespace Harpoon.Runtime
             _pendingCommands.Clear();
             _game = new ScenarioOneGame(_matchSeed, null, _sessionMode != SessionMode.SinglePlayer,
                 _detectionTestMode, null, _selectedScenario);
+            _placingPlanDeployment = false;
+            _planDeploymentFormationId = _game.State.Forces.FirstOrDefault(force =>
+                _selectedScenario.HasDeploymentZones ? force.Side == LocalSide : force.Side == Side.Plan)?.Id ?? string.Empty;
             _game.AttackResolved += OnAttackResolved;
             _game.CommandProcessed += OnCommandProcessed;
             _selectedFormation = LocalSide;
@@ -289,20 +294,22 @@ namespace Harpoon.Runtime
             if (IsHostSession) BroadcastSnapshot();
         }
 
-        private void DeployPlanFormation(HexCoord destination)
+        private void DeployFormation(HexCoord destination)
         {
-            var command = new GameCommand(GameCommandType.DeployFormation, Side.Plan,
+            var formation = _game.State.Formation(_planDeploymentFormationId);
+            if (formation == null) return;
+            var command = new GameCommand(GameCommandType.DeployFormation, formation.Side,
                 _game.State.Revision, destination, formationId: _planDeploymentFormationId);
             if (IsClientSession)
             {
                 _pendingCommands[command.Id] = command;
                 NetworkSend(new NetworkMessage { kind = "command", command = command.ToData() });
-                _status = "PLAN deployment request sent to host.";
+                _status = $"{SideLabel(formation.Side)} deployment request sent to host.";
             }
             else
             {
                 var result = _game.Execute(command);
-                _status = result.Accepted ? "PLAN picket deployed. Its position remains hidden from the US player."
+                _status = result.Accepted ? $"{formation.Id} deployed to {destination}."
                     : result.Summary;
                 if (result.Accepted && IsHostSession) BroadcastSnapshot();
             }
@@ -354,9 +361,9 @@ namespace Harpoon.Runtime
 
         private void SearchLocal(string mode, TaskForceState target)
         {
-            if (target == null) return;
+            if (target == null && !string.Equals(mode, "sonar", StringComparison.OrdinalIgnoreCase)) return;
             var command = new GameCommand(GameCommandType.Search, LocalSide, _game.State.Revision,
-                targetId: target.Id, formationId: _game.State.ActiveFormationId, searchMode: mode);
+                targetId: target?.Id, formationId: _game.State.ActiveFormationId, searchMode: mode);
             if (IsClientSession)
             {
                 _pendingCommands[command.Id] = command;
@@ -365,11 +372,18 @@ namespace Harpoon.Runtime
                 return;
             }
             var result = _game.Execute(command);
+            if (target == null)
+            {
+                _status = result.Accepted ? "SONAR search resolved; consult the contact report." : result.Summary;
+                RefreshViews();
+                if (IsHostSession) BroadcastSnapshot();
+                return;
+            }
             var contact = _game.State.Detection.ContactFor(LocalSide, target.Id);
             _status = result.Accepted
                 ? _game.State.Formation(target.Id) == null
                     ? $"FALSE CONTACT CLEARED by {mode.ToUpperInvariant()}."
-                    : contact.Level == ContactLevel.Located && target.Units.Count == 0
+                    : contact.Level == ContactLevel.Located
                         ? "NO SURFACE SHIPS PRESENT; sonar is required to clear the contact."
                         : contact.IsDetected ? $"CONTACT: {target.Id} classified by {mode.ToUpperInvariant()}."
                             : $"No {mode.ToUpperInvariant()} contact."
@@ -936,7 +950,10 @@ namespace Harpoon.Runtime
             foreach (var pair in _tiles)
             {
                 var terrain = _game.State.Map.TerrainAt(pair.Key);
-                var isLand = !_game.State.Map.IsNavigable(pair.Key, LocalSide);
+                var placementFormation = _placingPlanDeployment
+                    ? _game.State.Formation(_planDeploymentFormationId) : null;
+                var navigationSide = placementFormation?.Side ?? LocalSide;
+                var isLand = !_game.State.Map.IsNavigable(pair.Key, navigationSide);
                 var hovered = _hoveredHex.HasValue && _hoveredHex.Value == pair.Key;
                 var localForce = _game.State.ForceFor(LocalSide);
                 var movable = CanLocalAct() && _game.State.Phase == ActivationPhase.PlayerMove && !isLand &&
@@ -944,25 +961,32 @@ namespace Harpoon.Runtime
                 var deployable = _placingPlanDeployment && IsLegalPlanDeployment(pair.Key);
                 var convoyDestination = _game.State.Scenario.HasUsDestination &&
                     pair.Key == _game.State.Scenario.UsDestination;
+                var submarinePatrolZone = _game.State.Scenario.Id == "fic-06" &&
+                    Enumerable.Range(8, 5).Min(column => pair.Key.DistanceTo(new HexCoord(column, 12))) <= 2;
+                var easternEntry = _game.State.Scenario.Id == "fic-06" && pair.Key.Column == 15;
+                var lifelineAssembly = _game.State.Scenario.Id == "fic-07" &&
+                    pair.Key.DistanceTo(_game.State.Scenario.DeploymentCenter) <=
+                    _game.State.Scenario.UsDeploymentRadius;
                 pair.Value.GetComponent<Renderer>().material.color = isLand
                     ? hovered ? new Color(0.7f, 0.66f, 0.3f)
                     : terrain == TerrainType.NavalBase ? new Color(0.34f, 0.4f, 0.24f) : new Color(0.42f, 0.43f, 0.22f)
                     : deployable ? (hovered ? new Color(0.8f, 0.32f, 0.92f) : new Color(0.38f, 0.12f, 0.52f))
                     : convoyDestination ? (hovered ? new Color(0.3f, 1f, 0.62f) : new Color(0.05f, 0.55f, 0.34f))
                     : hovered ? new Color(0.12f, 0.72f, 0.8f)
-                    : movable ? new Color(0.04f, 0.48f, 0.58f) : new Color(0.025f, 0.25f, 0.37f);
+                    : movable ? new Color(0.04f, 0.48f, 0.58f)
+                    : easternEntry ? new Color(0.05f, 0.38f, 0.5f)
+                    : submarinePatrolZone ? new Color(0.13f, 0.22f, 0.43f)
+                    : lifelineAssembly ? new Color(0.04f, 0.34f, 0.32f)
+                    : new Color(0.025f, 0.25f, 0.37f);
             }
             UpdateMovementPreview();
         }
 
         private bool IsLegalPlanDeployment(HexCoord hex)
         {
-            if (_game.State.Scenario.PlanDeploymentMinimumDistance <= 0 ||
-                !_game.State.Map.IsNavigable(hex, Side.Plan)) return false;
-            var subic = _game.State.Map.Bases.First(item => item.Id == "us-subic").Position;
-            var taipei = _game.State.Map.Bases.First(item => item.Id == "us-taipei").Position;
-            return hex.DistanceTo(subic) > _game.State.Scenario.PlanDeploymentMinimumDistance &&
-                   hex.DistanceTo(taipei) > _game.State.Scenario.PlanDeploymentMinimumDistance;
+            var formation = _game.State.Formation(_planDeploymentFormationId);
+            return formation != null && ScenarioOneGame.IsLegalDeploymentHex(_game.State.Scenario,
+                _game.State.Map, formation.Side, hex);
         }
 
         private void UpdateMovementPreview()
@@ -1004,7 +1028,10 @@ namespace Harpoon.Runtime
             if (_game == null || _playerMarker == null) return;
             foreach (var force in _game.State.Forces)
             {
-                var markerShipCount = force.Units.Count == 0 ? 0 : Mathf.Clamp(force.ActiveUnits.Count(), 1, 4);
+                var classified = force.Side == LocalSide || !_game.State.DetectionRulesEnabled ||
+                    _game.State.Detection.IsClassified(LocalSide, force.Id);
+                var markerShipCount = !classified ? 0 : force.IsSubmarineOnly ? -1 :
+                    force.Units.Count == 0 ? 0 : Mathf.Clamp(force.ActiveUnits.Count(), 1, 4);
                 if (_formationMarkers.TryGetValue(force.Id, out var staleMarker) &&
                     (!_formationMarkerShipCounts.TryGetValue(force.Id, out var priorCount) ||
                      priorCount != markerShipCount))
@@ -1020,7 +1047,8 @@ namespace Harpoon.Runtime
                         unit.Definition.DisplayName.Contains("Merchant"));
                     marker = markerShipCount == 0
                         ? VisualFactory.CreateContactMarker(force.Id, color)
-                        : VisualFactory.CreateFormation(force.Id, color, amphibious, markerShipCount);
+                        : markerShipCount < 0 ? VisualFactory.CreateSubmarine(force.Id, color)
+                            : VisualFactory.CreateFormation(force.Id, color, amphibious, markerShipCount);
                     marker.gameObject.AddComponent<FormationView>().Initialize(force.Side, force.Id);
                     _formationMarkers[force.Id] = marker;
                     _formationMarkerShipCounts[force.Id] = markerShipCount;
@@ -1028,7 +1056,7 @@ namespace Harpoon.Runtime
                 var knownContact = force.Side == LocalSide || !_game.State.DetectionRulesEnabled ||
                     _game.State.Detection.IsDetected(LocalSide, force.Id);
                 marker.position = WorldPosition(force.Position) + Vector3.up * (force.IsDestroyed ? 0.38f : 0.75f);
-                marker.gameObject.SetActive(knownContact);
+                marker.gameObject.SetActive(knownContact && !force.HasArrived);
                 var selected = force.Id == _selectedFormationId;
                 var active = force.Id == _game.State.ActiveFormationId;
                 marker.localScale = Vector3.one * (selected ? 1.18f : active ? 1.1f : 0.92f);
@@ -1046,13 +1074,18 @@ namespace Harpoon.Runtime
 
         private bool IsLegalAttackTarget(TaskForceState target)
         {
-            if (target == null || target.Side == LocalSide || target.IsDestroyed || !CanLocalAct()) return false;
+            if (target == null || target.Side == LocalSide || target.IsDestroyed || target.HasArrived || !CanLocalAct()) return false;
             if (_game.State.Phase != ActivationPhase.PlayerMove &&
                 _game.State.Phase != ActivationPhase.PlayerAction) return false;
             if (_game.State.PlayerHasAttacked) return false;
             if (_game.State.DetectionRulesEnabled && !_game.State.Detection.IsClassified(LocalSide, target.Id)) return false;
             var attacker = _game.State.ForceFor(LocalSide);
             var range = attacker.Position.DistanceTo(target.Position);
+            if (range == 0 && attacker.IsSubmarineOnly)
+                return attacker.ActiveUnits.Any(unit => target.IsSubmarineOnly
+                    ? unit.EffectiveAntiSubmarineWarfare > 0 : unit.EffectiveTorpedoes > 0);
+            if (target.IsSubmarineOnly)
+                return range == 0 && attacker.ActiveUnits.Any(unit => unit.EffectiveAntiSubmarineWarfare > 0);
             var missile = attacker.ActiveUnits.Any(unit =>
                 (range <= 1 && unit.AvailableShortSsm > 0) ||
                 (range <= 3 && unit.AvailableLongSsm > 0));
@@ -1508,16 +1541,28 @@ namespace Harpoon.Runtime
             var oldColor = GUI.color;
             GUI.color = new Color(0.28f, 0.78f, 1f);
             var scoreTitle = scoringMode == ScenarioScoringMode.ConvoyArrival ? "CONVOY STATUS" :
+                scoringMode == ScenarioScoringMode.ConvoySurvival ? "LIFELINE STATUS" :
                 scoringMode == ScenarioScoringMode.TotalHullHits ? "HULL HITS INFLICTED" :
-                scoringMode == ScenarioScoringMode.GunfireHullHits ? "GUNFIRE HITS" : "OBJECTIVE DAMAGE";
+                scoringMode == ScenarioScoringMode.GunfireHullHits ? "GUNFIRE HITS" :
+                scoringMode == ScenarioScoringMode.SubmarineSurvival ? "SUBMARINE CAMPAIGN" : "OBJECTIVE DAMAGE";
             var scoreText = scoringMode == ScenarioScoringMode.ConvoyArrival
                 ? $"{scoreTitle}    ARRIVED {score.UsObjectiveDamage}   ·   LOST {score.PlanObjectiveDamage}"
+                : scoringMode == ScenarioScoringMode.ConvoySurvival
+                    ? $"{scoreTitle}    ARRIVED {score.UsObjectiveDamage}   ·   LOST {score.PlanObjectiveDamage}   ·   SUBS SUNK {score.UsTieBreakDamage}"
+                : scoringMode == ScenarioScoringMode.SubmarineSurvival
+                    ? $"{scoreTitle}    PLAN SUB LOSSES {score.UsObjectiveDamage}   ·   US SHIP LOSSES {score.PlanObjectiveDamage}"
                 : $"{scoreTitle}    US {score.UsObjectiveDamage}   -   PLAN {score.PlanObjectiveDamage}";
             GUILayout.Label(scoreText,
                 _cardHeaderStyle);
             GUI.color = oldColor;
             if (scoringMode == ScenarioScoringMode.ObjectiveThenEscort)
                 GUILayout.Label($"Escort tie-break: US {score.UsTieBreakDamage}   -   PLAN {score.PlanTieBreakDamage}", _cardStatStyle);
+            if (scoringMode == ScenarioScoringMode.SubmarineSurvival)
+                GUILayout.Label($"Adjusted PLAN losses after offsets: {score.UsTieBreakDamage} · PLAN needs adjusted survival of 2/3",
+                    _cardStatStyle);
+            if (scoringMode == ScenarioScoringMode.ConvoySurvival)
+                GUILayout.Label($"QUALIFYING TOTAL   {score.UsObjectiveDamage + score.PlanTieBreakDamage}/3 · " +
+                    $"SUBMARINE OFFSETS APPLIED {score.PlanTieBreakDamage}", _cardStatStyle);
             if (!_game.State.IsGameOver)
             {
                 GUILayout.BeginHorizontal();
@@ -1550,9 +1595,45 @@ namespace Harpoon.Runtime
             DrawDummyControls();
             DrawSpeedDeclaration();
             GUILayout.Space(6f);
+            var activeForce = _game.State.ForceFor(LocalSide);
             var actionPhase = _game.State.Phase == ActivationPhase.PlayerMove ||
                               _game.State.Phase == ActivationPhase.PlayerAction;
             var legalTargets = _game.State.Forces.Where(IsLegalAttackTarget).ToArray();
+            var selectedTarget = _game.State.Formation(_selectedFormationId);
+            var attackTarget = selectedTarget != null && legalTargets.Contains(selectedTarget)
+                ? selectedTarget : legalTargets.Length == 1 ? legalTargets[0] : null;
+            if (!activeForce.IsSubmarineOnly || attackTarget?.IsSubmarineOnly == true)
+                _preferSubmarineSsm = false;
+            if (activeForce.IsSubmarineOnly && attackTarget != null && !attackTarget.IsSubmarineOnly &&
+                activeForce.Position == attackTarget.Position)
+            {
+                if (activeForce.ActiveUnits.Any(unit => unit.AvailableShortSsm > 0 || unit.AvailableLongSsm > 0))
+                {
+                    GUILayout.Label("SUBMARINE WEAPON", _cardHeaderStyle);
+                    GUILayout.BeginHorizontal();
+                    var priorWeaponColor = GUI.backgroundColor;
+                    if (!_preferSubmarineSsm) GUI.backgroundColor = new Color(0.62f, 0.18f, 0.16f);
+                    if (GUILayout.Button("TORPEDO", _buttonStyle)) _preferSubmarineSsm = false;
+                    GUI.backgroundColor = priorWeaponColor;
+                    if (_preferSubmarineSsm) GUI.backgroundColor = new Color(0.72f, 0.42f, 0.12f);
+                    if (GUILayout.Button("SSM", _buttonStyle)) _preferSubmarineSsm = true;
+                    GUI.backgroundColor = priorWeaponColor;
+                    GUILayout.EndHorizontal();
+                }
+                var activeTargetIds = new HashSet<string>(attackTarget.ActiveUnits.Select(unit => unit.Definition.Id));
+                if (!activeTargetIds.Contains(_underseaTargetUnitId))
+                    _underseaTargetUnitId = attackTarget.ActiveUnits.First().Definition.Id;
+                GUILayout.Label("TORPEDO TARGET", _cardHeaderStyle);
+                foreach (var unit in attackTarget.ActiveUnits)
+                {
+                    var priorTargetColor = GUI.backgroundColor;
+                    if (unit.Definition.Id == _underseaTargetUnitId)
+                        GUI.backgroundColor = new Color(0.75f, 0.24f, 0.18f);
+                    if (GUILayout.Button(unit.Definition.DisplayName.ToUpperInvariant(), _buttonStyle))
+                        _underseaTargetUnitId = unit.Definition.Id;
+                    GUI.backgroundColor = priorTargetColor;
+                }
+            }
             var prior = GUI.backgroundColor;
             GUI.backgroundColor = new Color(0.78f, 0.24f, 0.16f);
             GUI.enabled = CanLocalAct() && actionPhase && !_game.State.PlayerHasAttacked && legalTargets.Length > 0;
@@ -1561,18 +1642,25 @@ namespace Harpoon.Runtime
                 "ATTACK SELECTED RED-RINGED TARGET";
             if (GUILayout.Button(attackLabel, _buttonStyle))
             {
-                var selectedTarget = _game.State.Formation(_selectedFormationId);
-                var targetFormationId = selectedTarget != null && legalTargets.Contains(selectedTarget)
-                    ? selectedTarget.Id : legalTargets.Length == 1 ? legalTargets[0].Id : null;
+                var targetFormationId = attackTarget?.Id;
+                var torpedoes = !_preferSubmarineSsm && activeForce.IsSubmarineOnly && attackTarget != null &&
+                    !attackTarget.IsSubmarineOnly && activeForce.Position == attackTarget.Position
+                    ? activeForce.ActiveUnits.Where(unit => unit.EffectiveTorpedoes > 0).Select((unit, index) =>
+                        new MissileAllocationData { id = $"TORP-{index + 1}", sourceUnitId = unit.Definition.Id,
+                            targetUnitId = _underseaTargetUnitId, shortFactors = unit.EffectiveTorpedoes }).ToArray()
+                    : Array.Empty<MissileAllocationData>();
+                var attackCommand = new GameCommand(GameCommandType.Attack, LocalSide,
+                    _game.State.Revision, targetId: targetFormationId, enabled: _preferSubmarineSsm,
+                    missileAllocations: torpedoes);
                 if (IsClientSession)
                 {
-                    SendCommand(GameCommandType.Attack, targetId: targetFormationId);
+                    _pendingCommands[attackCommand.Id] = attackCommand;
+                    NetworkSend(new NetworkMessage { kind = "command", command = attackCommand.ToData() });
                     _status = "Attack command sent to host.";
                 }
                 else
                 {
-                    var commandResult = _game.Execute(new GameCommand(GameCommandType.Attack,
-                        LocalSide, _game.State.Revision, targetId: targetFormationId));
+                    var commandResult = _game.Execute(attackCommand);
                     _status = commandResult.Accepted && _game.State.Phase == ActivationPhase.MissileCombat
                         ? "Missile engagement opened. Allocate factors to targets."
                         : commandResult.Accepted && _game.State.Phase == ActivationPhase.GunCombat
@@ -1583,7 +1671,6 @@ namespace Harpoon.Runtime
                 }
             }
             GUI.backgroundColor = new Color(0.18f, 0.56f, 0.34f);
-            var activeForce = _game.State.ForceFor(LocalSide);
             GUI.enabled = !_game.State.IsGameOver && CanLocalAct() &&
                           activeForce.DeclaredSpeed >= 0 && activeForce.MovementRemaining == 0;
             if (GUILayout.Button("END ACTIVATION", _buttonStyle))
@@ -1636,15 +1723,23 @@ namespace Harpoon.Runtime
         {
             GUILayout.Label("INTRODUCTORY SCENARIO", _cardStatStyle);
             GUILayout.BeginHorizontal();
-            foreach (var scenario in FirstIslandChainScenarios.Introductory)
+            var scenarios = FirstIslandChainScenarios.Introductory;
+            for (var scenarioIndex = 0; scenarioIndex < scenarios.Count; scenarioIndex++)
             {
+                if (scenarioIndex > 0 && scenarioIndex % 3 == 0)
+                {
+                    GUILayout.EndHorizontal();
+                    GUILayout.BeginHorizontal();
+                }
+                var scenario = scenarios[scenarioIndex];
                 var priorScenarioColor = GUI.backgroundColor;
                 if (scenario.Id == _game.State.Scenario.Id)
                     GUI.backgroundColor = new Color(0.12f, 0.58f, 0.78f);
                 GUI.enabled = !IsClientSession;
                 var scenarioLabel = scenario.Id == "fic-01" ? "1 BASHI" : scenario.Id == "fic-02"
                     ? "2 FLAGSHIP" : scenario.Id == "fic-03" ? "3 GUN" : scenario.Id == "fic-04"
-                        ? "4 PICKET" : "5 GHOST";
+                        ? "4 PICKET" : scenario.Id == "fic-05" ? "5 GHOST" : scenario.Id == "fic-06"
+                            ? "6 WOLVES" : "7 LIFELINE";
                 if (GUILayout.Button(scenarioLabel, _buttonStyle))
                 {
                     _selectedScenario = scenario;
@@ -1657,14 +1752,19 @@ namespace Harpoon.Runtime
             }
             GUILayout.EndHorizontal();
             GUILayout.Label(_game.State.Scenario.Name.ToUpperInvariant(), _cardHeaderStyle);
-            if (_game.State.Scenario.PlanDeploymentMinimumDistance > 0 &&
+            if ((_game.State.Scenario.PlanDeploymentMinimumDistance > 0 ||
+                 _game.State.Scenario.HasDeploymentZones) &&
                 _game.State.Phase == ActivationPhase.AwaitingChit && _game.State.MovementCup.FirstDrawPending)
             {
-                var mayDeploy = _sessionMode == SessionMode.HotSeat || LocalSide == Side.Plan;
+                var mayDeploy = _sessionMode == SessionMode.HotSeat ||
+                    (_game.State.Scenario.HasDeploymentZones || LocalSide == Side.Plan);
                 GUI.enabled = mayDeploy;
                 var priorDeployColor = GUI.backgroundColor;
                 GUI.backgroundColor = new Color(0.52f, 0.18f, 0.68f);
-                foreach (var formation in _game.State.Forces.Where(force => force.Side == Side.Plan))
+                var deploymentForces = _game.State.Scenario.HasDeploymentZones
+                    ? _game.State.Forces.Where(force => _sessionMode == SessionMode.HotSeat || force.Side == LocalSide)
+                    : _game.State.Forces.Where(force => force.Side == Side.Plan);
+                foreach (var formation in deploymentForces)
                 {
                     var candidate = formation;
                     var selectingThis = _placingPlanDeployment && _planDeploymentFormationId == candidate.Id;
@@ -1677,7 +1777,10 @@ namespace Harpoon.Runtime
                 }
                 GUI.backgroundColor = priorDeployColor;
                 GUI.enabled = true;
-                if (!mayDeploy) GUILayout.Label("Solo PLAN deployment is seeded and hidden.", _cardStatStyle);
+                if (_sessionMode == SessionMode.SinglePlayer && _game.State.Scenario.HasDeploymentZones)
+                    GUILayout.Label("PLAN deployment is seeded and hidden; US deployment remains adjustable before the first draw.", _cardStatStyle);
+                else if (!mayDeploy)
+                    GUILayout.Label("Solo PLAN deployment is seeded and hidden.", _cardStatStyle);
             }
             GUILayout.Space(7f);
             GUILayout.Label($"INSTALLED VERSION   {Application.version}", _cardStatStyle);
@@ -1791,7 +1894,9 @@ namespace Harpoon.Runtime
                     ? "DECISION REQUIRED - resolve the highlighted close-action stage."
                     : "WAITING - opponent is resolving close action.";
             if (_game.State.Phase == ActivationPhase.AwaitingChit)
-                return "DECISION REQUIRED - split now if desired, then draw a movement chit.";
+                return _game.State.Scenario.HasDeploymentZones
+                    ? "DECISION REQUIRED - adjust legal deployments, split if desired, then draw a movement chit."
+                    : "DECISION REQUIRED - split now if desired, then draw a movement chit.";
             if (_game.State.ActiveSide != LocalSide) return "WAITING - opposing formation is active.";
             if (_game.State.Phase == ActivationPhase.DeclareSpeed)
                 return _game.State.DetectionRulesEnabled && !_game.State.ForceFor(LocalSide).RadarDeclaredThisActivation
@@ -1825,6 +1930,10 @@ namespace Harpoon.Runtime
                     ? "Only hull hits caused by naval gunfire count. Missile damage still degrades ships but scores nothing. Equality is a draw."
                     : _game.State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival
                         ? "Reach the green Taipei / Zuoying destination with a merchant afloat, or destroy the PLAN picket. Both merchants sunk is a PLAN victory."
+                    : _game.State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival
+                        ? "Bring three merchants into the green Taipei / Zuoying port by turn ten. Each PLAN submarine sunk offsets one merchant loss."
+                    : _game.State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival
+                        ? "Keep an adjusted two of three PLAN submarines alive through turn seven; each two US ships sunk offsets one submarine loss."
                     : "Escort damage is the tie-break after objective damage; equality after both comparisons is a draw. No turn limit is printed.",
                 _cardStatStyle);
             GUILayout.Space(10f);
@@ -1920,8 +2029,13 @@ namespace Harpoon.Runtime
                 GUILayout.ExpandHeight(true));
 
             var score = _game.CurrentScore();
+            var objectiveSummary = _game.State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival
+                ? $"ARRIVED {score.UsObjectiveDamage} · LOST {score.PlanObjectiveDamage} · SUBS {score.UsTieBreakDamage}"
+                : _game.State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival
+                ? $"PLAN SUBS LOST {score.UsObjectiveDamage} · US SHIPS LOST {score.PlanObjectiveDamage}"
+                : $"US {score.UsObjectiveDamage} : {score.PlanObjectiveDamage} PLAN";
             if (DrawSectionHeader("VICTORY / OBJECTIVE",
-                    $"US {score.UsObjectiveDamage} : {score.PlanObjectiveDamage} PLAN",
+                    objectiveSummary,
                     new Color(0.08f, 0.48f, 0.68f), _showObjectiveSection))
                 _showObjectiveSection = !_showObjectiveSection;
             if (_showObjectiveSection)
@@ -2027,6 +2141,12 @@ namespace Harpoon.Runtime
             var score = _game.CurrentScore();
             if (_game.State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival)
                 GUILayout.Label($"Convoy result   arrived {score.UsObjectiveDamage}   |   merchants lost {score.PlanObjectiveDamage}", _labelStyle);
+            else if (_game.State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival)
+                GUILayout.Label($"Merchants arrived {score.UsObjectiveDamage} · lost {score.PlanObjectiveDamage} · " +
+                    $"PLAN submarines sunk {score.UsTieBreakDamage} · offsets {score.PlanTieBreakDamage}", _labelStyle);
+            else if (_game.State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival)
+                GUILayout.Label($"PLAN submarines lost {score.UsObjectiveDamage} · US ships lost {score.PlanObjectiveDamage} · " +
+                    $"adjusted PLAN losses {score.UsTieBreakDamage}", _labelStyle);
             else
             {
                 GUILayout.Label($"Score   US {score.UsObjectiveDamage}   |   PLAN {score.PlanObjectiveDamage}", _labelStyle);
@@ -2141,7 +2261,7 @@ namespace Harpoon.Runtime
             if (GUILayout.Button("VISUAL SEARCH", _buttonStyle)) SearchLocal("visual", visual);
             GUI.enabled = CanLocalAct() && !observer.IsDummyOnly && esm != null && observer.CanUseEsm;
             if (GUILayout.Button("ESM SEARCH", _buttonStyle)) SearchLocal("esm", esm);
-            GUI.enabled = CanLocalAct() && !observer.IsDummyOnly && sonar != null &&
+            GUI.enabled = CanLocalAct() && !observer.IsDummyOnly &&
                           observer.ActiveUnits.Any(unit => unit.EffectiveSonar > 0);
             if (GUILayout.Button("SONAR SEARCH", _buttonStyle)) SearchLocal("sonar", sonar);
             GUI.enabled = true;
@@ -2825,9 +2945,11 @@ namespace Harpoon.Runtime
                 ? $"MAX SPEED {force.EffectiveSpeed} · AWAITING DECLARATION"
                 : $"DECLARED {force.DeclaredSpeed} · MOVED {force.MovementPointsSpent} · REMAINING {force.MovementRemaining}",
                 _cardStatStyle);
+            if (force.HasArrived)
+                GUILayout.Label("ARRIVED AT TAIPEI / ZUOYING · OFF MAP", _cardHeaderStyle);
             if (force.Side == LocalSide && force.DummyCards > 0)
                 GUILayout.Label($"DUMMY CARDS   {force.DummyCards}", _cardHeaderStyle);
-            else if (force.Side != LocalSide && force.Units.Count == 0 && contact?.Level == ContactLevel.Located)
+            else if (force.Side != LocalSide && contact?.Level == ContactLevel.Located)
             {
                 GUILayout.Label("SEARCH REPORT   NO SURFACE SHIPS PRESENT", _cardHeaderStyle);
                 GUILayout.Label("A submarine or dummy contact remains possible until cleared by sonar.", _cardStatStyle);
@@ -2922,10 +3044,11 @@ namespace Harpoon.Runtime
                 GUILayout.Label("  Formation contents undetected", _labelStyle);
                 return;
             }
-            GUILayout.Label($"{force.Id} · HEX {force.Position}{activity}", _labelStyle);
+            GUILayout.Label($"{force.Id} · HEX {force.Position}{activity}" +
+                (force.HasArrived ? "  [ARRIVED / OFF MAP]" : string.Empty), _labelStyle);
             if (force.Side == LocalSide && force.DummyCards > 0)
                 GUILayout.Label($"  Dummy cards: {force.DummyCards}", _labelStyle);
-            else if (force.Units.Count == 0)
+            else if (force.Side != LocalSide && _game.State.Detection.ContactFor(LocalSide, force.Id).Level == ContactLevel.Located)
                 GUILayout.Label("  No surface ships present; contact not cleared by sonar", _labelStyle);
             foreach (var unit in force.Units)
                 GUILayout.Label($"  {unit.Definition.DisplayName}: {unit.HullRemaining}/{unit.Definition.Hull} hull · {DamageStateLabel(unit)}", _labelStyle);

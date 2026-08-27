@@ -75,6 +75,27 @@ Modern unit cards and the optional EA-18G rule necessarily come from the supplem
 | Successful sonar removes dummy force | Captain's Rules pp. 8–9 | `ResolveSonar`, dummy removal and card recovery | deterministic sonar acceptance route | Complete |
 | Side-private presentation | Captain's Rules p. 9 | formation cards, unresolved-contact marker, redacted snapshots | owner/opponent projection checks | Complete |
 
+## Scenario 6 coverage
+
+| Rule/data | Authoritative source | Current code | Automated evidence | Status |
+|---|---|---|---|---|
+| Exact modern hunter-killer and wolf-pack forces | First Island Chain p. 25; cards pp. 15, 19 | `WolvesOfBashiChannel`, modern platform database | IDs, counts, domains, setup, and seven-turn checks | Complete |
+| Separate submarine task forces and patrol line | Captain's Rules p. 10; First Island Chain p. 25 | domain invariant and `0812`–`1212` movement constraint | mixed-force rejection and boundary validation | Complete; ice exception not present on this map |
+| Sonar and ESM detection | Captain's Rules pp. 8–10 | sonar modifier resolver, ESM pipeline, classified undersea contacts | modifier boundary, natural-six, and privacy tests | Complete |
+| Surface-search ambiguity | Captain's Rules p. 10 | located/unclassified contact projection | visual/SSR no-surface report and redacted card test | Complete |
+| Torpedo and ASW combat | Captain's Rules p. 11 | per-sub allocation, screen ordering, spotted counterattack eligibility, attack tables | table fixture, target restriction, sinking route | Complete |
+| Seven-turn offset victory | First Island Chain p. 25 | `SubmarineSurvival` scoring | raw-loss and two-US-ship offset tests | Complete |
+
+## Scenario 7 coverage
+
+| Rule/data | Authoritative source | Current code | Automated evidence | Status |
+|---|---|---|---|---|
+| Four US and three PLAN independent task forces | First Island Chain p. 25 | `LifelineToTaiwan`, data-driven movement cup | exact formations, units, roles, and seven-chit checks | Complete |
+| US assembly and PLAN prohibited zones | First Island Chain p. 25 | per-side deployment-zone schema and placement UI | legal/illegal boundary routes for both sides | Complete |
+| Taipei port entry and off-map arrival | First Island Chain p. 25 | `HasArrived`, movement completion, chit exclusion, target exclusion | entry, movement, future-cup, and score checks | Complete |
+| Three merchants and submarine-loss offsets | First Island Chain p. 25 | `ConvoySurvival` scoring | two-arrival/one-loss/one-sub offset route | Complete |
+| Ten-turn terminal result | First Island Chain p. 25 | scenario maximum turn and end-by-score path | deterministic turn-ten PLAN result | Complete |
+
 ## Rules-family source index
 
 | Rules family | Captain's Rules | Supplement |

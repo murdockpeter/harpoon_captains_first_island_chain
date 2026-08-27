@@ -104,6 +104,12 @@ namespace Harpoon.Core
         public ContactSnapshotData[] contacts;
         public MissileEngagementData missileCombat;
         public GunEngagementData gunCombat;
+        public bool hasProjectedScore;
+        public int scoreUsObjective;
+        public int scorePlanObjective;
+        public int scoreUsTieBreak;
+        public int scorePlanTieBreak;
+        public string scoreResult;
     }
 
     public static class ScenarioOne
@@ -143,6 +149,7 @@ namespace Harpoon.Core
         private readonly Func<HexCoord, bool> _isNavigable;
         private bool _manualOpponent;
         private bool _isActivatingEnemy;
+        private ScenarioScore _projectedScore;
         public GameState State { get; private set; }
         public int Seed { get; private set; }
         public event Action<Side, AttackReport> AttackResolved;
@@ -161,21 +168,18 @@ namespace Harpoon.Core
             _isNavigable = isNavigable ?? (_ => true);
             _manualOpponent = manualOpponent;
             State = ScenarioOne.Create(detectionRulesEnabled, scenario);
-            if (State.Scenario.PlanDeploymentMinimumDistance > 0 && !manualOpponent)
+            if ((State.Scenario.PlanDeploymentMinimumDistance > 0 || State.Scenario.HasDeploymentZones) &&
+                !manualOpponent)
             {
-                var subic = State.Map.Bases.First(item => item.Id == "us-subic").Position;
-                var taipei = State.Map.Bases.First(item => item.Id == "us-taipei").Position;
                 var legal = State.Map.AllHexes.Where(hex => State.Map.IsNavigable(hex, Side.Plan) &&
-                    hex.DistanceTo(subic) > State.Scenario.PlanDeploymentMinimumDistance &&
-                    hex.DistanceTo(taipei) > State.Scenario.PlanDeploymentMinimumDistance).ToArray();
-                var index = new Random(seed).Next(legal.Length);
+                    IsLegalDeploymentHex(State.Scenario, State.Map, Side.Plan, hex)).ToArray();
                 foreach (var planForce in State.Forces.Where(force => force.Side == Side.Plan))
                 {
                     var stableId = planForce.Id.Aggregate(17,
                         (value, character) => unchecked(value * 31 + character));
                     planForce.MoveTo(legal[new Random(seed ^ stableId).Next(legal.Length)]);
                 }
-                State.Trace("SETUP", "PLAN AI selected a seeded legal concealed picket deployment.");
+                State.Trace("SETUP", "PLAN AI selected seeded legal concealed deployment hexes.");
             }
             State.MovementCup = new MovementChitCup(random as IRandomSource ?? new SeededDieRoller(seed));
             _combat = new CombatResolver(_dice, Trace);
@@ -187,6 +191,7 @@ namespace Harpoon.Core
 
         public CommandResult Execute(GameCommand command)
         {
+            _projectedScore = null;
             if (command == null)
                 return Publish(null, Reject(null, RuleViolationCode.InvalidPayload, "Command payload is missing."));
             var firstEvent = State.Events.Count;
@@ -378,25 +383,26 @@ namespace Harpoon.Core
         {
             violation = null;
             var scenario = State.Scenario;
-            if (scenario.PlanDeploymentMinimumDistance <= 0 || command.Actor != Side.Plan ||
+            if ((scenario.PlanDeploymentMinimumDistance <= 0 && !scenario.HasDeploymentZones) ||
                 State.Phase != ActivationPhase.AwaitingChit || State.MovementCup == null ||
                 !State.MovementCup.FirstDrawPending)
             {
                 violation = new RuleViolation(RuleViolationCode.DeploymentUnavailable,
-                    "PLAN deployment is available only before Scenario 4's first movement-chit draw.", "phase");
+                    "Scenario deployment is available only before the first movement-chit draw.", "phase");
                 Trace("REJECTED", violation.Message);
                 return false;
             }
             var force = string.IsNullOrWhiteSpace(command.FormationId)
-                ? State.Forces.First(item => item.Side == Side.Plan) : State.Formation(command.FormationId);
-            var subic = State.Map.Bases.First(item => item.Id == "us-subic").Position;
-            var taipei = State.Map.Bases.First(item => item.Id == "us-taipei").Position;
-            if (force == null || force.Side != Side.Plan || !State.Map.IsNavigable(command.Destination, Side.Plan) ||
-                command.Destination.DistanceTo(subic) <= scenario.PlanDeploymentMinimumDistance ||
-                command.Destination.DistanceTo(taipei) <= scenario.PlanDeploymentMinimumDistance)
+                ? State.Forces.First(item => item.Side == command.Actor) : State.Formation(command.FormationId);
+            if (force == null || force.Side != command.Actor ||
+                !IsLegalDeploymentHex(scenario, State.Map, command.Actor, command.Destination))
             {
                 violation = new RuleViolation(RuleViolationCode.InvalidFormation,
-                    $"Deploy in PLAN-navigable water more than {scenario.PlanDeploymentMinimumDistance} hexes from both Subic Bay and Taipei / Zuoying.",
+                    scenario.HasDeploymentZones
+                        ? command.Actor == Side.UsNavy
+                            ? $"US formations must deploy within {scenario.UsDeploymentRadius} hexes of {scenario.DeploymentCenter}."
+                            : $"PLAN formations may not deploy at Taipei or within {scenario.PlanProhibitedRadius} hexes of {scenario.DeploymentCenter}."
+                        : $"Deploy in PLAN-navigable water more than {scenario.PlanDeploymentMinimumDistance} hexes from both Subic Bay and Taipei / Zuoying.",
                     "destination");
                 Trace("REJECTED", violation.Message);
                 return false;
@@ -404,6 +410,25 @@ namespace Harpoon.Core
             force.MoveTo(command.Destination);
             Trace("SETUP", $"PLAN player deployed {force.Id} to {command.Destination} outside both exclusion zones.");
             return true;
+        }
+
+        public static bool IsLegalDeploymentHex(ScenarioDefinition scenario, OperationalMap map,
+            Side side, HexCoord destination)
+        {
+            if (scenario == null || map == null || !map.IsNavigable(destination, side)) return false;
+            if (scenario.HasDeploymentZones)
+            {
+                if (side == Side.UsNavy)
+                    return destination != scenario.UsDestination &&
+                           destination.DistanceTo(scenario.DeploymentCenter) <= scenario.UsDeploymentRadius;
+                return destination != scenario.UsDestination &&
+                       destination.DistanceTo(scenario.DeploymentCenter) > scenario.PlanProhibitedRadius;
+            }
+            if (side != Side.Plan || scenario.PlanDeploymentMinimumDistance <= 0) return false;
+            var subic = map.Bases.First(item => item.Id == "us-subic").Position;
+            var taipei = map.Bases.First(item => item.Id == "us-taipei").Position;
+            return destination.DistanceTo(subic) > scenario.PlanDeploymentMinimumDistance &&
+                   destination.DistanceTo(taipei) > scenario.PlanDeploymentMinimumDistance;
         }
 
         private bool TransferDummyCardsInternal(GameCommand command, out RuleViolation violation)
@@ -594,6 +619,14 @@ namespace Harpoon.Core
                 Trace("REJECTED", $"{side} move to {destination}: {violation.Message}");
                 return false;
             }
+            if (State.Scenario.Id == "fic-06" && side == Side.Plan &&
+                Enumerable.Range(8, 5).Min(column => destination.DistanceTo(new HexCoord(column, 12))) > 2)
+            {
+                violation = new RuleViolation(RuleViolationCode.ImpassableTerrain,
+                    "PLAN submarines must remain within two hexes of the 0812-1212 patrol line.", "destination");
+                Trace("REJECTED", violation.Message);
+                return false;
+            }
             var origin = force.Position;
             force.MoveOneHex(destination);
             if (side == Side.UsNavy && State.Scenario.HasUsDestination &&
@@ -601,7 +634,9 @@ namespace Harpoon.Core
                 force.ActiveUnits.Any(unit => unit.Definition.Role == UnitRole.Objective))
             {
                 force.MarkArrived();
+                State.MovementCup.RemoveUndrawnFormation(force.Id);
                 Trace("VICTORY", $"{force.Id} reached Taipei / Zuoying with at least one merchant afloat.");
+                AddLog($"{force.Id} entered Taipei / Zuoying and left the operational map.");
             }
             State.PlayerHasMoved = true;
             State.PlayerHasAttacked = false;
@@ -771,6 +806,12 @@ namespace Harpoon.Core
                 return null;
             }
             var attacker = State.ForceFor(side);
+            if (attacker.HasArrived)
+            {
+                violation = new RuleViolation(RuleViolationCode.NoLegalWeapon,
+                    "An arrived formation has left the operational map.");
+                return null;
+            }
             var defender = FindOpponent(side, State.CurrentCommand?.TargetId);
             if (State.DetectionRulesEnabled && !State.Detection.IsClassified(side, defender.Id))
             {
@@ -780,6 +821,31 @@ namespace Harpoon.Core
                 return null;
             }
             var range = attacker.Position.DistanceTo(defender.Position);
+            if (defender.IsSubmarineOnly && !attacker.IsSubmarineOnly)
+            {
+                if (range != 0 || !attacker.ActiveUnits.Any(unit => unit.EffectiveAntiSubmarineWarfare > 0))
+                {
+                    violation = new RuleViolation(RuleViolationCode.NoLegalWeapon,
+                        "Detected submarines may be attacked only in the same hex with ASW weapons.");
+                    return null;
+                }
+                return ResolveUnderseaAttack(attacker, defender, false);
+            }
+            if (attacker.IsSubmarineOnly && range == 0 && !State.CurrentCommand.Enabled)
+            {
+                MissileAllocationData[] allocations = null;
+                if (!defender.IsSubmarineOnly && !TryTorpedoAllocations(attacker, defender,
+                        State.CurrentCommand?.MissileAllocations, out allocations, out violation))
+                    return null;
+                return ResolveUnderseaAttack(attacker, defender, !defender.IsSubmarineOnly,
+                    defender.IsSubmarineOnly ? null : allocations);
+            }
+            if (defender.IsSubmarineOnly)
+            {
+                violation = new RuleViolation(RuleViolationCode.NoLegalWeapon,
+                    "Surface-to-surface missiles and guns may not attack submarines.");
+                return null;
+            }
             if (!CanFireMissiles(attacker, range))
             {
                 if (range == 0)
@@ -808,6 +874,145 @@ namespace Harpoon.Core
                 "awaiting explicit fire allocation.");
             AddLog($"{attacker.Id} is allocating SSM fire against {defender.Id}.");
             return null;
+        }
+
+        private bool TryTorpedoAllocations(TaskForceState attacker, TaskForceState defender,
+            IReadOnlyList<MissileAllocationData> requested, out MissileAllocationData[] allocations,
+            out RuleViolation violation)
+        {
+            violation = null;
+            allocations = requested?.Where(item => item != null).ToArray() ?? Array.Empty<MissileAllocationData>();
+            if (allocations.Length == 0)
+            {
+                var target = defender.ActiveUnits.FirstOrDefault();
+                allocations = attacker.ActiveUnits.Where(unit => unit.EffectiveTorpedoes > 0).Select((unit, index) =>
+                    new MissileAllocationData { id = $"TORP-{index + 1}", sourceUnitId = unit.Definition.Id,
+                        targetUnitId = target?.Definition.Id, shortFactors = unit.EffectiveTorpedoes }).ToArray();
+            }
+            var activeSources = new HashSet<string>(attacker.ActiveUnits.Where(unit => unit.EffectiveTorpedoes > 0)
+                .Select(unit => unit.Definition.Id));
+            var activeTargets = new HashSet<string>(defender.ActiveUnits.Select(unit => unit.Definition.Id));
+            if (allocations.Length == 0 || allocations.Any(item => !activeSources.Contains(item.sourceUnitId) ||
+                    !activeTargets.Contains(item.targetUnitId) || item.shortFactors < 0 || item.longFactors < 0 ||
+                    item.shortFactors + item.longFactors <= 0))
+            {
+                violation = new RuleViolation(RuleViolationCode.InvalidAllocation,
+                    "Torpedo factors require operational submarine sources and surface-ship targets.",
+                    "missileAllocations");
+                return false;
+            }
+            foreach (var group in allocations.GroupBy(item => item.sourceUnitId))
+            {
+                var source = attacker.Units.First(unit => unit.Definition.Id == group.Key);
+                if (group.Sum(item => item.shortFactors + item.longFactors) != source.EffectiveTorpedoes)
+                {
+                    violation = new RuleViolation(RuleViolationCode.InvalidAllocation,
+                        $"{source.Definition.DisplayName} must allocate its complete torpedo strength of " +
+                        $"{source.EffectiveTorpedoes} among one or more ships.", "missileAllocations");
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private AttackReport ResolveUnderseaAttack(TaskForceState attacker, TaskForceState defender,
+            bool torpedoAttack, IReadOnlyList<MissileAllocationData> torpedoAllocations = null)
+        {
+            var report = new AttackReport { Fired = true };
+            State.PlayerHasAttacked = true;
+            var source = attacker.ActiveUnits.OrderByDescending(unit => torpedoAttack
+                ? unit.EffectiveTorpedoes : unit.EffectiveAntiSubmarineWarfare).FirstOrDefault();
+            var target = defender.ActiveUnits.FirstOrDefault();
+            if (source == null || target == null) return report;
+            report.SourceUnitId = source.Definition.Id;
+            report.TargetUnitId = target.Definition.Id;
+
+            if (torpedoAttack)
+            {
+                if (defender.DefensePairs.Count == 0)
+                    defender.SetDefensePairs(DefaultDefensePairs(defender));
+                var screenIds = new HashSet<string>(defender.DefensePairs.Select(pair => pair.firstUnitId));
+                foreach (var sourceGroup in torpedoAllocations.GroupBy(item => item.sourceUnitId))
+                {
+                    source = attacker.Units.First(unit => unit.Definition.Id == sourceGroup.Key);
+                    var screenAttacks = sourceGroup.Where(item => screenIds.Contains(item.targetUnitId)).ToArray();
+                    var screenedAttacks = sourceGroup.Where(item => !screenIds.Contains(item.targetUnitId)).ToArray();
+                    ResolveTorpedoAllocations(source, defender, screenAttacks, report);
+                    if (screenedAttacks.Length > 0)
+                        ResolveAswCounterattack(defender, source, report);
+                    else
+                    {
+                        var directCounter = screenAttacks.Select(item => defender.Units.First(unit =>
+                                unit.Definition.Id == item.targetUnitId)).Where(unit => !unit.IsSunk)
+                            .OrderByDescending(unit => unit.EffectiveAntiSubmarineWarfare).FirstOrDefault();
+                        if (directCounter != null) ResolveAswCounterattack(defender, source, report, directCounter);
+                    }
+                    if (!source.IsSunk) ResolveTorpedoAllocations(source, defender, screenedAttacks, report);
+                }
+            }
+            else
+            {
+                report.AttackFactors = source.EffectiveAntiSubmarineWarfare;
+                for (var die = 0; die < report.AttackFactors; die++)
+                {
+                    var roll = _dice.RollD6();
+                    var hits = CombatTables.Hits(CombatTableColumn.Asw, roll);
+                    report.HullHits += target.ApplyDamage(hits, DamageSource.Other).AppliedHits;
+                    Trace("DIE", $"ASW {source.Definition.DisplayName}->{target.Definition.DisplayName}: D6={roll}, hits={hits}.");
+                }
+            }
+            report.SankAnyShip |= target.IsSunk;
+            report.Summary = torpedoAttack
+                ? $"Torpedo attack inflicted {report.HullHits} hull hit(s)."
+                : $"ASW attack inflicted {report.HullHits} hull hit(s).";
+            Trace("COMBAT", report.Summary);
+            AddLog(report.Summary);
+            PruneDestroyedMovementChits();
+            CheckGameOver();
+            AttackResolved?.Invoke(attacker.Side, report);
+            return report;
+        }
+
+        private void ResolveTorpedoAllocations(UnitState source, TaskForceState defender,
+            IEnumerable<MissileAllocationData> allocations, AttackReport report)
+        {
+            foreach (var allocation in allocations)
+            {
+                var target = defender.Units.First(unit => unit.Definition.Id == allocation.targetUnitId);
+                var factors = allocation.shortFactors + allocation.longFactors;
+                report.AttackFactors += factors;
+                report.TargetUnitId = target.Definition.Id;
+                for (var die = 0; die < factors; die++)
+                {
+                    var roll = _dice.RollD6();
+                    var hits = CombatTables.Hits(CombatTableColumn.Torpedoes, roll);
+                    report.HullHits += target.ApplyDamage(hits, DamageSource.Torpedo).AppliedHits;
+                    Trace("DIE", $"TORPEDO {source.Definition.DisplayName}->{target.Definition.DisplayName}: D6={roll}, hits={hits}.");
+                }
+                report.SankAnyShip |= target.IsSunk;
+            }
+        }
+
+        private void ResolveAswCounterattack(TaskForceState surfaceForce, UnitState submarine,
+            AttackReport report, UnitState requiredCounter = null)
+        {
+            var submarineForce = State.Forces.FirstOrDefault(force => force.Units.Contains(submarine));
+            if (State.DetectionRulesEnabled && (submarineForce == null ||
+                !State.Detection.IsClassified(surfaceForce.Side, submarineForce.Id))) return;
+            var counter = requiredCounter ?? surfaceForce.ActiveUnits
+                .OrderByDescending(unit => unit.EffectiveAntiSubmarineWarfare)
+                .FirstOrDefault(unit => unit.EffectiveAntiSubmarineWarfare > 0);
+            if (counter == null) return;
+            var hitsTotal = 0;
+            for (var die = 0; die < counter.EffectiveAntiSubmarineWarfare; die++)
+            {
+                var roll = _dice.RollD6();
+                var hits = CombatTables.Hits(CombatTableColumn.Asw, roll);
+                hitsTotal += submarine.ApplyDamage(hits, DamageSource.Other).AppliedHits;
+                Trace("DIE", $"ASW COUNTERATTACK {counter.Definition.DisplayName}->{submarine.Definition.DisplayName}: " +
+                    $"D6={roll}, hits={hits}.");
+            }
+            report.InterceptedFactors += hitsTotal;
         }
 
         private bool AllocateMissileFireInternal(GameCommand command, out RuleViolation violation)
@@ -1065,6 +1270,8 @@ namespace Harpoon.Core
         private bool CanCounterattack(TaskForceState attacker, TaskForceState target)
         {
             var range = attacker.Position.DistanceTo(target.Position);
+            if (target.IsSubmarineOnly) return range == 0 &&
+                attacker.ActiveUnits.Any(unit => unit.EffectiveAntiSubmarineWarfare > 0);
             return CanFireMissiles(attacker, range) && (!State.DetectionRulesEnabled ||
                 State.Detection.IsClassified(attacker.Side, target.Id));
         }
@@ -1074,9 +1281,15 @@ namespace Harpoon.Core
 
         private bool CanOpenAttack(TaskForceState attacker, TaskForceState defender)
         {
-            if (attacker == null || defender == null || attacker.IsDestroyed || defender.IsDestroyed) return false;
+            if (attacker == null || defender == null || attacker.IsDestroyed || defender.IsDestroyed ||
+                attacker.HasArrived || defender.HasArrived) return false;
             if (State.DetectionRulesEnabled && !State.Detection.IsClassified(attacker.Side, defender.Id)) return false;
             var range = attacker.Position.DistanceTo(defender.Position);
+            if (range == 0 && attacker.IsSubmarineOnly)
+                return attacker.ActiveUnits.Any(unit => defender.IsSubmarineOnly
+                    ? unit.EffectiveAntiSubmarineWarfare > 0 : unit.EffectiveTorpedoes > 0);
+            if (defender.IsSubmarineOnly)
+                return range == 0 && attacker.ActiveUnits.Any(unit => unit.EffectiveAntiSubmarineWarfare > 0);
             return CanFireMissiles(attacker, range) || (range == 0 &&
                 (attacker.ActiveUnits.Any(unit => unit.EffectiveGuns > 0) ||
                  defender.ActiveUnits.Any(unit => unit.EffectiveGuns > 0)));
@@ -1478,7 +1691,7 @@ namespace Harpoon.Core
                     if (State.Phase == ActivationPhase.DeclareSpeed)
                     {
                         var trackedPlayer = State.Forces.FirstOrDefault(force => force.Side == Side.UsNavy &&
-                            State.Detection.IsDetected(Side.Plan, force.Id));
+                            !force.HasArrived && State.Detection.IsDetected(Side.Plan, force.Id));
                         var navigationTarget = State.DetectionRulesEnabled && trackedPlayer == null &&
                             State.Scenario.HasUsDestination ? State.Scenario.UsDestination :
                             (trackedPlayer ?? State.Player).Position;
@@ -1694,7 +1907,7 @@ namespace Harpoon.Core
         {
             var enemyForce = State.ActiveForce ?? State.Enemy;
             var trackedPlayer = State.Forces.FirstOrDefault(force => force.Side == Side.UsNavy &&
-                State.Detection.IsDetected(Side.Plan, force.Id));
+                !force.HasArrived && State.Detection.IsDetected(Side.Plan, force.Id));
             var targetPosition = State.DetectionRulesEnabled && trackedPlayer == null &&
                 State.Scenario.HasUsDestination ? State.Scenario.UsDestination :
                 (trackedPlayer ?? State.Player).Position;
@@ -1706,6 +1919,16 @@ namespace Harpoon.Core
         private void TryEnemyDetection(TaskForceState observer)
         {
             if (!State.DetectionRulesEnabled || observer == null) return;
+            if (observer.ActiveUnits.Any(unit => unit.EffectiveSonar > 0))
+            {
+                var sonarTarget = FindDetectionTarget(observer.Side, string.Empty, "sonar");
+                if (sonarTarget != null && !State.Detection.IsClassified(observer.Side, sonarTarget.Id))
+                {
+                    Execute(new GameCommand(GameCommandType.Search, observer.Side, State.Revision,
+                        targetId: sonarTarget.Id, searchMode: "sonar"));
+                    if (State.Detection.IsClassified(observer.Side, sonarTarget.Id)) return;
+                }
+            }
             var target = FindDetectionTarget(observer.Side, string.Empty, "visual");
             if (target == null) return;
             do
@@ -1718,7 +1941,8 @@ namespace Harpoon.Core
 
         private TaskForceState FindOpponent(Side observer, string targetId)
         {
-            var opponents = State.Forces.Where(force => force.Side != observer && !force.IsDestroyed).ToArray();
+            var opponents = State.Forces.Where(force => force.Side != observer && !force.IsDestroyed &&
+                !force.HasArrived).ToArray();
             if (!string.IsNullOrWhiteSpace(targetId))
             {
                 var named = opponents.FirstOrDefault(force => force.Id == targetId);
@@ -1731,7 +1955,8 @@ namespace Harpoon.Core
         private TaskForceState FindDetectionTarget(Side observer, string targetId, string mode)
         {
             var origin = State.ForceFor(observer).Position;
-            var candidates = State.Forces.Where(force => force.Side != observer && !force.IsDestroyed);
+            var candidates = State.Forces.Where(force => force.Side != observer && !force.IsDestroyed &&
+                !force.HasArrived);
             if (!string.IsNullOrWhiteSpace(targetId))
                 candidates = candidates.Where(force => force.Id == targetId);
             if (string.Equals(mode, "visual", StringComparison.OrdinalIgnoreCase))
@@ -1746,7 +1971,8 @@ namespace Harpoon.Core
         private void ResolveMovementDetection(TaskForceState moving)
         {
             ResolveAutomaticRadar(moving);
-            var opponents = State.Forces.Where(force => force.Side != moving.Side && !force.IsDestroyed).ToArray();
+            var opponents = State.Forces.Where(force => force.Side != moving.Side && !force.IsDestroyed &&
+                !force.HasArrived).ToArray();
             foreach (var opponent in opponents)
             {
                 if (moving.Position.DistanceTo(opponent.Position) == 1)
@@ -1777,7 +2003,7 @@ namespace Harpoon.Core
         {
             if (!State.DetectionRulesEnabled || observer == null || !observer.RadarRadiating) return;
             foreach (var target in State.Forces.Where(force => force.Side != observer.Side &&
-                         !force.IsDestroyed && force.Position == observer.Position &&
+                         !force.IsDestroyed && !force.HasArrived && force.Position == observer.Position &&
                          !State.Detection.IsDetected(observer.Side, force.Id)))
                 RecordDetection(observer.Side, target, DetectionMethod.SurfaceSearchRadar, true);
         }
@@ -1789,7 +2015,8 @@ namespace Harpoon.Core
                 Trace("DETECTION", $"{observer} found no contact on {target.Id} by {method}.");
                 return;
             }
-            if (target.IsDummyOnly && method != DetectionMethod.Sonar)
+            if ((target.IsDummyOnly || target.IsSubmarineOnly) && method != DetectionMethod.Sonar &&
+                method != DetectionMethod.Esm)
             {
                 var dummyContact = State.Detection.Detect(observer, target, method, State.Turn, false);
                 Trace("DETECTION", $"{observer} searched {target.Id} at {target.Position} by {method}: " +
@@ -1842,20 +2069,32 @@ namespace Harpoon.Core
                     return;
                 }
             }
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival &&
+                CurrentScore().Result == "US NAVY VICTORY")
+            {
+                EndByScore(ScenarioEndReason.DestinationReached);
+                return;
+            }
             if (State.Scenario.ScoringMode == ScenarioScoringMode.ObjectiveThenEscort &&
                 (State.ObjectiveFor(Side.UsNavy).IsSunk || State.ObjectiveFor(Side.Plan).IsSunk))
             {
                 EndByScore(ScenarioEndReason.ObjectiveSunk);
                 return;
             }
-            if (!State.Forces.Where(force => force.Side == Side.UsNavy).SelectMany(force => force.ActiveUnits).Any() ||
-                !State.Forces.Where(force => force.Side == Side.Plan).SelectMany(force => force.ActiveUnits).Any())
+            var usEliminated = !State.Forces.Where(force => force.Side == Side.UsNavy)
+                .SelectMany(force => force.ActiveUnits).Any();
+            var planEliminated = !State.Forces.Where(force => force.Side == Side.Plan)
+                .SelectMany(force => force.ActiveUnits).Any();
+            if (usEliminated || (planEliminated &&
+                State.Scenario.ScoringMode != ScenarioScoringMode.ConvoySurvival))
             {
                 EndByScore(ScenarioEndReason.ForceDestroyed);
                 return;
             }
 
-            if (State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival) return;
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival ||
+                State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival ||
+                State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival) return;
 
             var score = CurrentScore();
             var usCanScore = CanInflictFurtherDamage(Side.UsNavy);
@@ -1879,6 +2118,7 @@ namespace Harpoon.Core
 
         public ScenarioScore CurrentScore()
         {
+            if (_projectedScore != null) return _projectedScore;
             var scenario = State.Scenario ?? FirstIslandChainScenarios.ContactOffBashiChannel;
             if (scenario.ScoringMode == ScenarioScoringMode.TotalHullHits)
                 return new ScenarioScore(TotalHullDamage(Side.Plan), TotalHullDamage(Side.UsNavy), 0, 0);
@@ -1897,6 +2137,32 @@ namespace Harpoon.Core
                 var sunk = merchants.Length - surviving;
                 return new ScenarioScore(arrived ? surviving : 0, sunk, 0, 0,
                     arrived || planDestroyed ? "US NAVY VICTORY" : "PLAN VICTORY");
+            }
+            if (scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival)
+            {
+                var planSubmarines = State.Forces.Where(force => force.Side == Side.Plan)
+                    .SelectMany(force => force.Units).Where(unit => unit.Definition.IsSubmarine).ToArray();
+                var planLosses = planSubmarines.Count(unit => unit.IsSunk);
+                var usShipLosses = State.Forces.Where(force => force.Side == Side.UsNavy)
+                    .SelectMany(force => force.Units).Count(unit => unit.IsSunk);
+                var adjustedLosses = Math.Max(0, planLosses - usShipLosses / 2);
+                var planWins = planSubmarines.Length - adjustedLosses >= 2;
+                return new ScenarioScore(planLosses, usShipLosses, adjustedLosses, 0,
+                    planWins ? "PLAN VICTORY" : "US NAVY VICTORY");
+            }
+            if (scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival)
+            {
+                var merchants = State.Forces.Where(force => force.Side == Side.UsNavy)
+                    .SelectMany(force => force.Units).Where(unit => unit.Definition.Role == UnitRole.Objective).ToArray();
+                var arrived = State.Forces.Where(force => force.Side == Side.UsNavy && force.HasArrived)
+                    .SelectMany(force => force.ActiveUnits).Count(unit => unit.Definition.Role == UnitRole.Objective);
+                var sunk = merchants.Count(unit => unit.IsSunk);
+                var submarinesSunk = State.Forces.Where(force => force.Side == Side.Plan)
+                    .SelectMany(force => force.Units).Count(unit => unit.Definition.IsSubmarine && unit.IsSunk);
+                var offsets = Math.Min(sunk, submarinesSunk);
+                var qualified = arrived + offsets >= 3;
+                return new ScenarioScore(arrived, sunk, submarinesSunk, offsets,
+                    qualified ? "US NAVY VICTORY" : "PLAN VICTORY");
             }
             return new ScenarioScore(
                 State.Unit(scenario.PlanObjectiveUnitId)?.HullDamage ?? 0,
@@ -1948,7 +2214,9 @@ namespace Harpoon.Core
             State.EndReason = reason;
             var scoreKind = State.Scenario.ScoringMode == ScenarioScoringMode.TotalHullHits
                 ? "total hull hits" : State.Scenario.ScoringMode == ScenarioScoringMode.GunfireHullHits
-                    ? "gunfire hull hits" : "objective damage";
+                    ? "gunfire hull hits" : State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival
+                        ? "submarine survival offsets" : State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival
+                            ? "convoy arrivals and submarine offsets" : "objective damage";
             Trace("VICTORY", $"{State.Result}; reason={reason}; {scoreKind} inflicted US/PLAN=" +
                 $"{score.UsObjectiveDamage}/{score.PlanObjectiveDamage}; tie-break US/PLAN=" +
                 $"{score.UsTieBreakDamage}/{score.PlanTieBreakDamage}.");
@@ -2021,7 +2289,10 @@ namespace Harpoon.Core
             var redact = redactHidden && State.DetectionRulesEnabled && !State.IsGameOver;
             Func<TaskForceState, bool> visible = force => force.Side == viewer || !redact ||
                 State.Detection.IsDetected(viewer, force.Id);
+            Func<TaskForceState, bool> classified = force => force.Side == viewer || !redact ||
+                State.Detection.IsClassified(viewer, force.Id);
             var view = State.ViewFor(viewer);
+            var publicScore = CurrentScore();
             var usVisible = visible(State.Player);
             var planVisible = visible(State.Enemy);
             return new ScenarioOneSnapshot
@@ -2055,7 +2326,7 @@ namespace Harpoon.Core
                 planMovementSpent = planVisible ? State.Enemy.MovementPointsSpent : 0,
                 usMovementPath = usVisible ? State.Player.MovementPath.Select(ToSnapshot).ToArray() : Array.Empty<HexCoordSnapshot>(),
                 planMovementPath = planVisible ? State.Enemy.MovementPath.Select(ToSnapshot).ToArray() : Array.Empty<HexCoordSnapshot>(),
-                units = State.Forces.Where(visible).SelectMany(force => force.Units).Select(unit => new UnitSnapshot
+                units = State.Forces.Where(classified).SelectMany(force => force.Units).Select(unit => new UnitSnapshot
                 {
                     id = unit.Definition.Id,
                     hullDamage = unit.HullDamage,
@@ -2124,7 +2395,7 @@ namespace Harpoon.Core
                     declaredSpeed = visible(force) ? force.DeclaredSpeed : -1,
                     movementSpent = visible(force) ? force.MovementPointsSpent : 0,
                     movementPath = visible(force) ? force.MovementPath.Select(ToSnapshot).ToArray() : Array.Empty<HexCoordSnapshot>(),
-                    unitIds = visible(force) ? force.Units.Select(unit => unit.Definition.Id).ToArray() : Array.Empty<string>(),
+                    unitIds = classified(force) ? force.Units.Select(unit => unit.Definition.Id).ToArray() : Array.Empty<string>(),
                     radarRadiating = visible(force) && force.RadarRadiating,
                     radarDeclared = visible(force) && force.RadarDeclaredThisActivation,
                     arrived = visible(force) && force.HasArrived,
@@ -2134,7 +2405,13 @@ namespace Harpoon.Core
                 contacts = State.Detection.Contacts.Where(contact => !redact || contact.Observer == viewer)
                     .Select(contact => contact.ToData()).ToArray(),
                 missileCombat = State.PendingMissileCombat?.ToData(),
-                gunCombat = State.PendingGunCombat?.ToData()
+                gunCombat = State.PendingGunCombat?.ToData(),
+                hasProjectedScore = redact,
+                scoreUsObjective = publicScore.UsObjectiveDamage,
+                scorePlanObjective = publicScore.PlanObjectiveDamage,
+                scoreUsTieBreak = publicScore.UsTieBreakDamage,
+                scorePlanTieBreak = publicScore.PlanTieBreakDamage,
+                scoreResult = publicScore.Result
             };
         }
 
@@ -2219,6 +2496,10 @@ namespace Harpoon.Core
             State.Detection.Restore(snapshot.contacts);
             State.PendingMissileCombat = MissileEngagement.FromData(snapshot.missileCombat);
             State.PendingGunCombat = GunEngagement.FromData(snapshot.gunCombat);
+            _projectedScore = snapshot.hasProjectedScore
+                ? new ScenarioScore(snapshot.scoreUsObjective, snapshot.scorePlanObjective,
+                    snapshot.scoreUsTieBreak, snapshot.scorePlanTieBreak, snapshot.scoreResult)
+                : null;
         }
 
         public static ScenarioOneGame Replay(int seed, IEnumerable<GameCommandData> commands,

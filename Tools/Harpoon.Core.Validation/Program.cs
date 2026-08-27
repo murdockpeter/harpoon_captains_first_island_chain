@@ -19,6 +19,8 @@ static class Program
             ScenarioThreeRoute();
             ScenarioFourRoute();
             ScenarioFiveRoute();
+            ScenarioSixRoute();
+            ScenarioSevenRoute();
             ReleaseVersionRoute();
             Console.WriteLine($"HARPOON CORE VALIDATION PASSED: {_checks} checks; scripted movement, missile, gunfire, scoring, stopping, and replay routes complete.");
             return 0;
@@ -460,6 +462,154 @@ static class Program
                 searchMode: "sonar")).Accepted && sensorGame.State.Formation("PLAN Dummy Group") == null &&
             sensorGame.State.Forces.Where(force => force.Side == Side.Plan).Sum(force => force.DummyCards) == 5,
             "Scenario 5 successful sonar clears dummy force and preserves the dummy cards");
+    }
+
+    private static void ScenarioSixRoute()
+    {
+        var definition = FirstIslandChainScenarios.WolvesOfBashiChannel;
+        var game = new ScenarioOneGame(6606, null, true, false,
+            new SequenceDieRoller(1, 1, 1, 1, 1, 1, 6, 6, 6, 6, 6), definition);
+        Check(game.State.MaximumTurns == 7 && game.State.Forces.Count == 5 &&
+            game.State.Forces.Where(force => force.Side == Side.Plan).All(force => force.IsSubmarineOnly) &&
+            game.State.Formation("US Los Angeles").IsSubmarineOnly,
+            "Scenario 6 exact separated surface/submarine order of battle and seven-turn limit");
+        var snapshot = game.CaptureSnapshot();
+        snapshot.activeSide = Side.UsNavy;
+        snapshot.activeFormationId = "US Hunter-Killer Group";
+        snapshot.phase = ActivationPhase.PlayerAction;
+        var hunter = snapshot.formations.Single(item => item.id == "US Hunter-Killer Group");
+        var yuan = snapshot.formations.Single(item => item.id == "PLAN Yuan 1");
+        yuan.column = hunter.column;
+        yuan.row = hunter.row;
+        game.ApplySnapshot(snapshot);
+        Check(game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy, game.State.Revision,
+                targetId: "PLAN Yuan 1", searchMode: "visual")).Accepted &&
+            game.State.Detection.ContactFor(Side.UsNavy, "PLAN Yuan 1").Level == ContactLevel.Located &&
+            game.CaptureSnapshotFor(Side.UsNavy).formations.Single(item => item.id == "PLAN Yuan 1").unitIds.Length == 0,
+            "Scenario 6 surface search reports no ships without leaking submarine contents");
+        Check(game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy, game.State.Revision,
+                targetId: "PLAN Yuan 1", searchMode: "sonar")).Accepted &&
+            game.State.Detection.IsClassified(Side.UsNavy, "PLAN Yuan 1"),
+            "Scenario 6 sonar classifies an undersea contact");
+        Check(game.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy, game.State.Revision,
+                targetId: "PLAN Yuan 1")).Accepted && game.State.Unit("plan-type-039ab-1").IsSunk,
+            "Scenario 6 same-hex ASW attack uses the ASW table");
+
+        var ssmGame = new ScenarioOneGame(6608, null, true, false, null, definition);
+        var ssmSnapshot = ssmGame.CaptureSnapshot();
+        ssmSnapshot.activeSide = Side.Plan;
+        ssmSnapshot.activeFormationId = "PLAN Type 093B";
+        ssmSnapshot.phase = ActivationPhase.PlayerAction;
+        var ssmSub = ssmSnapshot.formations.Single(item => item.id == "PLAN Type 093B");
+        var ssmTarget = ssmSnapshot.formations.Single(item => item.id == "US Hunter-Killer Group");
+        ssmSub.column = ssmTarget.column;
+        ssmSub.row = ssmTarget.row;
+        ssmGame.ApplySnapshot(ssmSnapshot);
+        ssmGame.State.Detection.Detect(Side.Plan, ssmGame.State.Formation("US Hunter-Killer Group"),
+            DetectionMethod.Sonar, ssmGame.State.Turn);
+        Check(ssmGame.Execute(new GameCommand(GameCommandType.Attack, Side.Plan, ssmGame.State.Revision,
+                targetId: "US Hunter-Killer Group", enabled: true)).Accepted &&
+            ssmGame.State.Phase == ActivationPhase.MissileCombat,
+            "Scenario 6 submarine may choose normal SSM combat instead of torpedoes");
+
+        var score = new ScenarioOneGame(6607, null, true, false, null, definition);
+        var scoreSnapshot = score.CaptureSnapshot();
+        scoreSnapshot.units.Single(unit => unit.id == "plan-type-039ab-1").hullDamage = 2;
+        scoreSnapshot.units.Single(unit => unit.id == "plan-type-039ab-2").hullDamage = 2;
+        scoreSnapshot.units.Single(unit => unit.id == "us-burke-iii").hullDamage = 2;
+        scoreSnapshot.units.Single(unit => unit.id == "us-constellation-1").hullDamage = 1;
+        score.ApplySnapshot(scoreSnapshot);
+        Check(score.CurrentScore().Result == "PLAN VICTORY" && score.CurrentScore().UsTieBreakDamage == 1,
+            "Scenario 6 every two US losses offsets one PLAN submarine loss");
+        scoreSnapshot = score.CaptureSnapshot();
+        scoreSnapshot.turn = 7;
+        scoreSnapshot.activeSide = Side.UsNavy;
+        scoreSnapshot.activeFormationId = "US Hunter-Killer Group";
+        scoreSnapshot.phase = ActivationPhase.PlayerAction;
+        scoreSnapshot.usDeclaredSpeed = 0;
+        scoreSnapshot.usMovementSpent = 0;
+        scoreSnapshot.formations.Single(item => item.id == "US Hunter-Killer Group").declaredSpeed = 0;
+        scoreSnapshot.remainingChits = Array.Empty<MovementChitData>();
+        score.ApplySnapshot(scoreSnapshot);
+        Check(score.Execute(new GameCommand(GameCommandType.EndActivation, Side.UsNavy,
+                score.State.Revision)).Accepted && score.State.IsGameOver &&
+            score.State.EndReason == ScenarioEndReason.TurnLimit && score.State.Result == "PLAN VICTORY",
+            "Scenario 6 resolves the adjusted survival result after seven complete turns");
+    }
+
+    private static void ScenarioSevenRoute()
+    {
+        var definition = FirstIslandChainScenarios.LifelineToTaiwan;
+        var game = new ScenarioOneGame(7707, null, true, false, null, definition);
+        Check(game.State.MaximumTurns == 10 && game.State.Forces.Count == 7 &&
+            game.State.Forces.Count(force => force.Side == Side.UsNavy) == 4 &&
+            game.State.Forces.Count(force => force.Side == Side.Plan) == 3 &&
+            game.State.MovementCup.TotalCount == 7,
+            "Scenario 7 exact independent convoy/submarine forces and ten-turn limit");
+        Check(!game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.UsNavy,
+                game.State.Revision, new HexCoord(8, 10), formationId: "US Convoy Alpha")).Accepted &&
+            game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.UsNavy,
+                game.State.Revision, new HexCoord(9, 12), formationId: "US Convoy Alpha")).Accepted,
+            "Scenario 7 US setup stays inside its assembly zone but outside the destination");
+        Check(!game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.Plan,
+                game.State.Revision, new HexCoord(11, 10), formationId: "PLAN Yuan 1")).Accepted &&
+            game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.Plan,
+                game.State.Revision, new HexCoord(14, 14), formationId: "PLAN Yuan 1")).Accepted,
+            "Scenario 7 PLAN setup excludes Taipei and the 0910 two-hex zone");
+
+        var arrival = new ScenarioOneGame(7708, null, true, false, null, definition);
+        var arrivalSnapshot = arrival.CaptureSnapshot();
+        arrivalSnapshot.activeSide = Side.UsNavy;
+        arrivalSnapshot.activeFormationId = "US Convoy Alpha";
+        arrivalSnapshot.phase = ActivationPhase.PlayerMove;
+        arrivalSnapshot.usDeclaredSpeed = 1;
+        var alpha = arrivalSnapshot.formations.Single(item => item.id == "US Convoy Alpha");
+        alpha.column = 9;
+        alpha.row = 10;
+        alpha.declaredSpeed = 1;
+        arrival.ApplySnapshot(arrivalSnapshot);
+        Check(arrival.Execute(new GameCommand(GameCommandType.Move, Side.UsNavy,
+                arrival.State.Revision, new HexCoord(8, 10))).Accepted &&
+            arrival.State.Formation("US Convoy Alpha").HasArrived &&
+            arrival.State.Formation("US Convoy Alpha").MovementRemaining == 0,
+            "Scenario 7 port entry records arrival and ends on-map movement");
+        var refreshedCup = new MovementChitCup(new SeededDieRoller(1));
+        refreshedCup.Reset(arrival.State.Forces);
+        Check(refreshedCup.Remaining.All(chit => chit.FormationId != "US Convoy Alpha"),
+            "Scenario 7 arrived convoy receives no future movement chit");
+
+        var scoring = new ScenarioOneGame(7709, null, true, false, null, definition);
+        var scoringSnapshot = scoring.CaptureSnapshot();
+        scoringSnapshot.formations.Single(item => item.id == "US Convoy Bravo").arrived = true;
+        scoringSnapshot.formations.Single(item => item.id == "US Convoy Charlie").arrived = true;
+        scoringSnapshot.units.Single(item => item.id == "us-merchant-1").hullDamage = 4;
+        scoringSnapshot.units.Single(item => item.id == "plan-type-039ab-1").hullDamage = 2;
+        scoring.ApplySnapshot(scoringSnapshot);
+        Check(scoring.CurrentScore().Result == "US NAVY VICTORY" &&
+            scoring.CurrentScore().UsObjectiveDamage == 2 && scoring.CurrentScore().PlanObjectiveDamage == 1 &&
+            scoring.CurrentScore().UsTieBreakDamage == 1 && scoring.CurrentScore().PlanTieBreakDamage == 1,
+            "Scenario 7 one submarine loss offsets one lost merchant");
+        var planProjection = new ScenarioOneGame(1, null, true);
+        planProjection.ApplySnapshot(scoring.CaptureSnapshotFor(Side.Plan));
+        Check(planProjection.CurrentScore().Result == "US NAVY VICTORY" &&
+            planProjection.CurrentScore().UsObjectiveDamage == 2 &&
+            planProjection.CurrentScore().PlanTieBreakDamage == 1,
+            "Scenario 7 redacted multiplayer projection retains the public authoritative score");
+
+        scoringSnapshot = scoring.CaptureSnapshot();
+        scoringSnapshot.formations.Single(item => item.id == "US Convoy Bravo").arrived = false;
+        scoringSnapshot.turn = 10;
+        scoringSnapshot.activeSide = Side.UsNavy;
+        scoringSnapshot.activeFormationId = "US Replenishment Group";
+        scoringSnapshot.phase = ActivationPhase.PlayerAction;
+        scoringSnapshot.usDeclaredSpeed = 0;
+        scoringSnapshot.formations.Single(item => item.id == "US Replenishment Group").declaredSpeed = 0;
+        scoringSnapshot.remainingChits = Array.Empty<MovementChitData>();
+        scoring.ApplySnapshot(scoringSnapshot);
+        Check(scoring.Execute(new GameCommand(GameCommandType.EndActivation, Side.UsNavy,
+                scoring.State.Revision)).Accepted && scoring.State.IsGameOver &&
+            scoring.State.EndReason == ScenarioEndReason.TurnLimit && scoring.State.Result == "PLAN VICTORY",
+            "Scenario 7 unresolved lifeline ends with PLAN victory after ten complete turns");
     }
 
     private static void ReleaseVersionRoute()

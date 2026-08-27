@@ -77,6 +77,34 @@ namespace Harpoon.Runtime
             return root;
         }
 
+        public static Transform CreateSubmarine(string name, Color sideColor)
+        {
+            var root = new GameObject(name).transform;
+            var hull = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            hull.name = "Submarine Hull";
+            hull.transform.SetParent(root);
+            hull.transform.localPosition = new Vector3(0f, -0.08f, 0f);
+            hull.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
+            hull.transform.localScale = new Vector3(0.26f, 0.82f, 0.3f);
+            hull.GetComponent<Renderer>().sharedMaterial = Material(
+                Color.Lerp(sideColor, new Color(0.08f, 0.14f, 0.19f), 0.62f), 0.68f, 0.32f);
+
+            AddBox(root, "Sail", new Vector3(0f, 0.25f, 0f),
+                new Vector3(0.28f, 0.24f, 0.18f), Color.Lerp(sideColor, Color.black, 0.52f));
+            AddBox(root, "Dive Plane", new Vector3(0f, 0.18f, 0f),
+                new Vector3(0.12f, 0.035f, 0.76f), Color.Lerp(sideColor, Color.black, 0.58f));
+            AddBox(root, "Wake", new Vector3(-0.82f, -0.2f, 0f),
+                new Vector3(0.75f, 0.018f, 0.09f), new Color(0.48f, 0.8f, 0.94f, 0.55f));
+
+            var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            ring.name = "Submarine Indicator";
+            ring.transform.SetParent(root);
+            ring.transform.localPosition = new Vector3(0f, -0.36f, 0f);
+            ring.transform.localScale = new Vector3(0.82f, 0.025f, 0.82f);
+            ring.GetComponent<Renderer>().sharedMaterial = Material(sideColor, 0f, 0.68f);
+            return root;
+        }
+
         public static GameObject CreateMissile(Color color)
         {
             var missile = GameObject.CreatePrimitive(PrimitiveType.Sphere);

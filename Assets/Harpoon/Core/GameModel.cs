@@ -51,13 +51,14 @@ namespace Harpoon.Core
         public int AntiSubmarineWarfare { get; }
         public bool EsmEquipped { get; }
         public bool IsAircraftCarrier { get; }
+        public bool IsSubmarine { get; }
         public int Torpedoes { get; }
 
         public UnitDefinition(string id, string displayName, Side side, UnitRole role, int shortSam,
             int longSam, int pointDefense, int shortSsm, int longSsm, int guns, int speed, int hull,
             int airSearchRadar = 0, int surfaceSearchRadar = 0, int sonar = 0,
             int antiSubmarineWarfare = 0, bool esmEquipped = true, bool isAircraftCarrier = false,
-            int torpedoes = 0)
+            int torpedoes = 0, bool isSubmarine = false)
         {
             Id = id;
             DisplayName = displayName;
@@ -78,6 +79,7 @@ namespace Harpoon.Core
             EsmEquipped = esmEquipped;
             IsAircraftCarrier = isAircraftCarrier;
             Torpedoes = torpedoes;
+            IsSubmarine = isSubmarine;
         }
     }
 
@@ -233,6 +235,8 @@ namespace Harpoon.Core
         public bool HasArrived { get; private set; }
         public int DummyCards { get; private set; }
         public bool IsDummyOnly => _units.Count == 0 && DummyCards > 0;
+        public bool IsSubmarineOnly => _units.Count > 0 && _units.All(unit => unit.Definition.IsSubmarine);
+        public bool IsSurfaceOnly => _units.Count > 0 && _units.All(unit => !unit.Definition.IsSubmarine);
         public IEnumerable<UnitState> ActiveUnits => _units.Where(unit => !unit.IsSunk);
         public bool IsDestroyed => _units.Count > 0 && _units.All(unit => unit.IsSunk);
         public UnitState Objective => _units.FirstOrDefault(unit => unit.Definition.Role == UnitRole.Objective);
@@ -249,6 +253,9 @@ namespace Harpoon.Core
             Side = side;
             Position = position;
             _units = new List<UnitState>(units);
+            if (_units.Any(unit => unit.Definition.IsSubmarine) &&
+                _units.Any(unit => !unit.Definition.IsSubmarine))
+                throw new InvalidOperationException("Submarines may not be grouped with surface vessels.");
             DummyCards = Math.Max(0, dummyCards);
         }
 
@@ -300,7 +307,11 @@ namespace Harpoon.Core
         }
 
         public void MoveTo(HexCoord destination) => Position = destination;
-        public void MarkArrived() => HasArrived = true;
+        public void MarkArrived()
+        {
+            HasArrived = true;
+            MovementPointsSpent = MovementAllowance;
+        }
         public void AddDummyCards(int count) => DummyCards += Math.Max(0, count);
         public bool TryRemoveDummyCards(int count)
         {

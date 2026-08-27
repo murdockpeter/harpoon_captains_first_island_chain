@@ -127,9 +127,11 @@ namespace Harpoon.Editor
             ValidateScenarioThreeRelease();
             ValidateScenarioFourRelease();
             ValidateScenarioFiveRelease();
+            ValidateScenarioSixRelease();
+            ValidateScenarioSevenRelease();
 
             ValidateLoopbackTransport();
-            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-5 including hidden contacts, dummy deception, convoy arrival, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
+            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-7 including hidden contacts, dummy deception, undersea combat, multi-convoy arrival, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
         }
 
         public static void BuildWindowsPlayer()
@@ -443,6 +445,49 @@ namespace Harpoon.Editor
             var usSnapshot = game.CaptureSnapshotFor(Side.UsNavy);
             Require(usSnapshot.formations.Where(item => item.side == Side.Plan).All(item => item.dummyCards == 0),
                 "Scenario 5 must not leak opposing dummy-card counts in side-private snapshots.");
+        }
+
+        private static void ValidateScenarioSixRelease()
+        {
+            var game = new ScenarioOneGame(6606, null, true, false, null,
+                FirstIslandChainScenarios.WolvesOfBashiChannel);
+            Require(game.State.MaximumTurns == 7 && game.State.Forces.Count == 5 &&
+                    game.State.Forces.Where(force => force.Side == Side.Plan).All(force => force.IsSubmarineOnly) &&
+                    game.State.Formation("US Los Angeles").IsSubmarineOnly,
+                "Scenario 6 must load its exact separated surface/submarine forces and seven-turn limit.");
+            var usView = game.CaptureSnapshotFor(Side.UsNavy);
+            Require(usView.formations.Where(item => item.side == Side.Plan).All(item => item.unitIds.Length == 0),
+                "Scenario 6 must redact every undetected PLAN submarine's identity and contents.");
+            var mixed = new[] { game.State.Unit("us-los-angeles"), game.State.Unit("us-burke-iii") };
+            var rejected = false;
+            try { new TaskForceState("Illegal mixed force", Side.UsNavy, new HexCoord(15, 12), mixed); }
+            catch (InvalidOperationException) { rejected = true; }
+            Require(rejected, "Scenario 6 must prohibit grouping submarines with surface vessels.");
+        }
+
+        private static void ValidateScenarioSevenRelease()
+        {
+            var game = new ScenarioOneGame(7707, null, true, false, null,
+                FirstIslandChainScenarios.LifelineToTaiwan);
+            Require(game.State.MaximumTurns == 10 && game.State.Forces.Count == 7 &&
+                    game.State.Forces.Count(force => force.Side == Side.UsNavy) == 4 &&
+                    game.State.Forces.Count(force => force.Side == Side.Plan) == 3 &&
+                    game.State.Forces.SelectMany(force => force.Units)
+                        .Count(unit => unit.Definition.Role == UnitRole.Objective) == 3,
+                "Scenario 7 must load four independent US groups, three PLAN submarines, three merchants, and ten turns.");
+            Require(!ScenarioOneGame.IsLegalDeploymentHex(game.State.Scenario, game.State.Map,
+                    Side.UsNavy, new HexCoord(8, 10)) &&
+                    ScenarioOneGame.IsLegalDeploymentHex(game.State.Scenario, game.State.Map,
+                        Side.UsNavy, new HexCoord(9, 12)) &&
+                    !ScenarioOneGame.IsLegalDeploymentHex(game.State.Scenario, game.State.Map,
+                        Side.Plan, new HexCoord(11, 10)) &&
+                    ScenarioOneGame.IsLegalDeploymentHex(game.State.Scenario, game.State.Map,
+                        Side.Plan, new HexCoord(14, 14)),
+                "Scenario 7 deployment zones and prohibited setup zones must match the printed setup.");
+            var hidden = game.CaptureSnapshotFor(Side.UsNavy);
+            Require(hidden.formations.Where(item => item.side == Side.Plan)
+                    .All(item => item.column == 0 && item.unitIds.Length == 0),
+                "Scenario 7 must keep every undetected PLAN submarine position and card private.");
         }
 
         private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,

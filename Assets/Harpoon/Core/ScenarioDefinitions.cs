@@ -9,7 +9,9 @@ namespace Harpoon.Core
         ObjectiveThenEscort,
         TotalHullHits,
         GunfireHullHits,
-        ConvoyArrival
+        ConvoyArrival,
+        SubmarineSurvival,
+        ConvoySurvival
     }
 
     public sealed class ScenarioUnitDefinition
@@ -63,6 +65,10 @@ namespace Harpoon.Core
         public bool HasUsDestination { get; }
         public HexCoord UsDestination { get; }
         public int PlanDeploymentMinimumDistance { get; }
+        public bool HasDeploymentZones { get; }
+        public HexCoord DeploymentCenter { get; }
+        public int UsDeploymentRadius { get; }
+        public int PlanProhibitedRadius { get; }
         public IReadOnlyList<ScenarioFormationDefinition> Formations { get; }
 
         public ScenarioDefinition(string id, string name, string subtitle, string briefing,
@@ -71,7 +77,9 @@ namespace Harpoon.Core
             string planTieBreakUnitId, IEnumerable<ScenarioFormationDefinition> formations,
             ScenarioScoringMode scoringMode = ScenarioScoringMode.ObjectiveThenEscort,
             bool hasUsDestination = false, HexCoord usDestination = default,
-            int planDeploymentMinimumDistance = 0)
+            int planDeploymentMinimumDistance = 0, bool hasDeploymentZones = false,
+            HexCoord deploymentCenter = default, int usDeploymentRadius = 0,
+            int planProhibitedRadius = 0)
         {
             Id = id ?? string.Empty;
             Name = name ?? string.Empty;
@@ -89,6 +97,10 @@ namespace Harpoon.Core
             HasUsDestination = hasUsDestination;
             UsDestination = usDestination;
             PlanDeploymentMinimumDistance = Math.Max(0, planDeploymentMinimumDistance);
+            HasDeploymentZones = hasDeploymentZones;
+            DeploymentCenter = deploymentCenter;
+            UsDeploymentRadius = Math.Max(0, usDeploymentRadius);
+            PlanProhibitedRadius = Math.Max(0, planProhibitedRadius);
             Formations = (formations ?? Array.Empty<ScenarioFormationDefinition>()).ToArray();
         }
     }
@@ -214,8 +226,76 @@ namespace Harpoon.Core
                     Array.Empty<ScenarioUnitDefinition>(), 5)
             }, ScenarioScoringMode.ConvoyArrival, true, new HexCoord(8, 10), 4);
 
+        public static readonly ScenarioDefinition WolvesOfBashiChannel = new ScenarioDefinition(
+            "fic-06", "Wolves of the Bashi Channel", "FIRST ISLAND CHAIN · SCENARIO 6",
+            "A PLAN wolf pack patrols the Bashi Channel while a US hunter-killer surface group and " +
+            "Los Angeles-class submarine enter from the east to clear the strait.",
+            "After seven turns PLAN wins if its adjusted losses leave at least two submarines alive; " +
+            "every two US ships sunk offsets one PLAN submarine loss. Otherwise the US wins.",
+            "First Island Chain p. 25; Captain's Rules pp. 10-11", 7, true,
+            string.Empty, string.Empty, string.Empty, string.Empty,
+            new[]
+            {
+                new ScenarioFormationDefinition("US Hunter-Killer Group", Side.UsNavy, new HexCoord(15, 12),
+                    new[]
+                    {
+                        new ScenarioUnitDefinition("us-burke-iii", "us-burke-iii", UnitRole.Escort),
+                        new ScenarioUnitDefinition("us-constellation-1", "us-constellation", UnitRole.Escort),
+                        new ScenarioUnitDefinition("us-constellation-2", "us-constellation", UnitRole.Escort)
+                    }),
+                new ScenarioFormationDefinition("US Los Angeles", Side.UsNavy, new HexCoord(15, 14),
+                    new[] { new ScenarioUnitDefinition("us-los-angeles", "us-los-angeles", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Yuan 1", Side.Plan, new HexCoord(8, 12),
+                    new[] { new ScenarioUnitDefinition("plan-type-039ab-1", "plan-type-039ab", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Yuan 2", Side.Plan, new HexCoord(10, 12),
+                    new[] { new ScenarioUnitDefinition("plan-type-039ab-2", "plan-type-039ab", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Type 093B", Side.Plan, new HexCoord(12, 12),
+                    new[] { new ScenarioUnitDefinition("plan-type-093b", "plan-type-093b", UnitRole.Escort) })
+            }, ScenarioScoringMode.SubmarineSurvival);
+
+        public static readonly ScenarioDefinition LifelineToTaiwan = new ScenarioDefinition(
+            "fic-07", "Lifeline to Taiwan", "FIRST ISLAND CHAIN · SCENARIO 7",
+            "Four independent US convoy elements must cross the submarine screen and reach Taipei / Zuoying. " +
+            "PLAN deploys three submarines outside the convoy assembly area.",
+            "After ten turns the US wins if three merchant ships survive and arrive. Each PLAN submarine sunk " +
+            "offsets one merchant loss; otherwise PLAN wins.",
+            "First Island Chain p. 25; Captain's Rules pp. 10-11", 10, true,
+            string.Empty, string.Empty, string.Empty, string.Empty,
+            new[]
+            {
+                new ScenarioFormationDefinition("US Convoy Alpha", Side.UsNavy, new HexCoord(9, 10),
+                    new[]
+                    {
+                        new ScenarioUnitDefinition("us-constellation-1", "us-constellation", UnitRole.Escort),
+                        new ScenarioUnitDefinition("us-merchant-1", "generic-merchant", UnitRole.Objective)
+                    }),
+                new ScenarioFormationDefinition("US Convoy Bravo", Side.UsNavy, new HexCoord(9, 11),
+                    new[]
+                    {
+                        new ScenarioUnitDefinition("us-constellation-2", "us-constellation", UnitRole.Escort),
+                        new ScenarioUnitDefinition("us-merchant-2", "generic-merchant", UnitRole.Objective)
+                    }),
+                new ScenarioFormationDefinition("US Convoy Charlie", Side.UsNavy, new HexCoord(10, 10),
+                    new[]
+                    {
+                        new ScenarioUnitDefinition("us-burke-iia", "us-burke-iia", UnitRole.Escort),
+                        new ScenarioUnitDefinition("us-merchant-3", "generic-merchant", UnitRole.Objective)
+                    }),
+                new ScenarioFormationDefinition("US Replenishment Group", Side.UsNavy, new HexCoord(10, 11),
+                    new[] { new ScenarioUnitDefinition("us-tanker", "generic-tanker", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Yuan 1", Side.Plan, new HexCoord(14, 14),
+                    new[] { new ScenarioUnitDefinition("plan-type-039ab-1", "plan-type-039ab", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Yuan 2", Side.Plan, new HexCoord(15, 12),
+                    new[] { new ScenarioUnitDefinition("plan-type-039ab-2", "plan-type-039ab", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Type 093B", Side.Plan, new HexCoord(13, 18),
+                    new[] { new ScenarioUnitDefinition("plan-type-093b", "plan-type-093b", UnitRole.Escort) })
+            }, ScenarioScoringMode.ConvoySurvival, true, new HexCoord(8, 10), 0,
+            true, new HexCoord(9, 10), 2, 2);
+
         public static IReadOnlyList<ScenarioDefinition> Introductory { get; } =
-            new[] { ContactOffBashiChannel, FlagshipDuel, CloseAboard, PicketLine, GhostFleet };
+            new[] { ContactOffBashiChannel, FlagshipDuel, CloseAboard, PicketLine, GhostFleet,
+                WolvesOfBashiChannel, LifelineToTaiwan };
+
 
         public static ScenarioDefinition Get(string id) => Introductory.FirstOrDefault(item =>
             string.Equals(item.Id, id, StringComparison.OrdinalIgnoreCase));

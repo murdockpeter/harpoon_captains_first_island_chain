@@ -56,7 +56,7 @@ namespace Harpoon.Core
         public void Reset(IEnumerable<TaskForceState> formations)
         {
             Reset((formations ?? Array.Empty<TaskForceState>())
-                .Where(force => !force.IsDestroyed)
+                .Where(force => !force.IsDestroyed && !force.HasArrived)
                 .Select(force => new MovementChit(force.Id, force.Side)));
         }
 

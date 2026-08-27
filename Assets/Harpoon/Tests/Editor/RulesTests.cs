@@ -130,6 +130,239 @@ namespace Harpoon.Core.Tests
         }
 
         [Test]
+        public void ScenarioSixLoadsModernSubmarinesAndRejectsMixedTaskForces()
+        {
+            var state = ScenarioOne.Create(false, FirstIslandChainScenarios.WolvesOfBashiChannel);
+            Assert.That(state.MaximumTurns, Is.EqualTo(7));
+            Assert.That(state.Forces.Count, Is.EqualTo(5));
+            Assert.That(state.Forces.Where(force => force.Side == Side.Plan)
+                .SelectMany(force => force.Units).Count(unit => unit.Definition.IsSubmarine), Is.EqualTo(3));
+            Assert.That(state.Unit("us-los-angeles").Definition.Torpedoes, Is.EqualTo(4));
+            Assert.That(state.Unit("plan-type-093b").Definition.Sonar, Is.EqualTo(5));
+            Assert.Throws<System.InvalidOperationException>(() => new TaskForceState("Illegal", Side.UsNavy,
+                new HexCoord(1, 1), new[] { state.Unit("us-los-angeles"), state.Unit("us-burke-iii") }));
+        }
+
+        [Test]
+        public void ScenarioSixSonarUsesCompleteModifierMatrixAndNaturalSixFails()
+        {
+            var state = ScenarioOne.Create(false, FirstIslandChainScenarios.WolvesOfBashiChannel);
+            var observer = state.Formation("US Hunter-Killer Group");
+            var target = state.Formation("PLAN Yuan 1");
+            observer.MoveTo(new HexCoord(9, 12));
+            target.MoveTo(new HexCoord(10, 12));
+            observer.DeclareSpeed(1);
+            target.DeclareSpeed(2);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(4))
+                .ResolveSonar(observer, target, false), Is.True);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(5))
+                .ResolveSonar(observer, target, false), Is.False);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(5))
+                .ResolveSonar(observer, target, true), Is.True);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(6))
+                .ResolveSonar(observer, target, true), Is.False);
+            target.MoveTo(new HexCoord(11, 12));
+            observer.DeclareSpeed(0);
+            target.DeclareSpeed(0);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(2))
+                .ResolveSonar(observer, target, false), Is.True);
+            Assert.That(new DetectionResolver(new SequenceDieRoller(3))
+                .ResolveSonar(observer, target, false), Is.False);
+        }
+
+        [Test]
+        public void ScenarioSixSurfaceSearchCannotClassifySubButSonarAndAswCanSinkIt()
+        {
+            var game = new ScenarioOneGame(66, null, true, false,
+                new SequenceDieRoller(1, 1, 1, 1, 1, 1, 6, 6, 6, 6, 6),
+                FirstIslandChainScenarios.WolvesOfBashiChannel);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Hunter-Killer Group";
+            snapshot.phase = ActivationPhase.PlayerAction;
+            var hunter = snapshot.formations.Single(item => item.id == "US Hunter-Killer Group");
+            var yuan = snapshot.formations.Single(item => item.id == "PLAN Yuan 1");
+            yuan.column = hunter.column;
+            yuan.row = hunter.row;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                game.State.Revision, targetId: "PLAN Yuan 1", searchMode: "visual")).Accepted, Is.True);
+            Assert.That(game.State.Detection.ContactFor(Side.UsNavy, "PLAN Yuan 1").Level,
+                Is.EqualTo(ContactLevel.Located));
+            var located = game.CaptureSnapshotFor(Side.UsNavy);
+            Assert.That(located.formations.Single(item => item.id == "PLAN Yuan 1").unitIds, Is.Empty);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                game.State.Revision, targetId: "PLAN Yuan 1", searchMode: "sonar")).Accepted, Is.True);
+            Assert.That(game.State.Detection.IsClassified(Side.UsNavy, "PLAN Yuan 1"), Is.True);
+            var attack = game.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                game.State.Revision, targetId: "PLAN Yuan 1"));
+            Assert.That(attack.Accepted, Is.True);
+            Assert.That(game.State.Unit("plan-type-039ab-1").IsSunk, Is.True);
+        }
+
+        [Test]
+        public void ScenarioSixSevenTurnScoreAppliesTwoShipLossOffset()
+        {
+            var game = new ScenarioOneGame(67, null, true, false, null,
+                FirstIslandChainScenarios.WolvesOfBashiChannel);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.units.Single(unit => unit.id == "plan-type-039ab-1").hullDamage = 2;
+            snapshot.units.Single(unit => unit.id == "plan-type-039ab-2").hullDamage = 2;
+            snapshot.units.Single(unit => unit.id == "us-burke-iii").hullDamage = 2;
+            snapshot.units.Single(unit => unit.id == "us-constellation-1").hullDamage = 1;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.CurrentScore().Result, Is.EqualTo("PLAN VICTORY"));
+            snapshot = game.CaptureSnapshot();
+            snapshot.units.Single(unit => unit.id == "us-constellation-1").hullDamage = 0;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.CurrentScore().Result, Is.EqualTo("US NAVY VICTORY"));
+
+            snapshot = game.CaptureSnapshot();
+            snapshot.turn = 7;
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Hunter-Killer Group";
+            snapshot.phase = ActivationPhase.PlayerAction;
+            snapshot.usDeclaredSpeed = 0;
+            snapshot.usMovementSpent = 0;
+            snapshot.formations.Single(item => item.id == "US Hunter-Killer Group").declaredSpeed = 0;
+            snapshot.remainingChits = System.Array.Empty<MovementChitData>();
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.EndActivation, Side.UsNavy,
+                game.State.Revision)).Accepted, Is.True);
+            Assert.That(game.State.EndReason, Is.EqualTo(ScenarioEndReason.TurnLimit));
+            Assert.That(game.State.Result, Is.EqualTo("US NAVY VICTORY"));
+        }
+
+        [Test]
+        public void ScenarioSixTorpedoesResolveBeforeScreenCounterattackAndSsmCannotTargetSubs()
+        {
+            var game = new ScenarioOneGame(68, null, true, false,
+                new SequenceDieRoller(1, 1, 1, 1, 6, 6, 6, 6, 6, 6),
+                FirstIslandChainScenarios.WolvesOfBashiChannel);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.Plan;
+            snapshot.activeFormationId = "PLAN Type 093B";
+            snapshot.phase = ActivationPhase.PlayerAction;
+            var plan = snapshot.formations.Single(item => item.id == "PLAN Type 093B");
+            var surface = snapshot.formations.Single(item => item.id == "US Hunter-Killer Group");
+            plan.column = surface.column;
+            plan.row = surface.row;
+            game.ApplySnapshot(snapshot);
+            game.State.Detection.Detect(Side.Plan, game.State.Formation("US Hunter-Killer Group"),
+                DetectionMethod.Sonar, game.State.Turn);
+            var torpedo = game.Execute(new GameCommand(GameCommandType.Attack, Side.Plan,
+                game.State.Revision, targetId: "US Hunter-Killer Group"));
+            Assert.That(torpedo.Accepted, Is.True);
+            Assert.That(game.State.Unit("us-burke-iii").IsSunk, Is.True);
+            Assert.That(game.State.Unit("plan-type-093b").HullDamage, Is.Zero,
+                "A screening ship sunk by the torpedo cannot counterattack.");
+
+            var ranged = new ScenarioOneGame(69, null, true, false, null,
+                FirstIslandChainScenarios.WolvesOfBashiChannel);
+            var rangedSnapshot = ranged.CaptureSnapshot();
+            rangedSnapshot.activeSide = Side.UsNavy;
+            rangedSnapshot.activeFormationId = "US Hunter-Killer Group";
+            rangedSnapshot.phase = ActivationPhase.PlayerAction;
+            var hunter = rangedSnapshot.formations.Single(item => item.id == "US Hunter-Killer Group");
+            var submarine = rangedSnapshot.formations.Single(item => item.id == "PLAN Yuan 1");
+            submarine.column = hunter.column - 1;
+            submarine.row = hunter.row;
+            ranged.ApplySnapshot(rangedSnapshot);
+            ranged.State.Detection.Detect(Side.UsNavy, ranged.State.Formation("PLAN Yuan 1"),
+                DetectionMethod.Sonar, ranged.State.Turn);
+            var illegalSsm = ranged.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
+                ranged.State.Revision, targetId: "PLAN Yuan 1"));
+            Assert.That(illegalSsm.Violation.Code, Is.EqualTo(RuleViolationCode.NoLegalWeapon));
+        }
+
+        [Test]
+        public void ScenarioSevenLoadsIndependentConvoysAndEnforcesBothDeploymentZones()
+        {
+            var definition = FirstIslandChainScenarios.LifelineToTaiwan;
+            var game = new ScenarioOneGame(77, null, true, false, null, definition);
+            Assert.That(game.State.MaximumTurns, Is.EqualTo(10));
+            Assert.That(game.State.Forces.Count, Is.EqualTo(7));
+            Assert.That(game.State.Forces.Count(force => force.Side == Side.UsNavy), Is.EqualTo(4));
+            Assert.That(game.State.Forces.Count(force => force.Side == Side.Plan), Is.EqualTo(3));
+            Assert.That(game.State.Forces.SelectMany(force => force.Units)
+                .Count(unit => unit.Definition.Role == UnitRole.Objective), Is.EqualTo(3));
+            Assert.That(game.State.MovementCup.TotalCount, Is.EqualTo(7));
+
+            var usInvalid = game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.UsNavy,
+                game.State.Revision, new HexCoord(8, 10), formationId: "US Convoy Alpha"));
+            Assert.That(usInvalid.Violation.Code, Is.EqualTo(RuleViolationCode.InvalidFormation));
+            Assert.That(game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.UsNavy,
+                game.State.Revision, new HexCoord(9, 12), formationId: "US Convoy Alpha")).Accepted, Is.True);
+            var planInvalid = game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.Plan,
+                game.State.Revision, new HexCoord(11, 10), formationId: "PLAN Yuan 1"));
+            Assert.That(planInvalid.Violation.Code, Is.EqualTo(RuleViolationCode.InvalidFormation));
+            Assert.That(game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.Plan,
+                game.State.Revision, new HexCoord(14, 14), formationId: "PLAN Yuan 1")).Accepted, Is.True);
+        }
+
+        [Test]
+        public void ScenarioSevenPortEntryRemovesConvoyFromFutureChits()
+        {
+            var game = new ScenarioOneGame(78, null, true, false, null,
+                FirstIslandChainScenarios.LifelineToTaiwan);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Convoy Alpha";
+            snapshot.phase = ActivationPhase.PlayerMove;
+            snapshot.usDeclaredSpeed = 1;
+            snapshot.usMovementSpent = 0;
+            var convoy = snapshot.formations.Single(item => item.id == "US Convoy Alpha");
+            convoy.column = 9;
+            convoy.row = 10;
+            convoy.declaredSpeed = 1;
+            convoy.movementSpent = 0;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.Move, Side.UsNavy,
+                game.State.Revision, new HexCoord(8, 10))).Accepted, Is.True);
+            Assert.That(game.State.Formation("US Convoy Alpha").HasArrived, Is.True);
+            Assert.That(game.State.Formation("US Convoy Alpha").MovementRemaining, Is.Zero);
+            var cup = new MovementChitCup(new SeededDieRoller(1));
+            cup.Reset(game.State.Forces);
+            Assert.That(cup.Remaining.Any(chit => chit.FormationId == "US Convoy Alpha"), Is.False);
+            Assert.That(game.CurrentScore().UsObjectiveDamage, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ScenarioSevenSubmarineLossOffsetsOneLostMerchantAndTurnTenEndsTheGame()
+        {
+            var game = new ScenarioOneGame(79, null, true, false, null,
+                FirstIslandChainScenarios.LifelineToTaiwan);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.formations.Single(item => item.id == "US Convoy Bravo").arrived = true;
+            snapshot.formations.Single(item => item.id == "US Convoy Charlie").arrived = true;
+            snapshot.units.Single(item => item.id == "us-merchant-1").hullDamage = 4;
+            snapshot.units.Single(item => item.id == "plan-type-039ab-1").hullDamage = 2;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.CurrentScore().UsObjectiveDamage, Is.EqualTo(2));
+            Assert.That(game.CurrentScore().PlanObjectiveDamage, Is.EqualTo(1));
+            Assert.That(game.CurrentScore().UsTieBreakDamage, Is.EqualTo(1));
+            Assert.That(game.CurrentScore().PlanTieBreakDamage, Is.EqualTo(1));
+            Assert.That(game.CurrentScore().Result, Is.EqualTo("US NAVY VICTORY"));
+
+            snapshot = game.CaptureSnapshot();
+            snapshot.formations.Single(item => item.id == "US Convoy Bravo").arrived = false;
+            snapshot.turn = 10;
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Replenishment Group";
+            snapshot.phase = ActivationPhase.PlayerAction;
+            snapshot.usDeclaredSpeed = 0;
+            snapshot.usMovementSpent = 0;
+            snapshot.formations.Single(item => item.id == "US Convoy Alpha").declaredSpeed = 0;
+            snapshot.formations.Single(item => item.id == "US Replenishment Group").declaredSpeed = 0;
+            snapshot.remainingChits = System.Array.Empty<MovementChitData>();
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.EndActivation, Side.UsNavy,
+                game.State.Revision)).Accepted, Is.True);
+            Assert.That(game.State.EndReason, Is.EqualTo(ScenarioEndReason.TurnLimit));
+            Assert.That(game.State.Result, Is.EqualTo("PLAN VICTORY"));
+        }
+
+        [Test]
         public void ScenarioStartsThreeHexesApart()
         {
             var battle = ScenarioOne.Create();

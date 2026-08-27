@@ -223,33 +223,33 @@ Each scenario is both playable content and the acceptance test for a new rules f
 
 ## Scenario 6 — Wolves of the Bashi Channel: submarines
 
-- [ ] Add submarine-only task forces and prohibit mixing with surface ships.
-- [ ] Implement submarine terrain movement exceptions for ice/reef-restricted hexes where applicable.
-- [ ] Prevent direct radar and visual detection of submarines.
-- [ ] Implement sonar detection and every modifier:
-  - [ ] Best sonar value.
-  - [ ] Multiple searching ships `+1`.
-  - [ ] One-hex range `−2`.
-  - [ ] Two-hex range `−3`.
-  - [ ] Searching task-force speed penalty.
-  - [ ] Target task-force speed bonus.
-  - [ ] Previously detected target `+1`.
-  - [ ] Natural six always fails.
-- [ ] Implement submarine ESM detection.
-- [ ] Implement torpedo target restrictions and Torpedo Attack Table resolution.
-- [ ] Implement submarine-launched SSM restrictions.
-- [ ] Implement ASW counterattack eligibility and ASW Attack Table resolution.
-- [ ] Implement seven-turn survival/offset victory scoring.
-- [ ] Add deterministic Scenario 6 acceptance tests.
+- [x] Add submarine-only task forces and prohibit mixing with surface ships.
+- [x] Implement submarine terrain movement exceptions for ice/reef-restricted hexes where applicable.
+- [x] Prevent direct radar and visual detection of submarines.
+- [x] Implement sonar detection and every modifier:
+  - [x] Best sonar value.
+  - [x] Multiple searching ships `+1`.
+  - [x] One-hex range `−2`.
+  - [x] Two-hex range `−3`.
+  - [x] Searching task-force speed penalty.
+  - [x] Target task-force speed bonus.
+  - [x] Previously detected target `+1`.
+  - [x] Natural six always fails.
+- [x] Implement submarine ESM detection.
+- [x] Implement torpedo target restrictions and Torpedo Attack Table resolution.
+- [x] Implement submarine-launched SSM restrictions.
+- [x] Implement ASW counterattack eligibility and ASW Attack Table resolution.
+- [x] Implement seven-turn survival/offset victory scoring.
+- [x] Add deterministic Scenario 6 acceptance tests.
 
 ## Scenario 7 — Lifeline to Taiwan: convoy and arrival scoring
 
-- [ ] Support multiple independent task forces per side.
-- [ ] Support scenario deployment zones and prohibited setup zones.
-- [ ] Implement base/port entry and arrival state.
-- [ ] Implement merchant survival scoring and submarine-loss offsets.
-- [ ] Implement the printed ten-turn limit.
-- [ ] Add deterministic Scenario 7 acceptance tests.
+- [x] Support multiple independent task forces per side.
+- [x] Support scenario deployment zones and prohibited setup zones.
+- [x] Implement base/port entry and arrival state.
+- [x] Implement merchant survival scoring and submarine-loss offsets.
+- [x] Implement the printed ten-turn limit.
+- [x] Add deterministic Scenario 7 acceptance tests.
 
 ## Scenario 8 — Hunt the Dragon: carrier capability
 
