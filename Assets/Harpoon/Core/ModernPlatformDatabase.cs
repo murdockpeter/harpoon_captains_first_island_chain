@@ -26,6 +26,7 @@ namespace Harpoon.Core
         public int Speed { get; }
         public int Hull { get; }
         public bool LaunchesAircraft { get; }
+        public int EmbarkedAircraftCapacity { get; }
         public string Source { get; }
 
         internal ModernPlatformDefinition(string id, string displayName, Side? defaultSide,
@@ -52,6 +53,8 @@ namespace Harpoon.Core
             Sonar = sonar;
             AntiSubmarineWarfare = antiSubmarineWarfare;
             LaunchesAircraft = launchesAircraft;
+            // Carrier cards represent a complete embarked air group as one scenario-scale capacity unit.
+            EmbarkedAircraftCapacity = launchesAircraft ? 1 : 0;
             Source = source;
         }
 
@@ -61,7 +64,8 @@ namespace Harpoon.Core
             ShortSsm, LongSsm, Guns, Speed, Hull, AirSearchRadar, SurfaceSearchRadar, Sonar,
             AntiSubmarineWarfare, esmEquipped: esmEquippedOverride ?? Domain != PlatformDomain.Auxiliary,
             isAircraftCarrier: LaunchesAircraft,
-            torpedoes: Torpedoes, isSubmarine: Domain == PlatformDomain.Submarine);
+            torpedoes: Torpedoes, isSubmarine: Domain == PlatformDomain.Submarine,
+            embarkedAircraftCapacity: EmbarkedAircraftCapacity);
     }
 
     public static class ModernPlatformDatabase

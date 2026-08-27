@@ -12,6 +12,7 @@ namespace Harpoon.Core
         public int gunfireHullDamage;
         public int shortMissiles;
         public int longMissiles;
+        public int embarkedAircraft;
     }
 
     [Serializable]
@@ -58,6 +59,7 @@ namespace Harpoon.Core
         public bool radarRadiating;
         public bool radarDeclared;
         public bool arrived;
+        public bool entered = true;
         public int dummyCards;
         public DefensePairData[] defensePairs;
     }
@@ -121,7 +123,8 @@ namespace Harpoon.Core
             definition ??= FirstIslandChainScenarios.ContactOffBashiChannel;
             var formations = definition.Formations.Select(item => new TaskForceState(item.Id, item.Side, item.Start,
                 item.Units.Select(slot => new UnitState(ModernPlatformDatabase.Get(slot.PlatformId)
-                    .CreateUnit(item.Side, slot.Role, slot.UnitId))), item.DummyCards)).ToArray();
+                    .CreateUnit(item.Side, slot.Role, slot.UnitId))), item.DummyCards,
+                item.EntryEdge != BoardEdge.None)).ToArray();
             var us = formations.First(item => item.Side == Side.UsNavy);
             var plan = formations.First(item => item.Side == Side.Plan);
             var useDetection = detectionRulesEnabled || definition.DetectionRulesEnabled;
@@ -229,6 +232,9 @@ namespace Harpoon.Core
                         break;
                     case GameCommandType.Move:
                         accepted = TryMoveInternal(command.Actor, command.Destination, out violation);
+                        break;
+                    case GameCommandType.ExitMap:
+                        accepted = ExitMapInternal(command.Actor, out violation);
                         break;
                     case GameCommandType.RadiateRadar:
                         accepted = RadiateRadarInternal(command, out violation);
@@ -599,6 +605,33 @@ namespace Harpoon.Core
                 return false;
             }
             var force = State.ForceFor(side);
+            if (!force.HasEnteredMap)
+            {
+                if (force.MovementRemaining <= 0)
+                {
+                    violation = new RuleViolation(RuleViolationCode.MovementExhausted,
+                        "The task force needs one movement point to enter the board.", "declaredSpeed");
+                    Trace("REJECTED", violation.Message);
+                    return false;
+                }
+                var formation = State.Scenario.Formations.FirstOrDefault(item => item.Id == force.Id);
+                if (formation == null || formation.EntryEdge == BoardEdge.None ||
+                    !IsBoardEdgeHex(State.Map, destination, formation.EntryEdge, side))
+                {
+                    violation = new RuleViolation(RuleViolationCode.OutsideMap,
+                        $"{force.Id} must enter through a navigable {formation?.EntryEdge.ToString().ToLowerInvariant()} edge hex.",
+                        "destination");
+                    Trace("REJECTED", violation.Message);
+                    return false;
+                }
+                force.EnterMap(destination);
+                State.PlayerHasMoved = true;
+                State.Phase = force.MovementRemaining == 0 ? ActivationPhase.PlayerAction : ActivationPhase.PlayerMove;
+                AddLog($"{force.Id} entered from the {formation.EntryEdge.ToString().ToLowerInvariant()} edge at {destination}.");
+                Trace("MOVEMENT", $"{force.Id} entered map at {destination}; step={force.MovementPointsSpent}/{force.DeclaredSpeed}.");
+                if (State.DetectionRulesEnabled) ResolveMovementDetection(force);
+                return true;
+            }
             if (!force.Position.IsAdjacentTo(destination))
             {
                 violation = new RuleViolation(RuleViolationCode.NotAdjacent,
@@ -619,11 +652,12 @@ namespace Harpoon.Core
                 Trace("REJECTED", $"{side} move to {destination}: {violation.Message}");
                 return false;
             }
-            if (State.Scenario.Id == "fic-06" && side == Side.Plan &&
-                Enumerable.Range(8, 5).Min(column => destination.DistanceTo(new HexCoord(column, 12))) > 2)
+            if (State.Scenario.HasPatrolLine && side == State.Scenario.PatrolRestrictedSide &&
+                DistanceToPatrolLine(State.Scenario, destination) > State.Scenario.PatrolLineRadius)
             {
                 violation = new RuleViolation(RuleViolationCode.ImpassableTerrain,
-                    "PLAN submarines must remain within two hexes of the 0812-1212 patrol line.", "destination");
+                    $"{side} formations must remain within {State.Scenario.PatrolLineRadius} hexes of the " +
+                    $"{State.Scenario.PatrolLineStart}-{State.Scenario.PatrolLineEnd} patrol line.", "destination");
                 Trace("REJECTED", violation.Message);
                 return false;
             }
@@ -650,6 +684,72 @@ namespace Harpoon.Core
                 : $"{force.Id} entered {destination}; attack/search window opened; enemy range={destination.DistanceTo(opponent.Position)}.");
             if (State.DetectionRulesEnabled) ResolveMovementDetection(force);
             CheckGameOver();
+            return true;
+        }
+
+        public static int DistanceToPatrolLine(ScenarioDefinition scenario, HexCoord destination)
+        {
+            if (scenario == null || !scenario.HasPatrolLine) return int.MaxValue;
+            if (scenario.PatrolLineStart.Row == scenario.PatrolLineEnd.Row)
+            {
+                // Scenario 8's starting segment defines a westbound patrol axis; the two-hex
+                // restriction follows that row to the board edge so the printed exit remains reachable.
+                var first = scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
+                    ? FirstIslandChainMap.Instance.MinimumColumn
+                    : Math.Min(scenario.PatrolLineStart.Column, scenario.PatrolLineEnd.Column);
+                var last = scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
+                    ? FirstIslandChainMap.Instance.MaximumColumn
+                    : Math.Max(scenario.PatrolLineStart.Column, scenario.PatrolLineEnd.Column);
+                return Enumerable.Range(first, last - first + 1)
+                    .Min(column => destination.DistanceTo(new HexCoord(column, scenario.PatrolLineStart.Row)));
+            }
+            return Math.Min(destination.DistanceTo(scenario.PatrolLineStart),
+                destination.DistanceTo(scenario.PatrolLineEnd));
+        }
+
+        public static bool IsBoardEdgeHex(OperationalMap map, HexCoord hex, BoardEdge edge, Side side)
+        {
+            if (map == null || !map.IsNavigable(hex, side)) return false;
+            if (edge == BoardEdge.East) return hex.Column == map.MaximumColumn;
+            if (edge != BoardEdge.West) return false;
+            return !map.AllHexes.Any(candidate => candidate.Row == hex.Row &&
+                candidate.Column < hex.Column && map.IsNavigable(candidate, side));
+        }
+
+        public bool CanExitMap(TaskForceState force)
+        {
+            if (force == null || force.IsOffMap || State.Scenario.VictoryExitEdge == BoardEdge.None ||
+                force.Side != Side.Plan || force.MovementRemaining <= 0) return false;
+            var carrier = force.ActiveUnits.FirstOrDefault(unit => unit.Definition.IsAircraftCarrier);
+            return carrier != null && carrier.CanLaunchAircraft &&
+                   IsBoardEdgeHex(State.Map, force.Position, State.Scenario.VictoryExitEdge, force.Side);
+        }
+
+        private bool ExitMapInternal(Side side, out RuleViolation violation)
+        {
+            violation = null;
+            var force = State.ForceFor(side);
+            if (State.ActiveSide != side || State.Phase != ActivationPhase.PlayerMove)
+            {
+                violation = new RuleViolation(RuleViolationCode.WrongPhase,
+                    "A formation exits during its movement while it still has a movement point.", "phase");
+                Trace("REJECTED", violation.Message);
+                return false;
+            }
+            if (!CanExitMap(force))
+            {
+                violation = new RuleViolation(RuleViolationCode.ExitUnavailable,
+                    "Fujian must be on the western navigable edge, have movement remaining, and remain capable of launching aircraft.",
+                    "formationId");
+                Trace("REJECTED", violation.Message);
+                return false;
+            }
+            force.MarkExited();
+            State.MovementCup.RemoveUndrawnFormation(force.Id);
+            State.PlayerHasMoved = true;
+            Trace("VICTORY", $"{force.Id} exited the west edge with its embarked air group launch-capable.");
+            AddLog($"{force.Id} exited the west edge with aircraft launch capability intact.");
+            EndByScore(ScenarioEndReason.BoardEdgeExited);
             return true;
         }
 
@@ -806,7 +906,7 @@ namespace Harpoon.Core
                 return null;
             }
             var attacker = State.ForceFor(side);
-            if (attacker.HasArrived)
+            if (attacker.IsOffMap)
             {
                 violation = new RuleViolation(RuleViolationCode.NoLegalWeapon,
                     "An arrived formation has left the operational map.");
@@ -1282,7 +1382,7 @@ namespace Harpoon.Core
         private bool CanOpenAttack(TaskForceState attacker, TaskForceState defender)
         {
             if (attacker == null || defender == null || attacker.IsDestroyed || defender.IsDestroyed ||
-                attacker.HasArrived || defender.HasArrived) return false;
+                attacker.IsOffMap || defender.IsOffMap) return false;
             if (State.DetectionRulesEnabled && !State.Detection.IsClassified(attacker.Side, defender.Id)) return false;
             var range = attacker.Position.DistanceTo(defender.Position);
             if (range == 0 && attacker.IsSubmarineOnly)
@@ -1691,7 +1791,7 @@ namespace Harpoon.Core
                     if (State.Phase == ActivationPhase.DeclareSpeed)
                     {
                         var trackedPlayer = State.Forces.FirstOrDefault(force => force.Side == Side.UsNavy &&
-                            !force.HasArrived && State.Detection.IsDetected(Side.Plan, force.Id));
+                            !force.IsOffMap && State.Detection.IsDetected(Side.Plan, force.Id));
                         var navigationTarget = State.DetectionRulesEnabled && trackedPlayer == null &&
                             State.Scenario.HasUsDestination ? State.Scenario.UsDestination :
                             (trackedPlayer ?? State.Player).Position;
@@ -1701,13 +1801,20 @@ namespace Harpoon.Core
                                 State.Revision, enabled: enemyForce.CanRadiateRadar));
                         }
                         var path = State.Map.FindPath(enemyForce.Position, navigationTarget, Side.Plan);
-                        var declared = path.Count == 0 ? 0 : Math.Min(enemyForce.EffectiveSpeed,
-                            Math.Max(0, path.Count - 2));
+                        var declared = State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
+                            ? enemyForce.EffectiveSpeed
+                            : path.Count == 0 ? 0 : Math.Min(enemyForce.EffectiveSpeed,
+                                Math.Max(0, path.Count - 2));
                         Execute(new GameCommand(GameCommandType.DeclareSpeed, Side.Plan,
                             State.Revision, declaredSpeed: declared));
                     }
                     while (!State.IsGameOver && State.Phase == ActivationPhase.PlayerMove)
                     {
+                        if (CanExitMap(enemyForce))
+                        {
+                            Execute(new GameCommand(GameCommandType.ExitMap, Side.Plan, State.Revision));
+                            break;
+                        }
                         var destination = BestEnemyDestination();
                         var movement = Execute(new GameCommand(GameCommandType.Move, Side.Plan,
                             State.Revision, destination));
@@ -1906,8 +2013,13 @@ namespace Harpoon.Core
         private HexCoord BestEnemyDestination()
         {
             var enemyForce = State.ActiveForce ?? State.Enemy;
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape)
+                return State.Map.NavigableNeighbors(enemyForce.Position, Side.Plan).Where(_isNavigable)
+                    .Where(hex => DistanceToPatrolLine(State.Scenario, hex) <= State.Scenario.PatrolLineRadius)
+                    .OrderBy(hex => hex.Column).ThenBy(hex => Math.Abs(hex.Row - 12))
+                    .DefaultIfEmpty(enemyForce.Position).First();
             var trackedPlayer = State.Forces.FirstOrDefault(force => force.Side == Side.UsNavy &&
-                !force.HasArrived && State.Detection.IsDetected(Side.Plan, force.Id));
+                !force.IsOffMap && State.Detection.IsDetected(Side.Plan, force.Id));
             var targetPosition = State.DetectionRulesEnabled && trackedPlayer == null &&
                 State.Scenario.HasUsDestination ? State.Scenario.UsDestination :
                 (trackedPlayer ?? State.Player).Position;
@@ -1942,7 +2054,7 @@ namespace Harpoon.Core
         private TaskForceState FindOpponent(Side observer, string targetId)
         {
             var opponents = State.Forces.Where(force => force.Side != observer && !force.IsDestroyed &&
-                !force.HasArrived).ToArray();
+                !force.IsOffMap).ToArray();
             if (!string.IsNullOrWhiteSpace(targetId))
             {
                 var named = opponents.FirstOrDefault(force => force.Id == targetId);
@@ -1956,7 +2068,7 @@ namespace Harpoon.Core
         {
             var origin = State.ForceFor(observer).Position;
             var candidates = State.Forces.Where(force => force.Side != observer && !force.IsDestroyed &&
-                !force.HasArrived);
+                !force.IsOffMap);
             if (!string.IsNullOrWhiteSpace(targetId))
                 candidates = candidates.Where(force => force.Id == targetId);
             if (string.Equals(mode, "visual", StringComparison.OrdinalIgnoreCase))
@@ -1972,7 +2084,7 @@ namespace Harpoon.Core
         {
             ResolveAutomaticRadar(moving);
             var opponents = State.Forces.Where(force => force.Side != moving.Side && !force.IsDestroyed &&
-                !force.HasArrived).ToArray();
+                !force.IsOffMap).ToArray();
             foreach (var opponent in opponents)
             {
                 if (moving.Position.DistanceTo(opponent.Position) == 1)
@@ -2003,7 +2115,7 @@ namespace Harpoon.Core
         {
             if (!State.DetectionRulesEnabled || observer == null || !observer.RadarRadiating) return;
             foreach (var target in State.Forces.Where(force => force.Side != observer.Side &&
-                         !force.IsDestroyed && !force.HasArrived && force.Position == observer.Position &&
+                         !force.IsDestroyed && !force.IsOffMap && force.Position == observer.Position &&
                          !State.Detection.IsDetected(observer.Side, force.Id)))
                 RecordDetection(observer.Side, target, DetectionMethod.SurfaceSearchRadar, true);
         }
@@ -2047,6 +2159,15 @@ namespace Harpoon.Core
         private void CheckGameOver()
         {
             if (State.IsGameOver) return;
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape)
+            {
+                var carrier = State.Unit(State.Scenario.PlanObjectiveUnitId);
+                if (carrier == null || carrier.IsSunk)
+                {
+                    EndByScore(ScenarioEndReason.ObjectiveSunk);
+                    return;
+                }
+            }
             if (State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival)
             {
                 var merchants = State.Forces.Where(force => force.Side == Side.UsNavy)
@@ -2085,7 +2206,7 @@ namespace Harpoon.Core
                 .SelectMany(force => force.ActiveUnits).Any();
             var planEliminated = !State.Forces.Where(force => force.Side == Side.Plan)
                 .SelectMany(force => force.ActiveUnits).Any();
-            if (usEliminated || (planEliminated &&
+            if ((usEliminated && State.Scenario.ScoringMode != ScenarioScoringMode.CarrierEscape) || (planEliminated &&
                 State.Scenario.ScoringMode != ScenarioScoringMode.ConvoySurvival))
             {
                 EndByScore(ScenarioEndReason.ForceDestroyed);
@@ -2094,7 +2215,8 @@ namespace Harpoon.Core
 
             if (State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival ||
                 State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival ||
-                State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival) return;
+                State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival ||
+                State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape) return;
 
             var score = CurrentScore();
             var usCanScore = CanInflictFurtherDamage(Side.UsNavy);
@@ -2164,6 +2286,16 @@ namespace Harpoon.Core
                 return new ScenarioScore(arrived, sunk, submarinesSunk, offsets,
                     qualified ? "US NAVY VICTORY" : "PLAN VICTORY");
             }
+            if (scenario.ScoringMode == ScenarioScoringMode.CarrierEscape)
+            {
+                var carrier = State.Unit(scenario.PlanObjectiveUnitId);
+                var carrierForce = State.Forces.FirstOrDefault(force => force.Units.Contains(carrier));
+                var sunk = carrier == null || carrier.IsSunk;
+                var escaped = carrierForce != null && carrierForce.HasArrived && carrier.CanLaunchAircraft;
+                return new ScenarioScore(sunk ? 1 : 0, escaped ? 1 : 0,
+                    carrier?.HullDamage ?? 0, carrier?.EmbarkedAircraftRemaining ?? 0,
+                    sunk ? "US NAVY VICTORY" : escaped ? "PLAN VICTORY" : "DRAW");
+            }
             return new ScenarioScore(
                 State.Unit(scenario.PlanObjectiveUnitId)?.HullDamage ?? 0,
                 State.Unit(scenario.UsObjectiveUnitId)?.HullDamage ?? 0,
@@ -2216,7 +2348,8 @@ namespace Harpoon.Core
                 ? "total hull hits" : State.Scenario.ScoringMode == ScenarioScoringMode.GunfireHullHits
                     ? "gunfire hull hits" : State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival
                         ? "submarine survival offsets" : State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival
-                            ? "convoy arrivals and submarine offsets" : "objective damage";
+                            ? "convoy arrivals and submarine offsets" : State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
+                                ? "Fujian escape capability" : "objective damage";
             Trace("VICTORY", $"{State.Result}; reason={reason}; {scoreKind} inflicted US/PLAN=" +
                 $"{score.UsObjectiveDamage}/{score.PlanObjectiveDamage}; tie-break US/PLAN=" +
                 $"{score.UsTieBreakDamage}/{score.PlanTieBreakDamage}.");
@@ -2332,7 +2465,8 @@ namespace Harpoon.Core
                     hullDamage = unit.HullDamage,
                     gunfireHullDamage = unit.GunfireHullDamage,
                     shortMissiles = unit.ShortMissilesRemaining,
-                    longMissiles = unit.LongMissilesRemaining
+                    longMissiles = unit.LongMissilesRemaining,
+                    embarkedAircraft = unit.EmbarkedAircraftRemaining
                 }).ToArray(),
                 eventLog = redact
                     ? new[] { "Opponent position and formation contents remain hidden until detected." }
@@ -2399,6 +2533,7 @@ namespace Harpoon.Core
                     radarRadiating = visible(force) && force.RadarRadiating,
                     radarDeclared = visible(force) && force.RadarDeclaredThisActivation,
                     arrived = visible(force) && force.HasArrived,
+                    entered = visible(force) && force.HasEnteredMap,
                     dummyCards = force.Side == viewer || !redact ? force.DummyCards : 0,
                     defensePairs = visible(force) ? force.DefensePairs.ToArray() : Array.Empty<DefensePairData>()
                 }).ToArray(),
@@ -2451,12 +2586,12 @@ namespace Harpoon.Core
                 {
                     var force = new TaskForceState(item.id, item.side, new HexCoord(item.column, item.row),
                         (item.unitIds ?? Array.Empty<string>()).Where(availableUnits.ContainsKey)
-                        .Select(id => availableUnits[id]), item.dummyCards);
+                        .Select(id => availableUnits[id]), item.dummyCards, !item.entered);
                     force.RestoreMovement(item.declaredSpeed, item.movementSpent,
                         (item.movementPath ?? Array.Empty<HexCoordSnapshot>())
                         .Select(hex => new HexCoord(hex.column, hex.row)));
                     force.RestoreSensors(item.radarRadiating, item.radarDeclared);
-                    force.RestoreArrival(item.arrived);
+                    force.RestoreArrival(item.arrived, item.entered);
                     force.SetDefensePairs(item.defensePairs);
                     return force;
                 }).ToArray();
@@ -2478,7 +2613,7 @@ namespace Harpoon.Core
                 var unit = State.Forces.SelectMany(force => force.Units)
                     .FirstOrDefault(candidate => candidate.Definition.Id == unitSnapshot.id);
                 unit?.Restore(unitSnapshot.hullDamage, unitSnapshot.shortMissiles, unitSnapshot.longMissiles,
-                    unitSnapshot.gunfireHullDamage);
+                    unitSnapshot.gunfireHullDamage, unitSnapshot.embarkedAircraft);
             }
             State.Log.Clear();
             State.Log.AddRange(snapshot.eventLog ?? Array.Empty<string>());

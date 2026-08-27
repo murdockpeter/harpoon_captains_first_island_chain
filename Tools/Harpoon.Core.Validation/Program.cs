@@ -21,6 +21,7 @@ static class Program
             ScenarioFiveRoute();
             ScenarioSixRoute();
             ScenarioSevenRoute();
+            ScenarioEightRoute();
             ReleaseVersionRoute();
             Console.WriteLine($"HARPOON CORE VALIDATION PASSED: {_checks} checks; scripted movement, missile, gunfire, scoring, stopping, and replay routes complete.");
             return 0;
@@ -618,6 +619,93 @@ static class Program
         Check(ReleaseVersion.IsNewer("v1.0.0", "0.9.9"), "Release tag major upgrade");
         Check(!ReleaseVersion.IsNewer("v0.1.0", "0.1.0"), "Equal release is not an update");
         Check(!ReleaseVersion.IsNewer("invalid", "0.1.0"), "Invalid release tag is rejected");
+    }
+
+    private static void ScenarioEightRoute()
+    {
+        var definition = FirstIslandChainScenarios.HuntTheDragon;
+        var game = new ScenarioOneGame(8808, null, true, false, null, definition);
+        var fujian = game.State.Unit("plan-fujian");
+        Check(game.State.MaximumTurns == 7 && game.State.Forces.Count == 8 &&
+            game.State.Forces.Count(force => force.Side == Side.UsNavy && force.IsSubmarineOnly) == 4 &&
+            game.State.Forces.Count(force => force.Side == Side.Plan) == 4,
+            "Scenario 8 exact four-SSN barrier and four-ship PLAN order of battle");
+        Check(fujian.Definition.EmbarkedAircraftCapacity == 1 && fujian.EmbarkedAircraftRemaining == 1 &&
+            fujian.CanLaunchAircraft, "Scenario 8 Fujian starts with one full embarked air-group capacity unit");
+
+        var entry = game.CaptureSnapshot();
+        entry.activeSide = Side.UsNavy;
+        entry.activeFormationId = "US Virginia 1";
+        entry.phase = ActivationPhase.PlayerMove;
+        entry.usDeclaredSpeed = 1;
+        var virginia = entry.formations.Single(item => item.id == "US Virginia 1");
+        virginia.declaredSpeed = 1;
+        virginia.entered = false;
+        game.ApplySnapshot(entry);
+        Check(game.Execute(new GameCommand(GameCommandType.Move, Side.UsNavy, game.State.Revision,
+                new HexCoord(15, 9))).Accepted && game.State.Formation("US Virginia 1").HasEnteredMap,
+            "Scenario 8 US submarine enters through a navigable eastern-edge hex");
+
+        var patrol = new ScenarioOneGame(8809, null, true, false, null, definition);
+        var patrolSnapshot = patrol.CaptureSnapshot();
+        patrolSnapshot.activeSide = Side.Plan;
+        patrolSnapshot.activeFormationId = "PLAN Type 055";
+        patrolSnapshot.phase = ActivationPhase.PlayerMove;
+        var renhai = patrolSnapshot.formations.Single(item => item.id == "PLAN Type 055");
+        renhai.column = 9;
+        renhai.row = 10;
+        renhai.declaredSpeed = 1;
+        patrol.ApplySnapshot(patrolSnapshot);
+        var outsideBand = patrol.Execute(new GameCommand(GameCommandType.Move, Side.Plan,
+            patrol.State.Revision, new HexCoord(9, 9)));
+        Check(!outsideBand.Accepted && outsideBand.Violation.Code == RuleViolationCode.ImpassableTerrain,
+            "Scenario 8 PLAN movement remains within two hexes of its westbound patrol axis");
+
+        var escape = new ScenarioOneGame(8810, null, true, false, null, definition);
+        var escapeSnapshot = escape.CaptureSnapshot();
+        escapeSnapshot.activeSide = Side.Plan;
+        escapeSnapshot.activeFormationId = "PLAN Fujian";
+        escapeSnapshot.phase = ActivationPhase.PlayerMove;
+        escapeSnapshot.planDeclaredSpeed = 1;
+        var carrierFormation = escapeSnapshot.formations.Single(item => item.id == "PLAN Fujian");
+        carrierFormation.column = 3;
+        carrierFormation.row = 12;
+        carrierFormation.declaredSpeed = 1;
+        carrierFormation.entered = true;
+        escape.ApplySnapshot(escapeSnapshot);
+        Check(escape.CanExitMap(escape.State.Formation("PLAN Fujian")) &&
+            escape.Execute(new GameCommand(GameCommandType.ExitMap, Side.Plan, escape.State.Revision)).Accepted &&
+            escape.State.IsGameOver && escape.State.Result == "PLAN VICTORY" &&
+            escape.State.EndReason == ScenarioEndReason.BoardEdgeExited,
+            "Scenario 8 launch-capable Fujian exits the western navigable edge for PLAN victory");
+
+        var missionKill = new ScenarioOneGame(8811, null, true, false, null, definition);
+        var killSnapshot = missionKill.CaptureSnapshot();
+        killSnapshot.activeSide = Side.Plan;
+        killSnapshot.activeFormationId = "PLAN Fujian";
+        killSnapshot.phase = ActivationPhase.PlayerMove;
+        killSnapshot.planDeclaredSpeed = 1;
+        var killedCarrierFormation = killSnapshot.formations.Single(item => item.id == "PLAN Fujian");
+        killedCarrierFormation.column = 3;
+        killedCarrierFormation.row = 12;
+        killedCarrierFormation.declaredSpeed = 1;
+        killSnapshot.units.Single(item => item.id == "plan-fujian").hullDamage = 3;
+        missionKill.ApplySnapshot(killSnapshot);
+        Check(!missionKill.State.Unit("plan-fujian").CanLaunchAircraft &&
+            !missionKill.Execute(new GameCommand(GameCommandType.ExitMap, Side.Plan,
+                missionKill.State.Revision)).Accepted,
+            "Scenario 8 half-damage mission kill prevents Fujian aircraft launch and victory exit");
+
+        killSnapshot = missionKill.CaptureSnapshot();
+        killSnapshot.units.Single(item => item.id == "plan-fujian").hullDamage = 6;
+        missionKill.ApplySnapshot(killSnapshot);
+        Check(missionKill.CurrentScore().Result == "US NAVY VICTORY",
+            "Scenario 8 sinking Fujian is a US victory");
+        var mirror = new ScenarioOneGame(1, null, true);
+        mirror.ApplySnapshot(escape.CaptureSnapshot());
+        Check(mirror.State.Scenario.Id == "fic-08" && mirror.State.Result == "PLAN VICTORY" &&
+            mirror.State.Formation("PLAN Fujian").HasArrived,
+            "Scenario 8 save/network snapshot retains edge exit and carrier victory state");
     }
 
     private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,

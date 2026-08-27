@@ -363,6 +363,85 @@ namespace Harpoon.Core.Tests
         }
 
         [Test]
+        public void ScenarioEightLoadsPrintedForcesAndEastEdgeEntry()
+        {
+            var game = new ScenarioOneGame(88, null, true, false, null,
+                FirstIslandChainScenarios.HuntTheDragon);
+            Assert.That(game.State.MaximumTurns, Is.EqualTo(7));
+            Assert.That(game.State.Forces.Count, Is.EqualTo(8));
+            Assert.That(game.State.Forces.Count(force => force.Side == Side.UsNavy && force.IsSubmarineOnly),
+                Is.EqualTo(4));
+            Assert.That(game.State.Forces.Where(force => force.Side == Side.UsNavy)
+                .All(force => !force.HasEnteredMap), Is.True);
+            Assert.That(game.State.Unit("plan-fujian").Definition.EmbarkedAircraftCapacity, Is.EqualTo(1));
+
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US Virginia 1";
+            snapshot.phase = ActivationPhase.PlayerMove;
+            snapshot.usDeclaredSpeed = 1;
+            snapshot.formations.Single(item => item.id == "US Virginia 1").declaredSpeed = 1;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.Move, Side.UsNavy,
+                game.State.Revision, new HexCoord(15, 9))).Accepted, Is.True);
+            Assert.That(game.State.Formation("US Virginia 1").HasEnteredMap, Is.True);
+        }
+
+        [Test]
+        public void ScenarioEightPatrolBandAndCarrierDamageGateTheWestExit()
+        {
+            var game = new ScenarioOneGame(89, null, true, false, null,
+                FirstIslandChainScenarios.HuntTheDragon);
+            Assert.That(ScenarioOneGame.DistanceToPatrolLine(game.State.Scenario, new HexCoord(3, 12)),
+                Is.Zero);
+            Assert.That(ScenarioOneGame.DistanceToPatrolLine(game.State.Scenario, new HexCoord(9, 9)),
+                Is.EqualTo(3));
+
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.Plan;
+            snapshot.activeFormationId = "PLAN Fujian";
+            snapshot.phase = ActivationPhase.PlayerMove;
+            snapshot.planDeclaredSpeed = 1;
+            var carrier = snapshot.formations.Single(item => item.id == "PLAN Fujian");
+            carrier.column = 3;
+            carrier.row = 12;
+            carrier.declaredSpeed = 1;
+            snapshot.units.Single(item => item.id == "plan-fujian").hullDamage = 3;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.State.Unit("plan-fujian").CanLaunchAircraft, Is.False);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.ExitMap, Side.Plan,
+                game.State.Revision)).Violation.Code, Is.EqualTo(RuleViolationCode.ExitUnavailable));
+        }
+
+        [Test]
+        public void ScenarioEightLaunchCapableWestExitAndFujianLossResolveVictory()
+        {
+            var escape = new ScenarioOneGame(90, null, true, false, null,
+                FirstIslandChainScenarios.HuntTheDragon);
+            var snapshot = escape.CaptureSnapshot();
+            snapshot.activeSide = Side.Plan;
+            snapshot.activeFormationId = "PLAN Fujian";
+            snapshot.phase = ActivationPhase.PlayerMove;
+            snapshot.planDeclaredSpeed = 1;
+            var carrier = snapshot.formations.Single(item => item.id == "PLAN Fujian");
+            carrier.column = 3;
+            carrier.row = 12;
+            carrier.declaredSpeed = 1;
+            escape.ApplySnapshot(snapshot);
+            Assert.That(escape.Execute(new GameCommand(GameCommandType.ExitMap, Side.Plan,
+                escape.State.Revision)).Accepted, Is.True);
+            Assert.That(escape.State.Result, Is.EqualTo("PLAN VICTORY"));
+            Assert.That(escape.State.EndReason, Is.EqualTo(ScenarioEndReason.BoardEdgeExited));
+
+            var sunk = new ScenarioOneGame(91, null, true, false, null,
+                FirstIslandChainScenarios.HuntTheDragon);
+            snapshot = sunk.CaptureSnapshot();
+            snapshot.units.Single(item => item.id == "plan-fujian").hullDamage = 6;
+            sunk.ApplySnapshot(snapshot);
+            Assert.That(sunk.CurrentScore().Result, Is.EqualTo("US NAVY VICTORY"));
+        }
+
+        [Test]
         public void ScenarioStartsThreeHexesApart()
         {
             var battle = ScenarioOne.Create();

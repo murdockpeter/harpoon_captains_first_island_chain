@@ -129,9 +129,10 @@ namespace Harpoon.Editor
             ValidateScenarioFiveRelease();
             ValidateScenarioSixRelease();
             ValidateScenarioSevenRelease();
+            ValidateScenarioEightRelease();
 
             ValidateLoopbackTransport();
-            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-7 including hidden contacts, dummy deception, undersea combat, multi-convoy arrival, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
+            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-8 including hidden contacts, dummy deception, undersea combat, convoy arrival, carrier escape, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
         }
 
         public static void BuildWindowsPlayer()
@@ -488,6 +489,28 @@ namespace Harpoon.Editor
             Require(hidden.formations.Where(item => item.side == Side.Plan)
                     .All(item => item.column == 0 && item.unitIds.Length == 0),
                 "Scenario 7 must keep every undetected PLAN submarine position and card private.");
+        }
+
+        private static void ValidateScenarioEightRelease()
+        {
+            var game = new ScenarioOneGame(8808, null, true, false, null,
+                FirstIslandChainScenarios.HuntTheDragon);
+            var fujian = game.State.Unit("plan-fujian");
+            Require(game.State.MaximumTurns == 7 && game.State.Forces.Count == 8 &&
+                    game.State.Forces.Count(force => force.Side == Side.UsNavy && force.IsSubmarineOnly) == 4 &&
+                    game.State.Forces.Count(force => force.Side == Side.Plan) == 4,
+                "Scenario 8 must load four independent US SSNs and the four-ship Fujian group for seven turns.");
+            Require(fujian.Definition.IsAircraftCarrier && fujian.Definition.EmbarkedAircraftCapacity == 1 &&
+                    fujian.CanLaunchAircraft,
+                "Fujian must begin with one scenario-scale embarked air group and intact launch capability.");
+            Require(ScenarioOneGame.DistanceToPatrolLine(game.State.Scenario, new HexCoord(3, 12)) == 0 &&
+                    ScenarioOneGame.DistanceToPatrolLine(game.State.Scenario, new HexCoord(9, 9)) == 3 &&
+                    ScenarioOneGame.IsBoardEdgeHex(game.State.Map, new HexCoord(15, 9), BoardEdge.East, Side.UsNavy) &&
+                    ScenarioOneGame.IsBoardEdgeHex(game.State.Map, new HexCoord(3, 12), BoardEdge.West, Side.Plan),
+                "Scenario 8 east entry, west exit, and two-hex patrol-axis geometry must be authoritative.");
+            fujian.ApplyDamage(3);
+            Require(!fujian.CanLaunchAircraft,
+                "Half damage to Fujian must prohibit aircraft launch and therefore its victory exit.");
         }
 
         private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,

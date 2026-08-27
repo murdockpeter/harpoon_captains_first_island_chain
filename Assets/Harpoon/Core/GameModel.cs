@@ -51,6 +51,7 @@ namespace Harpoon.Core
         public int AntiSubmarineWarfare { get; }
         public bool EsmEquipped { get; }
         public bool IsAircraftCarrier { get; }
+        public int EmbarkedAircraftCapacity { get; }
         public bool IsSubmarine { get; }
         public int Torpedoes { get; }
 
@@ -58,7 +59,7 @@ namespace Harpoon.Core
             int longSam, int pointDefense, int shortSsm, int longSsm, int guns, int speed, int hull,
             int airSearchRadar = 0, int surfaceSearchRadar = 0, int sonar = 0,
             int antiSubmarineWarfare = 0, bool esmEquipped = true, bool isAircraftCarrier = false,
-            int torpedoes = 0, bool isSubmarine = false)
+            int torpedoes = 0, bool isSubmarine = false, int embarkedAircraftCapacity = 0)
         {
             Id = id;
             DisplayName = displayName;
@@ -78,6 +79,7 @@ namespace Harpoon.Core
             AntiSubmarineWarfare = antiSubmarineWarfare;
             EsmEquipped = esmEquipped;
             IsAircraftCarrier = isAircraftCarrier;
+            EmbarkedAircraftCapacity = isAircraftCarrier ? Math.Max(1, embarkedAircraftCapacity) : 0;
             Torpedoes = torpedoes;
             IsSubmarine = isSubmarine;
         }
@@ -113,6 +115,7 @@ namespace Harpoon.Core
         public int GunfireHullDamage { get; private set; }
         public int ShortMissilesRemaining { get; private set; }
         public int LongMissilesRemaining { get; private set; }
+        public int EmbarkedAircraftRemaining { get; private set; }
         public bool IsSunk => HullDamage >= Definition.Hull;
         public int HullRemaining => Math.Max(0, Definition.Hull - HullDamage);
         public int HalfDamageThreshold => HalfDamageThresholdFor(Definition.Hull);
@@ -128,6 +131,7 @@ namespace Harpoon.Core
             Definition = definition;
             ShortMissilesRemaining = definition.ShortSsm;
             LongMissilesRemaining = definition.LongSsm;
+            EmbarkedAircraftRemaining = definition.EmbarkedAircraftCapacity;
         }
 
         public int EffectiveSpeed
@@ -153,7 +157,8 @@ namespace Harpoon.Core
         public int EffectiveTorpedoes => HasTwoThirdsDamage || IsSunk ? 0 : Definition.Torpedoes;
         public int EffectiveSurfaceSearchRadar => IsSunk ? 0 : Definition.SurfaceSearchRadar;
         public bool EffectiveEsm => !HasTwoThirdsDamage && !IsSunk && Definition.EsmEquipped;
-        public bool CanLaunchAircraft => Definition.IsAircraftCarrier && !HasHalfDamage && !IsSunk;
+        public bool CanLaunchAircraft => Definition.IsAircraftCarrier && EmbarkedAircraftRemaining > 0 &&
+                                         !HasHalfDamage && !IsSunk;
         public int AvailableShortSsm => WeaponsDisabled || IsSunk ? 0 : ShortMissilesRemaining;
         public int AvailableLongSsm => HasHalfDamage || IsSunk ? 0 : LongMissilesRemaining;
 
@@ -208,12 +213,14 @@ namespace Harpoon.Core
         }
 
         internal void Restore(int hullDamage, int shortMissiles, int longMissiles,
-            int gunfireHullDamage = 0)
+            int gunfireHullDamage = 0, int embarkedAircraft = -1)
         {
             HullDamage = Math.Max(0, Math.Min(Definition.Hull, hullDamage));
             GunfireHullDamage = Math.Max(0, Math.Min(HullDamage, gunfireHullDamage));
             ShortMissilesRemaining = Math.Max(0, shortMissiles);
             LongMissilesRemaining = Math.Max(0, longMissiles);
+            EmbarkedAircraftRemaining = embarkedAircraft < 0 ? Definition.EmbarkedAircraftCapacity :
+                Math.Max(0, Math.Min(Definition.EmbarkedAircraftCapacity, embarkedAircraft));
         }
     }
 
@@ -233,6 +240,8 @@ namespace Harpoon.Core
         public IReadOnlyList<UnitState> Units => _units;
         public IReadOnlyList<DefensePairData> DefensePairs => _defensePairs;
         public bool HasArrived { get; private set; }
+        public bool HasEnteredMap { get; private set; }
+        public bool IsOffMap => HasArrived || !HasEnteredMap;
         public int DummyCards { get; private set; }
         public bool IsDummyOnly => _units.Count == 0 && DummyCards > 0;
         public bool IsSubmarineOnly => _units.Count > 0 && _units.All(unit => unit.Definition.IsSubmarine);
@@ -247,7 +256,7 @@ namespace Harpoon.Core
         public bool CanUseEsm => ActiveUnits.Any(unit => unit.EffectiveEsm);
 
         public TaskForceState(string id, Side side, HexCoord position, IEnumerable<UnitState> units,
-            int dummyCards = 0)
+            int dummyCards = 0, bool startsOffMap = false)
         {
             Id = id;
             Side = side;
@@ -257,6 +266,7 @@ namespace Harpoon.Core
                 _units.Any(unit => !unit.Definition.IsSubmarine))
                 throw new InvalidOperationException("Submarines may not be grouped with surface vessels.");
             DummyCards = Math.Max(0, dummyCards);
+            HasEnteredMap = !startsOffMap;
         }
 
         public int EffectiveSpeed
@@ -278,6 +288,14 @@ namespace Harpoon.Core
 
         public void MoveOneHex(HexCoord destination)
         {
+            Position = destination;
+            MovementPointsSpent++;
+            _movementPath.Add(destination);
+        }
+
+        public void EnterMap(HexCoord destination)
+        {
+            HasEnteredMap = true;
             Position = destination;
             MovementPointsSpent++;
             _movementPath.Add(destination);
@@ -308,6 +326,11 @@ namespace Harpoon.Core
 
         public void MoveTo(HexCoord destination) => Position = destination;
         public void MarkArrived()
+        {
+            HasArrived = true;
+            MovementPointsSpent = MovementAllowance;
+        }
+        public void MarkExited()
         {
             HasArrived = true;
             MovementPointsSpent = MovementAllowance;
@@ -350,7 +373,11 @@ namespace Harpoon.Core
             RadarDeclaredThisActivation = radarDeclared;
         }
 
-        internal void RestoreArrival(bool arrived) => HasArrived = arrived;
+        internal void RestoreArrival(bool arrived, bool entered = true)
+        {
+            HasArrived = arrived;
+            HasEnteredMap = entered;
+        }
     }
 
     public sealed class GameState

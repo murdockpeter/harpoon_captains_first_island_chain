@@ -11,8 +11,11 @@ namespace Harpoon.Core
         GunfireHullHits,
         ConvoyArrival,
         SubmarineSurvival,
-        ConvoySurvival
+        ConvoySurvival,
+        CarrierEscape
     }
+
+    public enum BoardEdge { None, East, West }
 
     public sealed class ScenarioUnitDefinition
     {
@@ -35,15 +38,18 @@ namespace Harpoon.Core
         public HexCoord Start { get; }
         public IReadOnlyList<ScenarioUnitDefinition> Units { get; }
         public int DummyCards { get; }
+        public BoardEdge EntryEdge { get; }
 
         public ScenarioFormationDefinition(string id, Side side, HexCoord start,
-            IEnumerable<ScenarioUnitDefinition> units, int dummyCards = 0)
+            IEnumerable<ScenarioUnitDefinition> units, int dummyCards = 0,
+            BoardEdge entryEdge = BoardEdge.None)
         {
             Id = id ?? string.Empty;
             Side = side;
             Start = start;
             Units = (units ?? Array.Empty<ScenarioUnitDefinition>()).ToArray();
             DummyCards = Math.Max(0, dummyCards);
+            EntryEdge = entryEdge;
         }
     }
 
@@ -69,6 +75,12 @@ namespace Harpoon.Core
         public HexCoord DeploymentCenter { get; }
         public int UsDeploymentRadius { get; }
         public int PlanProhibitedRadius { get; }
+        public bool HasPatrolLine { get; }
+        public HexCoord PatrolLineStart { get; }
+        public HexCoord PatrolLineEnd { get; }
+        public int PatrolLineRadius { get; }
+        public Side PatrolRestrictedSide { get; }
+        public BoardEdge VictoryExitEdge { get; }
         public IReadOnlyList<ScenarioFormationDefinition> Formations { get; }
 
         public ScenarioDefinition(string id, string name, string subtitle, string briefing,
@@ -79,7 +91,10 @@ namespace Harpoon.Core
             bool hasUsDestination = false, HexCoord usDestination = default,
             int planDeploymentMinimumDistance = 0, bool hasDeploymentZones = false,
             HexCoord deploymentCenter = default, int usDeploymentRadius = 0,
-            int planProhibitedRadius = 0)
+            int planProhibitedRadius = 0, bool hasPatrolLine = false,
+            HexCoord patrolLineStart = default, HexCoord patrolLineEnd = default,
+            int patrolLineRadius = 0, Side patrolRestrictedSide = Side.Plan,
+            BoardEdge victoryExitEdge = BoardEdge.None)
         {
             Id = id ?? string.Empty;
             Name = name ?? string.Empty;
@@ -101,6 +116,12 @@ namespace Harpoon.Core
             DeploymentCenter = deploymentCenter;
             UsDeploymentRadius = Math.Max(0, usDeploymentRadius);
             PlanProhibitedRadius = Math.Max(0, planProhibitedRadius);
+            HasPatrolLine = hasPatrolLine;
+            PatrolLineStart = patrolLineStart;
+            PatrolLineEnd = patrolLineEnd;
+            PatrolLineRadius = Math.Max(0, patrolLineRadius);
+            PatrolRestrictedSide = patrolRestrictedSide;
+            VictoryExitEdge = victoryExitEdge;
             Formations = (formations ?? Array.Empty<ScenarioFormationDefinition>()).ToArray();
         }
     }
@@ -251,7 +272,9 @@ namespace Harpoon.Core
                     new[] { new ScenarioUnitDefinition("plan-type-039ab-2", "plan-type-039ab", UnitRole.Escort) }),
                 new ScenarioFormationDefinition("PLAN Type 093B", Side.Plan, new HexCoord(12, 12),
                     new[] { new ScenarioUnitDefinition("plan-type-093b", "plan-type-093b", UnitRole.Escort) })
-            }, ScenarioScoringMode.SubmarineSurvival);
+            }, ScenarioScoringMode.SubmarineSurvival, hasPatrolLine: true,
+            patrolLineStart: new HexCoord(8, 12), patrolLineEnd: new HexCoord(12, 12),
+            patrolLineRadius: 2, patrolRestrictedSide: Side.Plan);
 
         public static readonly ScenarioDefinition LifelineToTaiwan = new ScenarioDefinition(
             "fic-07", "Lifeline to Taiwan", "FIRST ISLAND CHAIN · SCENARIO 7",
@@ -292,9 +315,44 @@ namespace Harpoon.Core
             }, ScenarioScoringMode.ConvoySurvival, true, new HexCoord(8, 10), 0,
             true, new HexCoord(9, 10), 2, 2);
 
+        public static readonly ScenarioDefinition HuntTheDragon = new ScenarioDefinition(
+            "fic-08", "Hunt the Dragon", "FIRST ISLAND CHAIN · SCENARIO 8",
+            "A barrier of US submarines in the Bashi Channel must stop the PLAN carrier battle group " +
+            "built around Fujian from reaching the western edge.",
+            "The US wins by sinking Fujian. PLAN wins if Fujian exits the west edge while still capable " +
+            "of launching aircraft. If neither occurs after seven turns, the US wins.",
+            "First Island Chain p. 26; platform cards pp. 15-16, 18", 7, true,
+            string.Empty, "plan-fujian", string.Empty, string.Empty,
+            new[]
+            {
+                new ScenarioFormationDefinition("US Virginia 1", Side.UsNavy, new HexCoord(15, 8),
+                    new[] { new ScenarioUnitDefinition("us-virginia-1", "us-virginia", UnitRole.Escort) },
+                    entryEdge: BoardEdge.East),
+                new ScenarioFormationDefinition("US Virginia 2", Side.UsNavy, new HexCoord(15, 11),
+                    new[] { new ScenarioUnitDefinition("us-virginia-2", "us-virginia", UnitRole.Escort) },
+                    entryEdge: BoardEdge.East),
+                new ScenarioFormationDefinition("US Los Angeles 1", Side.UsNavy, new HexCoord(15, 14),
+                    new[] { new ScenarioUnitDefinition("us-los-angeles-1", "us-los-angeles", UnitRole.Escort) },
+                    entryEdge: BoardEdge.East),
+                new ScenarioFormationDefinition("US Los Angeles 2", Side.UsNavy, new HexCoord(15, 17),
+                    new[] { new ScenarioUnitDefinition("us-los-angeles-2", "us-los-angeles", UnitRole.Escort) },
+                    entryEdge: BoardEdge.East),
+                new ScenarioFormationDefinition("PLAN Fujian", Side.Plan, new HexCoord(8, 12),
+                    new[] { new ScenarioUnitDefinition("plan-fujian", "plan-fujian", UnitRole.Objective) }),
+                new ScenarioFormationDefinition("PLAN Type 055", Side.Plan, new HexCoord(9, 12),
+                    new[] { new ScenarioUnitDefinition("plan-type-055", "plan-type-055", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Type 052D", Side.Plan, new HexCoord(10, 12),
+                    new[] { new ScenarioUnitDefinition("plan-type-052d", "plan-type-052d", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Type 054B", Side.Plan, new HexCoord(11, 12),
+                    new[] { new ScenarioUnitDefinition("plan-type-054b", "plan-type-054b", UnitRole.Escort) })
+            }, ScenarioScoringMode.CarrierEscape, hasPatrolLine: true,
+            patrolLineStart: new HexCoord(8, 12), patrolLineEnd: new HexCoord(12, 12),
+            patrolLineRadius: 2, patrolRestrictedSide: Side.Plan,
+            victoryExitEdge: BoardEdge.West);
+
         public static IReadOnlyList<ScenarioDefinition> Introductory { get; } =
             new[] { ContactOffBashiChannel, FlagshipDuel, CloseAboard, PicketLine, GhostFleet,
-                WolvesOfBashiChannel, LifelineToTaiwan };
+                WolvesOfBashiChannel, LifelineToTaiwan, HuntTheDragon };
 
 
         public static ScenarioDefinition Get(string id) => Introductory.FirstOrDefault(item =>
@@ -311,7 +369,8 @@ namespace Harpoon.Core
         MutualScoring,
         Concession,
         TurnLimit,
-        DestinationReached
+        DestinationReached,
+        BoardEdgeExited
     }
 
     public sealed class ScenarioScore

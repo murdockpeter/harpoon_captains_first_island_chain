@@ -38,7 +38,7 @@ namespace Harpoon.Runtime
             {
                 var amphibious = amphibiousFormation && i == shipCount - 1;
                 CreateShip(root, positions[i], amphibious ? scale * 1.1f : scale,
-                    Color.Lerp(sideColor, Color.gray, i * 0.08f), amphibious);
+                    Color.Lerp(sideColor, Color.gray, i * 0.08f), amphibious, false);
             }
             var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             ring.name = "Side Indicator";
@@ -46,6 +46,19 @@ namespace Harpoon.Runtime
             ring.transform.localPosition = new Vector3(0f, -0.38f, 0f);
             ring.transform.localScale = new Vector3(0.92f, 0.025f, 0.92f);
             ring.GetComponent<Renderer>().sharedMaterial = Material(sideColor, 0f, 0.65f);
+            return root;
+        }
+
+        public static Transform CreateCarrier(string name, Color sideColor)
+        {
+            var root = new GameObject(name).transform;
+            CreateShip(root, Vector3.zero, 1.12f, sideColor, false, true);
+            var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            ring.name = "Carrier Indicator";
+            ring.transform.SetParent(root);
+            ring.transform.localPosition = new Vector3(0f, -0.38f, 0f);
+            ring.transform.localScale = new Vector3(1.05f, 0.025f, 1.05f);
+            ring.GetComponent<Renderer>().sharedMaterial = Material(sideColor, 0f, 0.7f);
             return root;
         }
 
@@ -122,9 +135,9 @@ namespace Harpoon.Runtime
         }
 
         private static void CreateShip(Transform parent, Vector3 localPosition, float scale,
-            Color color, bool amphibious)
+            Color color, bool amphibious, bool carrier)
         {
-            var ship = new GameObject(amphibious ? "Amphibious Ship" : "Escort").transform;
+            var ship = new GameObject(carrier ? "Aircraft Carrier" : amphibious ? "Amphibious Ship" : "Escort").transform;
             ship.SetParent(parent);
             ship.localPosition = localPosition;
             ship.localRotation = Quaternion.Euler(0f, -35f, 0f);
@@ -133,18 +146,32 @@ namespace Harpoon.Runtime
             var hull = new GameObject("Hull");
             hull.transform.SetParent(ship);
             hull.transform.localPosition = Vector3.zero;
-            var mesh = BuildHullMesh(amphibious ? 1.45f : 1.15f, amphibious ? 0.42f : 0.3f);
+            var mesh = BuildHullMesh(carrier ? 1.75f : amphibious ? 1.45f : 1.15f,
+                carrier ? 0.5f : amphibious ? 0.42f : 0.3f);
             hull.AddComponent<MeshFilter>().sharedMesh = mesh;
             hull.AddComponent<MeshRenderer>().sharedMaterial = Material(color, 0.55f, 0.35f);
 
-            AddBox(ship, "Deck", new Vector3(-0.1f, 0.22f, 0f),
-                new Vector3(amphibious ? 1.45f : 1.05f, 0.08f, amphibious ? 0.65f : 0.42f),
+            AddBox(ship, carrier ? "Flight Deck" : "Deck", new Vector3(-0.1f, 0.22f, 0f),
+                new Vector3(carrier ? 1.75f : amphibious ? 1.45f : 1.05f, 0.08f,
+                    carrier ? 0.82f : amphibious ? 0.65f : 0.42f),
                 Color.Lerp(color, Color.white, 0.16f));
-            AddBox(ship, "Superstructure", new Vector3(amphibious ? -0.32f : -0.12f, 0.38f, 0f),
-                new Vector3(amphibious ? 0.5f : 0.35f, amphibious ? 0.3f : 0.26f, amphibious ? 0.52f : 0.32f),
+            AddBox(ship, carrier ? "Island" : "Superstructure",
+                new Vector3(carrier ? -0.28f : amphibious ? -0.32f : -0.12f, 0.38f, carrier ? -0.28f : 0f),
+                new Vector3(carrier ? 0.36f : amphibious ? 0.5f : 0.35f,
+                    carrier ? 0.38f : amphibious ? 0.3f : 0.26f,
+                    carrier ? 0.22f : amphibious ? 0.52f : 0.32f),
                 new Color(0.54f, 0.58f, 0.6f));
-            AddBox(ship, "Bridge", new Vector3(amphibious ? -0.38f : 0.05f, 0.57f, 0f),
-                new Vector3(0.24f, 0.14f, amphibious ? 0.42f : 0.26f), new Color(0.68f, 0.72f, 0.73f));
+            AddBox(ship, "Bridge", new Vector3(carrier ? -0.25f : amphibious ? -0.38f : 0.05f,
+                    0.57f, carrier ? -0.28f : 0f),
+                new Vector3(0.24f, 0.14f, carrier ? 0.2f : amphibious ? 0.42f : 0.26f),
+                new Color(0.68f, 0.72f, 0.73f));
+            if (carrier)
+            {
+                AddBox(ship, "Runway Stripe", new Vector3(0.12f, 0.275f, 0.08f),
+                    new Vector3(1.35f, 0.012f, 0.035f), new Color(0.92f, 0.92f, 0.78f));
+                AddBox(ship, "Deck Aircraft", new Vector3(0.28f, 0.31f, -0.2f),
+                    new Vector3(0.18f, 0.035f, 0.16f), new Color(0.82f, 0.84f, 0.86f));
+            }
 
             AddBox(ship, "Wake Port", new Vector3(-0.78f, -0.12f, 0.12f),
                 new Vector3(0.72f, 0.015f, 0.055f), new Color(0.62f, 0.86f, 0.96f, 0.72f));

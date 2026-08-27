@@ -956,14 +956,25 @@ namespace Harpoon.Runtime
                 var isLand = !_game.State.Map.IsNavigable(pair.Key, navigationSide);
                 var hovered = _hoveredHex.HasValue && _hoveredHex.Value == pair.Key;
                 var localForce = _game.State.ForceFor(LocalSide);
+                var entryDefinition = _game.State.Scenario.Formations.FirstOrDefault(item => item.Id == localForce.Id);
+                var entering = !localForce.HasEnteredMap;
                 var movable = CanLocalAct() && _game.State.Phase == ActivationPhase.PlayerMove && !isLand &&
-                              localForce.MovementRemaining > 0 && localForce.Position.IsAdjacentTo(pair.Key);
+                              localForce.MovementRemaining > 0 &&
+                              (entering
+                                  ? entryDefinition != null && ScenarioOneGame.IsBoardEdgeHex(_game.State.Map,
+                                      pair.Key, entryDefinition.EntryEdge, LocalSide)
+                                  : localForce.Position.IsAdjacentTo(pair.Key));
                 var deployable = _placingPlanDeployment && IsLegalPlanDeployment(pair.Key);
                 var convoyDestination = _game.State.Scenario.HasUsDestination &&
                     pair.Key == _game.State.Scenario.UsDestination;
-                var submarinePatrolZone = _game.State.Scenario.Id == "fic-06" &&
-                    Enumerable.Range(8, 5).Min(column => pair.Key.DistanceTo(new HexCoord(column, 12))) <= 2;
-                var easternEntry = _game.State.Scenario.Id == "fic-06" && pair.Key.Column == 15;
+                var submarinePatrolZone = _game.State.Scenario.HasPatrolLine &&
+                    ScenarioOneGame.DistanceToPatrolLine(_game.State.Scenario, pair.Key) <=
+                    _game.State.Scenario.PatrolLineRadius;
+                var easternEntry = (_game.State.Scenario.Id == "fic-06" ||
+                    _game.State.Scenario.Formations.Any(item => item.EntryEdge == BoardEdge.East)) &&
+                    pair.Key.Column == _game.State.Map.MaximumColumn;
+                var westernExit = _game.State.Scenario.VictoryExitEdge == BoardEdge.West &&
+                    ScenarioOneGame.IsBoardEdgeHex(_game.State.Map, pair.Key, BoardEdge.West, Side.Plan);
                 var lifelineAssembly = _game.State.Scenario.Id == "fic-07" &&
                     pair.Key.DistanceTo(_game.State.Scenario.DeploymentCenter) <=
                     _game.State.Scenario.UsDeploymentRadius;
@@ -974,7 +985,8 @@ namespace Harpoon.Runtime
                     : convoyDestination ? (hovered ? new Color(0.3f, 1f, 0.62f) : new Color(0.05f, 0.55f, 0.34f))
                     : hovered ? new Color(0.12f, 0.72f, 0.8f)
                     : movable ? new Color(0.04f, 0.48f, 0.58f)
-                    : easternEntry ? new Color(0.05f, 0.38f, 0.5f)
+                    : westernExit ? new Color(0.52f, 0.19f, 0.08f)
+                    : easternEntry ? new Color(0.05f, 0.42f, 0.58f)
                     : submarinePatrolZone ? new Color(0.13f, 0.22f, 0.43f)
                     : lifelineAssembly ? new Color(0.04f, 0.34f, 0.32f)
                     : new Color(0.025f, 0.25f, 0.37f);
@@ -998,7 +1010,10 @@ namespace Harpoon.Runtime
                 return;
             }
             var force = _game.State.ForceFor(LocalSide);
-            if (!force.Position.IsAdjacentTo(_hoveredHex.Value) ||
+            var entering = !force.HasEnteredMap;
+            if ((!entering && !force.Position.IsAdjacentTo(_hoveredHex.Value)) ||
+                (entering && !ScenarioOneGame.IsBoardEdgeHex(_game.State.Map, _hoveredHex.Value,
+                    _game.State.Scenario.Formations.First(item => item.Id == force.Id).EntryEdge, LocalSide)) ||
                 !_game.State.Map.IsNavigable(_hoveredHex.Value, LocalSide))
             {
                 _movementPathPreview.positionCount = 0;
@@ -1030,7 +1045,8 @@ namespace Harpoon.Runtime
             {
                 var classified = force.Side == LocalSide || !_game.State.DetectionRulesEnabled ||
                     _game.State.Detection.IsClassified(LocalSide, force.Id);
-                var markerShipCount = !classified ? 0 : force.IsSubmarineOnly ? -1 :
+                var markerShipCount = !classified ? 0 :
+                    force.ActiveUnits.Any(unit => unit.Definition.IsAircraftCarrier) ? -2 : force.IsSubmarineOnly ? -1 :
                     force.Units.Count == 0 ? 0 : Mathf.Clamp(force.ActiveUnits.Count(), 1, 4);
                 if (_formationMarkers.TryGetValue(force.Id, out var staleMarker) &&
                     (!_formationMarkerShipCounts.TryGetValue(force.Id, out var priorCount) ||
@@ -1047,6 +1063,7 @@ namespace Harpoon.Runtime
                         unit.Definition.DisplayName.Contains("Merchant"));
                     marker = markerShipCount == 0
                         ? VisualFactory.CreateContactMarker(force.Id, color)
+                        : markerShipCount == -2 ? VisualFactory.CreateCarrier(force.Id, color)
                         : markerShipCount < 0 ? VisualFactory.CreateSubmarine(force.Id, color)
                             : VisualFactory.CreateFormation(force.Id, color, amphibious, markerShipCount);
                     marker.gameObject.AddComponent<FormationView>().Initialize(force.Side, force.Id);
@@ -1056,7 +1073,7 @@ namespace Harpoon.Runtime
                 var knownContact = force.Side == LocalSide || !_game.State.DetectionRulesEnabled ||
                     _game.State.Detection.IsDetected(LocalSide, force.Id);
                 marker.position = WorldPosition(force.Position) + Vector3.up * (force.IsDestroyed ? 0.38f : 0.75f);
-                marker.gameObject.SetActive(knownContact && !force.HasArrived);
+                marker.gameObject.SetActive(knownContact && !force.IsOffMap);
                 var selected = force.Id == _selectedFormationId;
                 var active = force.Id == _game.State.ActiveFormationId;
                 marker.localScale = Vector3.one * (selected ? 1.18f : active ? 1.1f : 0.92f);
@@ -1544,13 +1561,16 @@ namespace Harpoon.Runtime
                 scoringMode == ScenarioScoringMode.ConvoySurvival ? "LIFELINE STATUS" :
                 scoringMode == ScenarioScoringMode.TotalHullHits ? "HULL HITS INFLICTED" :
                 scoringMode == ScenarioScoringMode.GunfireHullHits ? "GUNFIRE HITS" :
-                scoringMode == ScenarioScoringMode.SubmarineSurvival ? "SUBMARINE CAMPAIGN" : "OBJECTIVE DAMAGE";
+                scoringMode == ScenarioScoringMode.SubmarineSurvival ? "SUBMARINE CAMPAIGN" :
+                scoringMode == ScenarioScoringMode.CarrierEscape ? "FUJIAN ESCAPE STATUS" : "OBJECTIVE DAMAGE";
             var scoreText = scoringMode == ScenarioScoringMode.ConvoyArrival
                 ? $"{scoreTitle}    ARRIVED {score.UsObjectiveDamage}   ·   LOST {score.PlanObjectiveDamage}"
                 : scoringMode == ScenarioScoringMode.ConvoySurvival
                     ? $"{scoreTitle}    ARRIVED {score.UsObjectiveDamage}   ·   LOST {score.PlanObjectiveDamage}   ·   SUBS SUNK {score.UsTieBreakDamage}"
                 : scoringMode == ScenarioScoringMode.SubmarineSurvival
                     ? $"{scoreTitle}    PLAN SUB LOSSES {score.UsObjectiveDamage}   ·   US SHIP LOSSES {score.PlanObjectiveDamage}"
+                : scoringMode == ScenarioScoringMode.CarrierEscape
+                    ? $"{scoreTitle}    HULL DAMAGE {score.UsTieBreakDamage}/6   ·   AIR GROUP {(score.PlanTieBreakDamage > 0 ? "LAUNCH READY" : "MISSION KILLED")}"
                 : $"{scoreTitle}    US {score.UsObjectiveDamage}   -   PLAN {score.PlanObjectiveDamage}";
             GUILayout.Label(scoreText,
                 _cardHeaderStyle);
@@ -1563,6 +1583,9 @@ namespace Harpoon.Runtime
             if (scoringMode == ScenarioScoringMode.ConvoySurvival)
                 GUILayout.Label($"QUALIFYING TOTAL   {score.UsObjectiveDamage + score.PlanTieBreakDamage}/3 · " +
                     $"SUBMARINE OFFSETS APPLIED {score.PlanTieBreakDamage}", _cardStatStyle);
+            if (scoringMode == ScenarioScoringMode.CarrierEscape)
+                GUILayout.Label("PLAN: reach the orange western edge and spend 1 movement point to exit. US: sink Fujian.",
+                    _cardStatStyle);
             if (!_game.State.IsGameOver)
             {
                 GUILayout.BeginHorizontal();
@@ -1671,6 +1694,12 @@ namespace Harpoon.Runtime
                 }
             }
             GUI.backgroundColor = new Color(0.18f, 0.56f, 0.34f);
+            if (_game.State.Scenario.VictoryExitEdge != BoardEdge.None && activeForce.Side == Side.Plan)
+            {
+                GUI.enabled = CanLocalAct() && _game.CanExitMap(activeForce);
+                if (GUILayout.Button("EXIT WEST EDGE · CLAIM VICTORY", _buttonStyle))
+                    SubmitScenarioCommand(GameCommandType.ExitMap);
+            }
             GUI.enabled = !_game.State.IsGameOver && CanLocalAct() &&
                           activeForce.DeclaredSpeed >= 0 && activeForce.MovementRemaining == 0;
             if (GUILayout.Button("END ACTIVATION", _buttonStyle))
@@ -1739,7 +1768,7 @@ namespace Harpoon.Runtime
                 var scenarioLabel = scenario.Id == "fic-01" ? "1 BASHI" : scenario.Id == "fic-02"
                     ? "2 FLAGSHIP" : scenario.Id == "fic-03" ? "3 GUN" : scenario.Id == "fic-04"
                         ? "4 PICKET" : scenario.Id == "fic-05" ? "5 GHOST" : scenario.Id == "fic-06"
-                            ? "6 WOLVES" : "7 LIFELINE";
+                            ? "6 WOLVES" : scenario.Id == "fic-07" ? "7 LIFELINE" : "8 DRAGON";
                 if (GUILayout.Button(scenarioLabel, _buttonStyle))
                 {
                     _selectedScenario = scenario;
@@ -1904,7 +1933,11 @@ namespace Harpoon.Runtime
                     : "DECISION REQUIRED - declare formation speed.";
             var force = _game.State.ForceFor(LocalSide);
             if (force.MovementRemaining > 0)
-                return "DECISION REQUIRED - enter a cyan adjacent hex; red-ringed formations are legal targets.";
+                return !force.HasEnteredMap
+                    ? "DECISION REQUIRED - enter through any cyan eastern-edge sea hex."
+                    : _game.CanExitMap(force)
+                        ? "DECISION REQUIRED - exit the orange western edge to claim PLAN victory."
+                        : "DECISION REQUIRED - enter a cyan adjacent hex; red-ringed formations are legal targets.";
             return _game.State.Forces.Any(IsLegalAttackTarget)
                 ? "DECISION REQUIRED - attack a red-ringed target or end activation."
                 : "NO WEAPON IN RANGE - end this formation's activation.";
@@ -1934,6 +1967,8 @@ namespace Harpoon.Runtime
                         ? "Bring three merchants into the green Taipei / Zuoying port by turn ten. Each PLAN submarine sunk offsets one merchant loss."
                     : _game.State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival
                         ? "Keep an adjusted two of three PLAN submarines alive through turn seven; each two US ships sunk offsets one submarine loss."
+                    : _game.State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
+                        ? "US submarines enter through the cyan east edge. PLAN stays in the row-12 patrol band; a launch-capable Fujian exits at the orange west edge."
                     : "Escort damage is the tie-break after objective damage; equality after both comparisons is a draw. No turn limit is printed.",
                 _cardStatStyle);
             GUILayout.Space(10f);
@@ -2033,6 +2068,8 @@ namespace Harpoon.Runtime
                 ? $"ARRIVED {score.UsObjectiveDamage} · LOST {score.PlanObjectiveDamage} · SUBS {score.UsTieBreakDamage}"
                 : _game.State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival
                 ? $"PLAN SUBS LOST {score.UsObjectiveDamage} · US SHIPS LOST {score.PlanObjectiveDamage}"
+                : _game.State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
+                ? $"FUJIAN DMG {score.UsTieBreakDamage}/6 · AIR {(score.PlanTieBreakDamage > 0 ? "READY" : "KILLED")}"
                 : $"US {score.UsObjectiveDamage} : {score.PlanObjectiveDamage} PLAN";
             if (DrawSectionHeader("VICTORY / OBJECTIVE",
                     objectiveSummary,
@@ -2147,6 +2184,9 @@ namespace Harpoon.Runtime
             else if (_game.State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival)
                 GUILayout.Label($"PLAN submarines lost {score.UsObjectiveDamage} · US ships lost {score.PlanObjectiveDamage} · " +
                     $"adjusted PLAN losses {score.UsTieBreakDamage}", _labelStyle);
+            else if (_game.State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape)
+                GUILayout.Label($"Fujian hull damage {score.UsTieBreakDamage}/6 · embarked air group " +
+                    (score.PlanTieBreakDamage > 0 ? "launch-capable" : "mission-killed"), _labelStyle);
             else
             {
                 GUILayout.Label($"Score   US {score.UsObjectiveDamage}   |   PLAN {score.PlanObjectiveDamage}", _labelStyle);
@@ -2946,7 +2986,10 @@ namespace Harpoon.Runtime
                 : $"DECLARED {force.DeclaredSpeed} · MOVED {force.MovementPointsSpent} · REMAINING {force.MovementRemaining}",
                 _cardStatStyle);
             if (force.HasArrived)
-                GUILayout.Label("ARRIVED AT TAIPEI / ZUOYING · OFF MAP", _cardHeaderStyle);
+                GUILayout.Label(_game.State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
+                    ? "EXITED WEST EDGE · OFF MAP" : "ARRIVED AT TAIPEI / ZUOYING · OFF MAP", _cardHeaderStyle);
+            else if (!force.HasEnteredMap)
+                GUILayout.Label("OFF MAP · AWAITING EAST-EDGE ENTRY", _cardHeaderStyle);
             if (force.Side == LocalSide && force.DummyCards > 0)
                 GUILayout.Label($"DUMMY CARDS   {force.DummyCards}", _cardHeaderStyle);
             else if (force.Side != LocalSide && contact?.Level == ContactLevel.Located)
@@ -3006,7 +3049,8 @@ namespace Harpoon.Runtime
             if (unit.Definition.Torpedoes > 0)
                 GUILayout.Label($"TORPEDOES   {EffectiveStat(unit.EffectiveTorpedoes, unit.Definition.Torpedoes)}", _cardStatStyle);
             if (unit.Definition.IsAircraftCarrier)
-                GUILayout.Label("AIRCRAFT LAUNCH   " + (unit.CanLaunchAircraft ? "READY" : "PROHIBITED BY DAMAGE"),
+                GUILayout.Label($"EMBARKED AIR GROUP   {unit.EmbarkedAircraftRemaining}/{unit.Definition.EmbarkedAircraftCapacity} · " +
+                    (unit.CanLaunchAircraft ? "LAUNCH READY" : "LAUNCH PROHIBITED BY DAMAGE"),
                     _cardStatStyle);
             GUILayout.EndVertical();
             GUILayout.Space(6);
@@ -3045,7 +3089,7 @@ namespace Harpoon.Runtime
                 return;
             }
             GUILayout.Label($"{force.Id} · HEX {force.Position}{activity}" +
-                (force.HasArrived ? "  [ARRIVED / OFF MAP]" : string.Empty), _labelStyle);
+                (force.HasArrived ? "  [EXITED / OFF MAP]" : !force.HasEnteredMap ? "  [AWAITING EDGE ENTRY]" : string.Empty), _labelStyle);
             if (force.Side == LocalSide && force.DummyCards > 0)
                 GUILayout.Label($"  Dummy cards: {force.DummyCards}", _labelStyle);
             else if (force.Side != LocalSide && _game.State.Detection.ContactFor(LocalSide, force.Id).Level == ContactLevel.Located)
