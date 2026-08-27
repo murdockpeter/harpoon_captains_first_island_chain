@@ -4,7 +4,7 @@ $unityPath = 'C:\Program Files\Unity\Hub\Editor\6000.2.12f1\Editor\Unity.exe'
 $logs = Join-Path $projectPath 'Logs'
 $buildLog = Join-Path $logs 'release-build.log'
 $smokeLog = Join-Path $logs 'release-player-smoke.log'
-$gamePath = Join-Path $projectPath 'Build\Windows\HarpoonFirstIslandChain.exe'
+$gamePath = Join-Path $projectPath 'Build\Windows\HarpoonCaptainsEdition.exe'
 
 New-Item -ItemType Directory -Path $logs -Force | Out-Null
 if (-not (Test-Path -LiteralPath $unityPath)) { throw "Unity was not found at $unityPath" }

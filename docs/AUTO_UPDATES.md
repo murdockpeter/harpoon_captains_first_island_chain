@@ -8,11 +8,14 @@ Every installable release must have all of the following:
 
 1. A semantic version tag in the form `vMAJOR.MINOR.PATCH`.
 2. A published, non-prerelease GitHub Release for that tag.
-3. A release asset named exactly `Harpoon-First-Island-Chain-Windows.zip`.
-4. The player files at the root of the ZIP, including `HarpoonFirstIslandChain.exe`.
+3. A release asset named exactly `Harpoon-Captains-Edition-Windows.zip`.
+4. The player files at the root of the ZIP, including `HarpoonCaptainsEdition.exe`.
 5. GitHub's `sha256:` digest for the uploaded asset.
 
 The game checks GitHub's public `releases/latest` endpoint at startup and from **Match & System → Check for Update**. It compares the release tag with `Application.version`. A newer release appears in the collapsed section header.
+
+The ZIP, executable, and player-visible product name are **Harpoon Captain's Edition**, with
+**First Island Chain** as its current scenario module.
 
 Installation requires a deliberate **Install Update** click. The game downloads into its persistent-data directory, checks GitHub's SHA-256 digest, saves the current match, and starts a temporary PowerShell updater. The helper waits for the game to exit, backs up replaced files under `UpdateBackups`, installs only the verified archive's root entries, and relaunches the game. A failed verification is deleted and never executed.
 

@@ -1,4 +1,4 @@
-# Harpoon: First Island Chain — Rules Implementation TODO
+# Harpoon Captain's Edition — First Island Chain Rules Implementation TODO
 
 This is the living implementation checklist. Check an item only when its rules behavior is implemented in `Harpoon.Core`, exposed to players where a decision is required, and covered by deterministic automated tests.
 

@@ -30,7 +30,7 @@ namespace Harpoon.Editor
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             EditorSceneManager.SaveScene(scene, "Assets/Main.unity");
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene("Assets/Main.unity", true) };
-            PlayerSettings.productName = "Harpoon: First Island Chain";
+            PlayerSettings.productName = "Harpoon Captain's Edition";
             PlayerSettings.companyName = "Open Source Harpoon Community";
             PlayerSettings.bundleVersion = ReleaseVersionFromCommandLine();
             PlayerSettings.defaultScreenWidth = 1600;
@@ -142,8 +142,12 @@ namespace Harpoon.Editor
         {
             EnsureRenderingAssets();
             PlayerSettings.bundleVersion = ReleaseVersionFromCommandLine();
-            const string outputPath = "Build/Windows/HarpoonFirstIslandChain.exe";
-            Directory.CreateDirectory(Path.GetDirectoryName(outputPath) ?? "Build/Windows");
+            const string outputDirectory = "Build/Windows";
+            const string outputPath = outputDirectory + "/HarpoonCaptainsEdition.exe";
+            // Build/Windows is generated output. Clearing it prevents a renamed release from
+            // accidentally packaging stale executables or data directories from an older build.
+            if (Directory.Exists(outputDirectory)) Directory.Delete(outputDirectory, true);
+            Directory.CreateDirectory(outputDirectory);
             var options = new BuildPlayerOptions
             {
                 scenes = new[] { "Assets/Main.unity" },

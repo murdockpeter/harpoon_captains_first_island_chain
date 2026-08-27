@@ -54,7 +54,7 @@ namespace Harpoon.Runtime
     {
         public const string RepositoryOwner = "murdockpeter";
         public const string RepositoryName = "harpoon_captains_first_island_chain";
-        public const string WindowsAssetName = "Harpoon-First-Island-Chain-Windows.zip";
+        public const string WindowsAssetName = "Harpoon-Captains-Edition-Windows.zip";
         private const string ApiVersion = "2022-11-28";
         private static string LatestReleaseUrl =>
             $"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases/latest";
@@ -65,7 +65,7 @@ namespace Harpoon.Runtime
             {
                 request.SetRequestHeader("Accept", "application/vnd.github+json");
                 request.SetRequestHeader("X-GitHub-Api-Version", ApiVersion);
-                request.SetRequestHeader("User-Agent", $"Harpoon-First-Island-Chain/{installedVersion}");
+                request.SetRequestHeader("User-Agent", $"Harpoon-Captains-Edition/{installedVersion}");
                 yield return request.SendWebRequest();
                 if (request.result != UnityWebRequest.Result.Success)
                 {
@@ -97,7 +97,7 @@ namespace Harpoon.Runtime
                 if (!newer)
                 {
                     completed?.Invoke(new UpdateCheckResult(true, false,
-                        $"Harpoon {installedVersion} is current.", release));
+                        $"Harpoon Captain's Edition {installedVersion} is current.", release));
                     yield break;
                 }
                 if (asset == null || !IsTrustedDownload(asset.browser_download_url))
@@ -114,7 +114,7 @@ namespace Harpoon.Runtime
                     yield break;
                 }
                 completed?.Invoke(new UpdateCheckResult(true, true,
-                    $"Harpoon {release.tag_name.TrimStart('v', 'V')} is available.", release, asset));
+                    $"Harpoon Captain's Edition {release.tag_name.TrimStart('v', 'V')} is available.", release, asset));
             }
         }
 
@@ -133,7 +133,7 @@ namespace Harpoon.Runtime
             using (var request = new UnityWebRequest(asset.browser_download_url, UnityWebRequest.kHttpVerbGET))
             {
                 request.downloadHandler = new DownloadHandlerFile(packagePath) { removeFileOnAbort = true };
-                request.SetRequestHeader("User-Agent", $"Harpoon-First-Island-Chain/{Application.version}");
+                request.SetRequestHeader("User-Agent", $"Harpoon-Captains-Edition/{Application.version}");
                 var operation = request.SendWebRequest();
                 while (!operation.isDone)
                 {

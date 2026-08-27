@@ -1,14 +1,17 @@
-# MVP 1.0 beta playtest guide
+# Harpoon Captain's Edition — MVP 1.0 beta playtest guide
 
 ## What testers receive
 
-Distribute `Harpoon-First-Island-Chain-Windows.zip` together with
-`Harpoon-First-Island-Chain-Windows.zip.sha256`. A tester should extract the complete ZIP to a
-writable folder and launch `HarpoonFirstIslandChain.exe`. The executable must remain beside its
-`HarpoonFirstIslandChain_Data` folder, `UnityPlayer.dll`, and the other packaged runtime files.
+Distribute `Harpoon-Captains-Edition-Windows.zip` together with
+`Harpoon-Captains-Edition-Windows.zip.sha256`. A tester should extract the complete ZIP to a
+writable folder and launch `HarpoonCaptainsEdition.exe`. The executable must remain beside its
+`HarpoonCaptainsEdition_Data` folder, `UnityPlayer.dll`, and the other packaged runtime files.
 
 The game is portable: there is no installer and no Unity installation is required. Windows may
 show a SmartScreen warning because the community build is not code-signed.
+
+The window title, executable/data filenames, downloads, documentation, and in-game product identity
+all use **Harpoon Captain's Edition**. **First Island Chain** is the included scenario module.
 
 ## Recommended first session
 
@@ -30,7 +33,7 @@ Please include:
 - the command attempted and the result expected;
 - a screenshot;
 - the exported match record, when available;
-- the Unity player log from `%USERPROFILE%\AppData\LocalLow\Open Source Harpoon Community\Harpoon_ First Island Chain\Player.log`.
+- the Unity player log from `%USERPROFILE%\AppData\LocalLow\Open Source Harpoon Community\Harpoon Captain's Edition\Player.log`.
 
 Rules disagreements should cite the supplement or Captain's Rules page. Do not use the F3 detection
 test mode for release acceptance; it is intentionally non-authoritative for Scenarios 1–3.

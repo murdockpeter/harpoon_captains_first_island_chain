@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $projectPath = $PSScriptRoot
 $windowsBuild = Join-Path $projectPath 'Build\Windows'
 $artifactFolder = Join-Path $projectPath 'Artifacts'
-$archiveName = 'Harpoon-First-Island-Chain-Windows.zip'
+$archiveName = 'Harpoon-Captains-Edition-Windows.zip'
 $archivePath = Join-Path $artifactFolder $archiveName
 $checksumPath = "$archivePath.sha256"
 $expectedVersion = '1.0.0'
@@ -12,8 +12,8 @@ $expectedVersion = '1.0.0'
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $requiredFiles = @(
-    (Join-Path $windowsBuild 'HarpoonFirstIslandChain.exe'),
-    (Join-Path $windowsBuild 'HarpoonFirstIslandChain_Data'),
+    (Join-Path $windowsBuild 'HarpoonCaptainsEdition.exe'),
+    (Join-Path $windowsBuild 'HarpoonCaptainsEdition_Data'),
     (Join-Path $windowsBuild 'UnityPlayer.dll'),
     (Join-Path $windowsBuild 'harpoon-version.txt')
 )
@@ -28,7 +28,7 @@ if ($actualVersion -ne $expectedVersion) {
 
 $commit = (git -C $projectPath rev-parse HEAD).Trim()
 $buildInfo = @(
-    'Harpoon: First Island Chain',
+    "Harpoon Captain's Edition: First Island Chain",
     "Version: $actualVersion",
     "Commit: $commit",
     "Certified UTC: $([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))",
@@ -39,6 +39,21 @@ Copy-Item -LiteralPath (Join-Path $projectPath 'docs\BETA_PLAYTEST.md') `
     -Destination (Join-Path $windowsBuild 'BETA_PLAYTEST.md') -Force
 
 New-Item -ItemType Directory -Path $artifactFolder -Force | Out-Null
+$obsoleteArtifacts = @(
+    (Join-Path $artifactFolder 'Harpoon-First-Island-Chain-Windows.zip'),
+    (Join-Path $artifactFolder 'Harpoon-First-Island-Chain-Windows.zip.sha256')
+)
+$resolvedArtifactFolder = [IO.Path]::GetFullPath($artifactFolder).TrimEnd('\')
+foreach ($obsoleteArtifact in $obsoleteArtifacts) {
+    $resolvedObsoleteArtifact = [IO.Path]::GetFullPath($obsoleteArtifact)
+    if (-not $resolvedObsoleteArtifact.StartsWith($resolvedArtifactFolder + '\',
+            [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Obsolete artifact path escaped the artifact folder: $resolvedObsoleteArtifact"
+    }
+    if (Test-Path -LiteralPath $resolvedObsoleteArtifact) {
+        Remove-Item -LiteralPath $resolvedObsoleteArtifact -Force
+    }
+}
 Compress-Archive -Path (Join-Path $windowsBuild '*') -DestinationPath $archivePath `
     -CompressionLevel Optimal -Force
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()

@@ -6,14 +6,14 @@ $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
 $testRoot = Join-Path $tempRoot ('HarpoonUpdaterIntegration-' + [Guid]::NewGuid().ToString('N'))
 $installRoot = Join-Path $testRoot 'Install'
 $backupRoot = Join-Path $testRoot 'Backup'
-$packagePath = Join-Path $testRoot 'Harpoon-First-Island-Chain-Windows.zip'
+$packagePath = Join-Path $testRoot 'Harpoon-Captains-Edition-Windows.zip'
 
 try {
-    if (-not (Test-Path -LiteralPath (Join-Path $buildRoot 'HarpoonFirstIslandChain.exe'))) {
+    if (-not (Test-Path -LiteralPath (Join-Path $buildRoot 'HarpoonCaptainsEdition.exe'))) {
         throw 'Build the Windows player before running updater-test.ps1.'
     }
     New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $buildRoot 'HarpoonFirstIslandChain.exe') -Destination $installRoot
+    Copy-Item -LiteralPath (Join-Path $buildRoot 'HarpoonCaptainsEdition.exe') -Destination $installRoot
     Compress-Archive -Path (Join-Path $buildRoot '*') -DestinationPath $packagePath -CompressionLevel Fastest
 
     $buildVersionFile = Join-Path $buildRoot 'harpoon-version.txt'
@@ -22,14 +22,14 @@ try {
 
     $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$updater`" " +
         "-GamePid 999999 -PackagePath `"$packagePath`" -InstallDirectory `"$installRoot`" " +
-        "-ExecutableName `"HarpoonFirstIslandChain.exe`" -BackupDirectory `"$backupRoot`" " +
+        "-ExecutableName `"HarpoonCaptainsEdition.exe`" -BackupDirectory `"$backupRoot`" " +
         "-TargetVersion `"$targetVersion`" -SkipRelaunch"
     $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
     $versionFile = Join-Path $installRoot 'harpoon-version.txt'
     $installedVersion = if (Test-Path -LiteralPath $versionFile) {
         (Get-Content -LiteralPath $versionFile -Raw).Trim()
     } else { 'MISSING' }
-    $backupExists = Test-Path -LiteralPath (Join-Path $backupRoot 'HarpoonFirstIslandChain.exe')
+    $backupExists = Test-Path -LiteralPath (Join-Path $backupRoot 'HarpoonCaptainsEdition.exe')
     if ($process.ExitCode -ne 0 -or $installedVersion -ne $targetVersion -or -not $backupExists) {
         throw "Updater integration failed: exit=$($process.ExitCode), version=$installedVersion, backup=$backupExists"
     }

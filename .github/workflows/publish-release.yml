@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ github.ref_name }}
-      RELEASE_ASSET: Harpoon-First-Island-Chain-Windows.zip
+      RELEASE_ASSET: Harpoon-Captains-Edition-Windows.zip
     steps:
       - name: Check out tagged source
         uses: actions/checkout@v4
@@ -50,7 +50,7 @@ jobs:
       - name: Package and checksum Windows player
         shell: pwsh
         run: |
-          if (-not (Test-Path -LiteralPath 'Build/Windows/HarpoonFirstIslandChain.exe')) {
+          if (-not (Test-Path -LiteralPath 'Build/Windows/HarpoonCaptainsEdition.exe')) {
             throw 'The tagged Windows build was not produced.'
           }
           $expected = $env:RELEASE_TAG.TrimStart('v', 'V')
@@ -68,5 +68,5 @@ jobs:
           gh release create "$RELEASE_TAG" \
             "$RELEASE_ASSET#Windows x64 auto-update package" \
             "$RELEASE_ASSET.sha256#SHA-256 checksum" \
-            --verify-tag --generate-notes --draft --title "Harpoon $RELEASE_TAG"
+            --verify-tag --generate-notes --draft --title "Harpoon Captain's Edition $RELEASE_TAG"
           gh release edit "$RELEASE_TAG" --draft=false --latest

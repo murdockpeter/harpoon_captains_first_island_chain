@@ -1,6 +1,6 @@
-# Harpoon: First Island Chain
+# Harpoon Captain's Edition: First Island Chain
 
-A Unity 6 operational naval wargame based on the **Harpoon Captain's Edition** rules and the supplied **First Island Chain** fan supplement.
+A community Unity 6 implementation of **Harpoon Captain's Edition**, currently featuring the supplied **First Island Chain** fan supplement.
 
 The MVP 1.0 beta scope is recorded in [`docs/RELEASE_NOTES_MVP_1.0.md`](docs/RELEASE_NOTES_MVP_1.0.md), with tester setup and reporting instructions in [`docs/BETA_PLAYTEST.md`](docs/BETA_PLAYTEST.md). Future implementation progress is tracked in [`TODO.md`](TODO.md).
 

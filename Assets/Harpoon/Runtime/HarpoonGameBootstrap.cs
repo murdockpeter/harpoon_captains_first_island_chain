@@ -67,7 +67,7 @@ namespace Harpoon.Runtime
         private string _ipAddress = "127.0.0.1";
         private string _portText = "7777";
         private string _chatInput = string.Empty;
-        private string _publicSessionName = "Harpoon Scenario 1";
+        private string _publicSessionName = "Harpoon Captain's Edition - Scenario 1";
         private string _publicPassword = string.Empty;
         private string _joinCode = string.Empty;
         private bool _publicDiscoverable = true;
@@ -1667,7 +1667,7 @@ namespace Harpoon.Runtime
         {
             var snapshot = JsonUtility.ToJson(_game.CaptureSnapshot(), true);
             var trace = string.Join("\n", _game.State.Transactions.Select(item => item.ToString()));
-            return $"HARPOON MATCH EXPORT\nScenario: {_game.State.Scenario?.Id}\nSeed: {_game.Seed}\n" +
+            return $"HARPOON CAPTAIN'S EDITION MATCH EXPORT\nScenario: {_game.State.Scenario?.Id}\nSeed: {_game.Seed}\n" +
                    $"Result: {_game.State.Result}\nEnd reason: {_game.State.EndReason}\n\nSNAPSHOT\n{snapshot}\n\nRULES TRACE\n{trace}";
         }
 
@@ -2127,7 +2127,7 @@ namespace Harpoon.Runtime
                 if (GUILayout.Button(scenarioLabel, _buttonStyle))
                 {
                     _selectedScenario = scenario;
-                    _publicSessionName = $"Harpoon {scenario.Name}";
+                    _publicSessionName = $"Harpoon Captain's Edition - {scenario.Name}";
                     Restart();
                     _showBriefing = true;
                 }
@@ -2266,7 +2266,7 @@ namespace Harpoon.Runtime
                 _updateStatus = "Installer could not start: " + launchError;
                 yield break;
             }
-            _updateStatus = "Verified. Closing Harpoon so the updater can install and relaunch.";
+            _updateStatus = "Verified. Closing Harpoon Captain's Edition so the updater can install and relaunch.";
             yield return null;
             QuitGame();
         }
@@ -2384,7 +2384,7 @@ namespace Harpoon.Runtime
             var rect = new Rect((Screen.width - 460f) * 0.5f, (Screen.height - 220f) * 0.5f, 460f, 220f);
             GUI.Box(rect, GUIContent.none);
             GUILayout.BeginArea(new Rect(rect.x + 28f, rect.y + 24f, rect.width - 56f, rect.height - 48f));
-            GUILayout.Label(restart ? "RESTART SCENARIO?" : "EXIT HARPOON?", _titleStyle);
+            GUILayout.Label(restart ? "RESTART SCENARIO?" : "EXIT HARPOON CAPTAIN'S EDITION?", _titleStyle);
             GUILayout.Label(restart ? "Unsaved progress in the current match will be replaced." :
                 "Unsaved progress will be lost. You can return and save from the pause menu.", _labelStyle);
             GUILayout.FlexibleSpace();
@@ -2411,7 +2411,13 @@ namespace Harpoon.Runtime
             GUI.Box(new Rect(18, 18, 370, commandPanelHeight), GUIContent.none);
             GUILayout.BeginArea(new Rect(28, 28, 350, commandPanelHeight - 20f));
             GUILayout.BeginHorizontal();
+            GUILayout.BeginVertical();
             GUILayout.Label("HARPOON", _titleStyle);
+            var editionColor = GUI.color;
+            GUI.color = new Color(0.28f, 0.82f, 1f);
+            GUILayout.Label("CAPTAIN'S EDITION  ·  FIRST ISLAND CHAIN", _cardStatStyle);
+            GUI.color = editionColor;
+            GUILayout.EndVertical();
             GUILayout.FlexibleSpace();
             GUILayout.Label(_sessionMode == SessionMode.SinglePlayer ? "SOLO - US NAVY" :
                 _sessionMode == SessionMode.HotSeat ? $"HOT-SEAT - {LocalSide.ToString().ToUpperInvariant()} TO ACT" :

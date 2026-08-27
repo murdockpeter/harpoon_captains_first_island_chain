@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $projectPath = $PSScriptRoot
 $unityPath = 'C:\Program Files\Unity\Hub\Editor\6000.2.12f1\Editor\Unity.exe'
 $logPath = Join-Path $projectPath 'Logs\play-build.log'
-$gamePath = Join-Path $projectPath 'Build\Windows\HarpoonFirstIslandChain.exe'
+$gamePath = Join-Path $projectPath 'Build\Windows\HarpoonCaptainsEdition.exe'
 
 if (-not (Test-Path -LiteralPath $unityPath)) {
     throw "Unity 6000.2.12f1 was not found at: $unityPath"
@@ -19,5 +19,5 @@ if ($unity.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $gamePath)) {
     exit 1
 }
 
-Write-Host 'Build passed. Launching Harpoon: First Island Chain...' -ForegroundColor Green
+Write-Host "Build passed. Launching Harpoon Captain's Edition: First Island Chain..." -ForegroundColor Green
 Start-Process -FilePath $gamePath -WorkingDirectory (Split-Path -Parent $gamePath)

@@ -1,4 +1,4 @@
-# MVP 1.0 beta release notes
+# Harpoon Captain's Edition — MVP 1.0 beta release notes
 
 MVP 1.0 makes all ten introductory scenarios from *Harpoon: First Island Chain* selectable,
 playable, saveable, replayable, and capable of reaching an authoritative result without debug

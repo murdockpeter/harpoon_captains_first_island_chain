@@ -54,7 +54,8 @@ namespace Harpoon.Runtime
                 _status = "Creating encrypted Relay session...";
                 var options = new SessionOptions
                 {
-                    Name = string.IsNullOrWhiteSpace(sessionName) ? "Harpoon Scenario 1" : sessionName.Trim(),
+                    Name = string.IsNullOrWhiteSpace(sessionName)
+                        ? "Harpoon Captain's Edition - Scenario 1" : sessionName.Trim(),
                     MaxPlayers = 2,
                     IsPrivate = !discoverable,
                     Password = NormalizePassword(password)
@@ -118,7 +119,7 @@ namespace Harpoon.Runtime
         {
             if (_operationPending) return;
             _operationPending = true;
-            _status = "Finding public Harpoon sessions...";
+            _status = "Finding public Harpoon Captain's Edition sessions...";
             try
             {
                 await EnsureServicesAndNetworkManager(false);
