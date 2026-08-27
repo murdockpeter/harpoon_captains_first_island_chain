@@ -14,4 +14,4 @@ if ($unity.ExitCode -ne 0 -or -not (Select-String -LiteralPath $validationLog -Q
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & (Join-Path $PSScriptRoot 'updater-test.ps1')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Write-Host 'MVP 0.1 RELEASE CHECK PASSED' -ForegroundColor Green
+Write-Host 'MVP 1.0 RELEASE CHECK PASSED' -ForegroundColor Green

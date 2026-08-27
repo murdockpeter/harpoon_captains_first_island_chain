@@ -2,7 +2,7 @@
 
 A Unity 6 operational naval wargame based on the **Harpoon Captain's Edition** rules and the supplied **First Island Chain** fan supplement.
 
-MVP 0.1 release scope and rule interpretations are recorded in [`docs/RELEASE_NOTES_MVP_0.1.md`](docs/RELEASE_NOTES_MVP_0.1.md). Future implementation progress is tracked in [`TODO.md`](TODO.md).
+The MVP 1.0 beta scope is recorded in [`docs/RELEASE_NOTES_MVP_1.0.md`](docs/RELEASE_NOTES_MVP_1.0.md), with tester setup and reporting instructions in [`docs/BETA_PLAYTEST.md`](docs/BETA_PLAYTEST.md). Future implementation progress is tracked in [`TODO.md`](TODO.md).
 
 ## Current playable slice
 
@@ -35,6 +35,8 @@ Press **F1** for the selected scenario's operational briefing and quick referenc
 Release validation is also one command: `release-check.cmd`. Use `test.cmd` for the standalone .NET core suite or `smoke.cmd` for only the Windows build/player smoke gate. Each command returns a nonzero exit code when its gate fails.
 
 Windows builds check published GitHub Releases for verified updates. Release tags drive the tested build/publish workflow, while installation remains an explicit player choice under **Match & System**. See [`docs/AUTO_UPDATES.md`](docs/AUTO_UPDATES.md) for the release contract, one-time Unity license setup, security checks, and recovery path.
+
+To create a fully certified beta ZIP locally, run `beta-package.cmd`. The distributable and its SHA-256 checksum are written to `Artifacts/`.
 
 ## Architecture
 

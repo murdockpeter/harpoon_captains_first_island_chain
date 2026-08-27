@@ -24,6 +24,7 @@ static class Program
             ScenarioEightRoute();
             ScenarioNineRoute();
             ScenarioTenRoute();
+            MvpSharedDataAndCompletionRoute();
             ReleaseVersionRoute();
             Console.WriteLine($"HARPOON CORE VALIDATION PASSED: {_checks} checks; scripted movement, missile, gunfire, scoring, stopping, and replay routes complete.");
             return 0;
@@ -33,6 +34,31 @@ static class Program
             Console.Error.WriteLine("HARPOON CORE VALIDATION FAILED");
             Console.Error.WriteLine(exception);
             return 1;
+        }
+    }
+
+    private static void MvpSharedDataAndCompletionRoute()
+    {
+        var errors = MvpDataValidation.Validate();
+        Check(errors.Count == 0, "MVP shared data schema and cross-reference validation" +
+            (errors.Count == 0 ? string.Empty : ": " + string.Join("; ", errors)));
+        Check(ModernAircraftDatabase.All.Count == 5 && ModernTacticalAircraftDatabase.All.Count == 8,
+            "All thirteen supplement aircraft stat cards are entered");
+        Check(ModernAirBaseDatabase.All.Count(item => !item.IsCarrier) == 6 &&
+              ModernAirBaseDatabase.All.Count(item => item.IsCarrier) == 2,
+            "All six base and two carrier-wing charts are entered");
+
+        foreach (var scenario in FirstIslandChainScenarios.Introductory)
+        {
+            var game = new ScenarioOneGame(1000 + int.Parse(scenario.Id.Substring(4)), null,
+                true, false, null, scenario);
+            Check(game.State.Scenario == scenario && !game.State.IsGameOver,
+                $"{scenario.Id} creates from its release definition");
+            var result = game.Execute(new GameCommand(GameCommandType.Concede, Side.UsNavy,
+                game.State.Revision));
+            Check(result.Accepted && game.State.IsGameOver &&
+                  game.State.EndReason == ScenarioEndReason.Concession,
+                $"{scenario.Id} can reach an authoritative result without debug controls");
         }
     }
 

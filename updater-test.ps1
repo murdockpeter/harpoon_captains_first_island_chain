@@ -16,17 +16,21 @@ try {
     Copy-Item -LiteralPath (Join-Path $buildRoot 'HarpoonFirstIslandChain.exe') -Destination $installRoot
     Compress-Archive -Path (Join-Path $buildRoot '*') -DestinationPath $packagePath -CompressionLevel Fastest
 
+    $buildVersionFile = Join-Path $buildRoot 'harpoon-version.txt'
+    if (-not (Test-Path -LiteralPath $buildVersionFile)) { throw 'Built player version marker is missing.' }
+    $targetVersion = (Get-Content -LiteralPath $buildVersionFile -Raw).Trim()
+
     $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$updater`" " +
         "-GamePid 999999 -PackagePath `"$packagePath`" -InstallDirectory `"$installRoot`" " +
         "-ExecutableName `"HarpoonFirstIslandChain.exe`" -BackupDirectory `"$backupRoot`" " +
-        "-TargetVersion `"0.1.1`" -SkipRelaunch"
+        "-TargetVersion `"$targetVersion`" -SkipRelaunch"
     $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Wait -PassThru -WindowStyle Hidden
     $versionFile = Join-Path $installRoot 'harpoon-version.txt'
     $installedVersion = if (Test-Path -LiteralPath $versionFile) {
         (Get-Content -LiteralPath $versionFile -Raw).Trim()
     } else { 'MISSING' }
     $backupExists = Test-Path -LiteralPath (Join-Path $backupRoot 'HarpoonFirstIslandChain.exe')
-    if ($process.ExitCode -ne 0 -or $installedVersion -ne '0.1.1' -or -not $backupExists) {
+    if ($process.ExitCode -ne 0 -or $installedVersion -ne $targetVersion -or -not $backupExists) {
         throw "Updater integration failed: exit=$($process.ExitCode), version=$installedVersion, backup=$backupExists"
     }
     Write-Host 'HARPOON UPDATER INTEGRATION PASSED: version contract, replacement, backup, and no-relaunch test.' -ForegroundColor Green

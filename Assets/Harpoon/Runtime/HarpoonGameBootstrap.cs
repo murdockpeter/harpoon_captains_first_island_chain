@@ -26,6 +26,13 @@ namespace Harpoon.Runtime
         private GUIStyle _buttonStyle;
         private GUIStyle _cardHeaderStyle;
         private GUIStyle _cardStatStyle;
+        private GUIStyle _supplementCardStyle;
+        private GUIStyle _supplementTitleStyle;
+        private GUIStyle _supplementMetaStyle;
+        private GUIStyle _supplementBadgeStyle;
+        private GUIStyle _supplementSensorStyle;
+        private GUIStyle _supplementWeaponStyle;
+        private GUIStyle _supplementHullStyle;
         private GUIStyle _tooltipStyle;
         private GUIStyle _debugStyle;
         private GUIStyle _debugHeaderStyle;
@@ -2095,6 +2102,10 @@ namespace Harpoon.Runtime
 
         private void DrawSystemControls()
         {
+            var releaseColor = GUI.color;
+            GUI.color = new Color(0.2f, 0.88f, 0.88f);
+            GUILayout.Label("MVP 1.0  ·  TEN-SCENARIO BETA", _cardHeaderStyle);
+            GUI.color = releaseColor;
             GUILayout.Label("INTRODUCTORY SCENARIO", _cardStatStyle);
             GUILayout.BeginHorizontal();
             var scenarios = FirstIslandChainScenarios.Introductory;
@@ -2110,11 +2121,9 @@ namespace Harpoon.Runtime
                 if (scenario.Id == _game.State.Scenario.Id)
                     GUI.backgroundColor = new Color(0.12f, 0.58f, 0.78f);
                 GUI.enabled = !IsClientSession;
-                var scenarioLabel = scenario.Id == "fic-01" ? "1 BASHI" : scenario.Id == "fic-02"
-                    ? "2 FLAGSHIP" : scenario.Id == "fic-03" ? "3 GUN" : scenario.Id == "fic-04"
-                        ? "4 PICKET" : scenario.Id == "fic-05" ? "5 GHOST" : scenario.Id == "fic-06"
-                            ? "6 WOLVES" : scenario.Id == "fic-07" ? "7 LIFELINE" : scenario.Id == "fic-08"
-                                ? "8 DRAGON" : "9 PATROLLER";
+                var scenarioLabels = new[] { "1 BASHI", "2 FLAGSHIP", "3 GUN", "4 PICKET", "5 GHOST",
+                    "6 WOLVES", "7 LIFELINE", "8 DRAGON", "9 PATROLLER", "10 FIRST LIGHT" };
+                var scenarioLabel = scenarioLabels[scenarioIndex];
                 if (GUILayout.Button(scenarioLabel, _buttonStyle))
                 {
                     _selectedScenario = scenario;
@@ -3407,10 +3416,86 @@ namespace Harpoon.Runtime
                 GUILayout.Label("DEFENSE PAIRS   NOT YET DEPLOYED", _cardStatStyle);
             _cardHeaderStyle.normal.textColor = previousHeaderColor;
 
-            foreach (var unit in force.Units) DrawUnitCard(unit, sideColor);
+            foreach (var unit in force.Units) DrawSupplementUnitCard(unit);
             GUILayout.Label("Click either 3D formation or use the tabs above.", _labelStyle);
             GUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        private void DrawSupplementUnitCard(UnitState unit)
+        {
+            GUILayout.BeginVertical(_supplementCardStyle);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(SupplementClassLabel(unit), _supplementMetaStyle, GUILayout.Width(76f));
+            GUILayout.FlexibleSpace();
+            var priorBadgeColor = GUI.backgroundColor;
+            GUI.backgroundColor = unit.Definition.Side == Side.UsNavy
+                ? new Color(0.08f, 0.32f, 0.68f) : new Color(0.72f, 0.12f, 0.1f);
+            GUILayout.Label(unit.Definition.Side == Side.UsNavy ? "USA" : "PRC", _supplementBadgeStyle,
+                GUILayout.Width(46f));
+            GUI.backgroundColor = priorBadgeColor;
+            GUILayout.EndHorizontal();
+            GUILayout.Label(unit.Definition.DisplayName, _supplementTitleStyle);
+            var priorMetaColor = _supplementMetaStyle.normal.textColor;
+            _supplementMetaStyle.normal.textColor = unit.IsSunk ? new Color(0.62f, 0.08f, 0.06f)
+                : unit.HasHalfDamage ? new Color(0.7f, 0.3f, 0.02f) : new Color(0.18f, 0.2f, 0.22f);
+            GUILayout.Label(SupplementRoleLine(unit) + "  ·  " + DamageStateLabel(unit), _supplementMetaStyle);
+            _supplementMetaStyle.normal.textColor = priorMetaColor;
+
+            if (unit.Definition.IsPatrolAircraft)
+            {
+                GUILayout.Label($"SERVICEABLE   {AircraftBoxes(unit)}   {unit.ServiceableAircraftRemaining}/{unit.Definition.ServiceableAircraftCapacity}  ·  {unit.AircraftMissionState.ToString().ToUpperInvariant()}", _supplementHullStyle);
+                GUILayout.Label($"ASR {unit.EffectiveAirSearchRadar}    SSR {unit.EffectiveSurfaceSearchRadar}    " +
+                    $"SON {unit.EffectiveSonar}    ASW {unit.EffectiveAntiSubmarineWarfare}", _supplementSensorStyle);
+                GUILayout.Label($"ASM {unit.AvailableShortSsm}-{unit.AvailableLongSsm}    RADIUS {unit.Definition.AircraftRadius}    DEF {unit.Definition.AircraftDefense}", _supplementWeaponStyle);
+                GUILayout.Label("BASE KADENA 0904  ·  ONE RELOCATION / ATTACK EACH TURN", _supplementMetaStyle);
+                if (unit.AircraftMissionState == AircraftMissionState.Aborted ||
+                    unit.AircraftMissionState == AircraftMissionState.Reconstituting)
+                    GUILayout.Label($"AVAILABLE AGAIN TURN {unit.AircraftReadyTurn}", _supplementMetaStyle);
+                GUILayout.EndVertical();
+                GUILayout.Space(6);
+                return;
+            }
+
+            GUILayout.Label($"HULL   {HullBoxes(unit)}   {unit.HullRemaining}/{unit.Definition.Hull}     SPEED {EffectiveStat(unit.EffectiveSpeed, unit.Definition.Speed)}", _supplementHullStyle);
+            GUILayout.Label($"ASR {EffectiveStat(unit.EffectiveAirSearchRadar, unit.Definition.AirSearchRadar)}    " +
+                $"SSR {EffectiveStat(unit.EffectiveSurfaceSearchRadar, unit.Definition.SurfaceSearchRadar)}    " +
+                $"SON {EffectiveStat(unit.EffectiveSonar, unit.Definition.Sonar)}    " +
+                $"ASW {EffectiveStat(unit.EffectiveAntiSubmarineWarfare, unit.Definition.AntiSubmarineWarfare)}", _supplementSensorStyle);
+            GUILayout.Label($"SAM {EffectiveStat(unit.EffectiveShortSam, unit.Definition.ShortSam)}-" +
+                $"{EffectiveStat(unit.EffectiveLongSam, unit.Definition.LongSam)}    " +
+                $"PD {EffectiveStat(unit.EffectivePointDefense, unit.Definition.PointDefense)}    " +
+                $"GUNS {EffectiveStat(unit.EffectiveGuns, unit.Definition.Guns)}", _supplementWeaponStyle);
+            GUILayout.Label($"SSM {unit.AvailableShortSsm}-{unit.AvailableLongSsm} AVAILABLE    MISSILE BOXES SR {unit.ShortMissilesRemaining} · LR {unit.LongMissilesRemaining}", _supplementWeaponStyle);
+            if (unit.Definition.Torpedoes > 0)
+                GUILayout.Label($"TORPEDOES   {EffectiveStat(unit.EffectiveTorpedoes, unit.Definition.Torpedoes)}", _supplementWeaponStyle);
+            GUILayout.Label($"DAMAGE THRESHOLDS  HALF {unit.HalfDamageThreshold}  ·  TWO-THIRDS {unit.TwoThirdsDamageThreshold}", _supplementMetaStyle);
+            if (_game.State.Scenario.ScoringMode == ScenarioScoringMode.GunfireHullHits)
+                GUILayout.Label($"GUNFIRE SCORE CREDIT   {unit.GunfireHullDamage}", _supplementMetaStyle);
+            if (unit.Definition.IsAircraftCarrier)
+                GUILayout.Label($"EMBARKED AIR GROUP   {unit.EmbarkedAircraftRemaining}/{unit.Definition.EmbarkedAircraftCapacity}  ·  " +
+                    (unit.CanLaunchAircraft ? "LAUNCH READY" : "LAUNCH PROHIBITED BY DAMAGE"),
+                    _supplementMetaStyle);
+            GUILayout.EndVertical();
+            GUILayout.Space(6);
+        }
+
+        private static string SupplementClassLabel(UnitState unit)
+        {
+            if (unit.Definition.IsPatrolAircraft) return "PATROL";
+            if (unit.Definition.IsAircraftCarrier) return "CV / LHD";
+            if (unit.Definition.IsSubmarine) return "SSN / SSK";
+            if (unit.Definition.Role == UnitRole.Objective) return "AUX / HVU";
+            return "ESCORT";
+        }
+
+        private static string SupplementRoleLine(UnitState unit)
+        {
+            if (unit.Definition.IsPatrolAircraft) return "MARITIME PATROL AIRCRAFT";
+            if (unit.Definition.IsAircraftCarrier) return "AVIATION CAPITAL SHIP";
+            if (unit.Definition.IsSubmarine) return "UNDERSEA COMBATANT";
+            if (unit.Definition.Role == UnitRole.Objective) return "SCENARIO HIGH-VALUE UNIT";
+            return "MULTI-MISSION SURFACE COMBATANT";
         }
 
         private void DrawUnitCard(UnitState unit, Color sideColor)
@@ -3555,6 +3640,42 @@ namespace Harpoon.Runtime
             _cardHeaderStyle.normal.textColor = new Color(0.87f, 0.94f, 1f);
             _cardStatStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, wordWrap = true };
             _cardStatStyle.normal.textColor = new Color(0.82f, 0.87f, 0.9f);
+            _supplementCardStyle = new GUIStyle(GUI.skin.box)
+            {
+                padding = new RectOffset(10, 10, 8, 9),
+                margin = new RectOffset(0, 4, 2, 4)
+            };
+            SetStyleBackground(_supplementCardStyle, SolidTexture(new Color(0.94f, 0.93f, 0.9f)));
+            _supplementTitleStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 16,
+                fontStyle = FontStyle.Bold,
+                wordWrap = true,
+                padding = new RectOffset(0, 0, 0, 3)
+            };
+            _supplementTitleStyle.normal.textColor = new Color(0.08f, 0.09f, 0.1f);
+            _supplementMetaStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                wordWrap = true,
+                padding = new RectOffset(2, 2, 2, 3)
+            };
+            _supplementMetaStyle.normal.textColor = new Color(0.18f, 0.2f, 0.22f);
+            _supplementBadgeStyle = new GUIStyle(GUI.skin.box)
+            {
+                fontSize = 11,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                fixedHeight = 20f,
+                padding = new RectOffset(3, 3, 1, 1)
+            };
+            SetStyleBackground(_supplementBadgeStyle, SolidTexture(Color.white));
+            _supplementBadgeStyle.normal.textColor = Color.white;
+            _supplementSensorStyle = SupplementStatStyle(new Color(0.55f, 0.81f, 0.82f),
+                new Color(0.04f, 0.16f, 0.18f));
+            _supplementWeaponStyle = SupplementStatStyle(new Color(0.13f, 0.53f, 0.56f), Color.white);
+            _supplementHullStyle = SupplementStatStyle(new Color(0.7f, 0.84f, 0.92f),
+                new Color(0.04f, 0.13f, 0.19f));
             _tooltipStyle = new GUIStyle(GUI.skin.box) { fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
             _tooltipStyle.normal.textColor = new Color(0.9f, 0.98f, 1f);
             _debugHeaderStyle = new GUIStyle(_titleStyle) { fontSize = 18 };
@@ -3574,6 +3695,36 @@ namespace Harpoon.Runtime
                 padding = new RectOffset(7, 7, 3, 3)
             };
             _debugStyle.normal.textColor = new Color(0.72f, 0.94f, 0.98f);
+        }
+
+        private static GUIStyle SupplementStatStyle(Color background, Color text)
+        {
+            var style = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 11,
+                wordWrap = true,
+                padding = new RectOffset(7, 6, 4, 4),
+                margin = new RectOffset(0, 0, 1, 1)
+            };
+            SetStyleBackground(style, SolidTexture(background));
+            style.normal.textColor = text;
+            return style;
+        }
+
+        private static Texture2D SolidTexture(Color color)
+        {
+            var texture = new Texture2D(1, 1) { hideFlags = HideFlags.HideAndDontSave };
+            texture.SetPixel(0, 0, color);
+            texture.Apply();
+            return texture;
+        }
+
+        private static void SetStyleBackground(GUIStyle style, Texture2D texture)
+        {
+            style.normal.background = texture;
+            style.hover.background = texture;
+            style.active.background = texture;
+            style.focused.background = texture;
         }
 
         private void OnDestroy()

@@ -14,7 +14,7 @@ namespace Harpoon.Editor
 {
     public static class ProjectSetup
     {
-        public const string DefaultReleaseVersion = "0.1.1";
+        public const string DefaultReleaseVersion = "1.0.0";
         [MenuItem("Harpoon/Public Multiplayer Setup")]
         public static void OpenPublicMultiplayerSetup()
         {
@@ -132,6 +132,7 @@ namespace Harpoon.Editor
             ValidateScenarioEightRelease();
             ValidateScenarioNineRelease();
             ValidateScenarioTenRelease();
+            MvpDataValidation.ValidateOrThrow();
 
             ValidateLoopbackTransport();
             Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-10 including tactical air, hidden contacts, dummy deception, undersea combat, convoy arrival, carrier objectives, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");

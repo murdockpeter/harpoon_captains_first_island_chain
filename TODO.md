@@ -296,15 +296,15 @@ Each scenario is both playable content and the acceptance test for a new rules f
 
 ## MVP 1.0 shared data and release work
 
-- [ ] Enter all US Navy surface ships, submarines, and aircraft from the supplement.
-- [ ] Enter all PLAN surface ships, submarines, and aircraft from the supplement.
-- [ ] Enter merchant, tanker, and generic amphibious auxiliary units.
-- [ ] Enter all six base charts and both carrier-air-wing charts.
-- [ ] Validate all stats with schema checks and source-page references.
-- [ ] Add a scenario-selection menu for Scenarios 1–10.
-- [ ] Add scenario-specific briefings, setup validation, turn limits, objectives, and scoring.
-- [ ] Add automated data-validation tests for unique IDs, valid ranges, legal references, and complete inventories.
-- [ ] Add end-to-end acceptance coverage for all ten scenarios.
+- [x] Enter all US Navy surface ships, submarines, and aircraft from the supplement.
+- [x] Enter all PLAN surface ships, submarines, and aircraft from the supplement.
+- [x] Enter merchant, tanker, and generic amphibious auxiliary units.
+- [x] Enter all six base charts and both carrier-air-wing charts.
+- [x] Validate all stats with schema checks and source-page references.
+- [x] Add a scenario-selection menu for Scenarios 1–10.
+- [x] Add scenario-specific briefings, setup validation, turn limits, objectives, and scoring.
+- [x] Add automated data-validation tests for unique IDs, valid ranges, legal references, and complete inventories.
+- [x] Add end-to-end acceptance coverage for all ten scenarios.
 - [ ] Tag MVP 1.0 only when every introductory scenario can be completed without debug controls.
 
 ---

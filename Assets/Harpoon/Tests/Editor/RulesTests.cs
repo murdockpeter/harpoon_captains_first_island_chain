@@ -611,6 +611,26 @@ namespace Harpoon.Core.Tests
         }
 
         [Test]
+        public void MvpSharedDataAndAllTenScenarioCompletionAreCertified()
+        {
+            Assert.That(MvpDataValidation.Validate(), Is.Empty);
+            Assert.That(ModernAircraftDatabase.All.Count, Is.EqualTo(5));
+            Assert.That(ModernTacticalAircraftDatabase.All.Count, Is.EqualTo(8));
+            Assert.That(ModernAirBaseDatabase.All.Count(item => !item.IsCarrier), Is.EqualTo(6));
+            Assert.That(ModernAirBaseDatabase.All.Count(item => item.IsCarrier), Is.EqualTo(2));
+
+            foreach (var scenario in FirstIslandChainScenarios.Introductory)
+            {
+                var game = new ScenarioOneGame(1100, null, true, false, null, scenario);
+                var result = game.Execute(new GameCommand(GameCommandType.Concede, Side.UsNavy,
+                    game.State.Revision));
+                Assert.That(result.Accepted, Is.True, scenario.Id);
+                Assert.That(game.State.IsGameOver, Is.True, scenario.Id);
+                Assert.That(game.State.EndReason, Is.EqualTo(ScenarioEndReason.Concession), scenario.Id);
+            }
+        }
+
+        [Test]
         public void TwoThirdsDamageLeavesOnlyHalfGunsAndSurfaceRadar()
         {
             var definition = new UnitDefinition("cripple", "Cripple Test", Side.UsNavy,

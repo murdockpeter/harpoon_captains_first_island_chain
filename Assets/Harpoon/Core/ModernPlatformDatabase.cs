@@ -162,6 +162,12 @@ namespace Harpoon.Core
             string.Equals(item.Id, id, StringComparison.Ordinal)) ??
             throw new KeyNotFoundException($"Unknown First Island Chain platform '{id}'.");
 
+        public static bool TryGet(string id, out ModernPlatformDefinition platform)
+        {
+            platform = Definitions.FirstOrDefault(item => string.Equals(item.Id, id, StringComparison.Ordinal));
+            return platform != null;
+        }
+
         private static ModernPlatformDefinition P(string id, string name, Side? side,
             PlatformDomain domain, int hull, int speed, int asr = 0, int shortSam = 0,
             int longSam = 0, int pd = 0, int ssr = 0, int shortSsm = 0, int longSsm = 0,

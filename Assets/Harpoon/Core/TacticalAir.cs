@@ -73,6 +73,12 @@ namespace Harpoon.Core
         public static TacticalAircraftDefinition Get(string id) => Definitions.FirstOrDefault(item =>
             string.Equals(item.Id, id, StringComparison.Ordinal)) ??
             throw new KeyNotFoundException($"Unknown tactical aircraft '{id}'.");
+
+        public static bool TryGet(string id, out TacticalAircraftDefinition aircraft)
+        {
+            aircraft = Definitions.FirstOrDefault(item => string.Equals(item.Id, id, StringComparison.Ordinal));
+            return aircraft != null;
+        }
     }
 
     public sealed class AirBaseDefinition
@@ -123,7 +129,7 @@ namespace Harpoon.Core
             new AirBaseDefinition("us-subic", "Subic Bay / Clark", Side.UsNavy, new HexCoord(7, 16), 2, 4, 4, 3,
                 new[] { "us-fa18ef", "us-fa18ef", "us-fa18ef", "us-fa18ef", "us-p8a" }),
             new AirBaseDefinition("plan-ningbo", "Ningbo-Zhoushan", Side.Plan, new HexCoord(2, 8), 3, 10, 10, 4,
-                new[] { "plan-j16", "plan-j16", "plan-j16", "plan-j16", "plan-h6j", "plan-h6j", "plan-kj500" }),
+                new[] { "plan-j16", "plan-j16", "plan-j16", "plan-j16", "plan-h6j", "plan-h6j", "plan-kj500-600" }),
             new AirBaseDefinition("plan-xiamen", "Xiamen", Side.Plan, new HexCoord(2, 10), 2, 6, 6, 3,
                 new[] { "plan-j16", "plan-j16", "plan-j16", "plan-j16", "plan-j15", "plan-j15" }),
             new AirBaseDefinition("plan-yulin", "Yulin / Sanya", Side.Plan, new HexCoord(2, 18), 2, 8, 4, 3,
@@ -133,7 +139,7 @@ namespace Harpoon.Core
                     "us-f35c", "us-f35c", "us-f35c", "us-f35c", "us-ea18g", "us-ea18g", "us-e2d", "us-mq4c" }, true, 14),
             new AirBaseDefinition("plan-fujian-wing", "Fujian Carrier Air Wing", Side.Plan, default,
                 0, 0, 0, 0, new[] { "plan-j15", "plan-j15", "plan-j15", "plan-j15",
-                    "plan-j35", "plan-j35", "plan-j35", "plan-j35", "plan-kj600", "plan-z20f", "plan-z20f" }, true, 11)
+                    "plan-j35", "plan-j35", "plan-j35", "plan-j35", "plan-kj500-600", "plan-z20f", "plan-z20f" }, true, 11)
         };
 
         public static IReadOnlyList<AirBaseDefinition> All => Definitions;
