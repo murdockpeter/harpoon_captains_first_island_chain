@@ -305,7 +305,7 @@ Each scenario is both playable content and the acceptance test for a new rules f
 - [x] Add scenario-specific briefings, setup validation, turn limits, objectives, and scoring.
 - [x] Add automated data-validation tests for unique IDs, valid ranges, legal references, and complete inventories.
 - [x] Add end-to-end acceptance coverage for all ten scenarios.
-- [ ] Tag MVP 1.0 only when every introductory scenario can be completed without debug controls.
+- [x] Tag MVP 1.0 only when every introductory scenario can be completed without debug controls.
 
 ---
 
