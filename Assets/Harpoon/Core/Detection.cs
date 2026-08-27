@@ -19,7 +19,9 @@ namespace Harpoon.Core
         Esm,
         Visual,
         Sonar,
-        ScenarioKnown
+        ScenarioKnown,
+        // Appended to preserve numeric values used by older saved contacts.
+        AirSearchRadar
     }
 
     [Serializable]

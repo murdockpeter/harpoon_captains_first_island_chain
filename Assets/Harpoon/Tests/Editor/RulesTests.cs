@@ -371,6 +371,9 @@ namespace Harpoon.Core.Tests
             Assert.That(game.State.Forces.Count, Is.EqualTo(8));
             Assert.That(game.State.Forces.Count(force => force.Side == Side.UsNavy && force.IsSubmarineOnly),
                 Is.EqualTo(4));
+            Assert.That(game.State.Forces.Where(force => force.Side == Side.Plan).All(force =>
+                force.Position.Row == 12 && force.Position.Column >= 8 && force.Position.Column <= 12 &&
+                game.State.Map.IsNavigable(force.Position, Side.Plan)), Is.True);
             Assert.That(game.State.Forces.Where(force => force.Side == Side.UsNavy)
                 .All(force => !force.HasEnteredMap), Is.True);
             Assert.That(game.State.Unit("plan-fujian").Definition.EmbarkedAircraftCapacity, Is.EqualTo(1));
@@ -439,6 +442,72 @@ namespace Harpoon.Core.Tests
             snapshot.units.Single(item => item.id == "plan-fujian").hullDamage = 6;
             sunk.ApplySnapshot(snapshot);
             Assert.That(sunk.CurrentScore().Result, Is.EqualTo("US NAVY VICTORY"));
+        }
+
+        [Test]
+        public void ScenarioNineLoadsPrintedSubmarinesAndP8A()
+        {
+            var game = new ScenarioOneGame(99, null, true, false, null,
+                FirstIslandChainScenarios.Patroller);
+            var p8 = game.State.Unit("us-p8a");
+            Assert.That(game.State.MaximumTurns, Is.EqualTo(15));
+            Assert.That(game.State.Forces.Count(force => force.Side == Side.Plan && force.IsSubmarineOnly),
+                Is.EqualTo(4));
+            Assert.That(p8.Definition.IsPatrolAircraft, Is.True);
+            Assert.That(p8.Definition.AircraftRadius, Is.EqualTo(20));
+            Assert.That(p8.Definition.SurfaceSearchRadar, Is.EqualTo(3));
+            Assert.That(p8.Definition.Sonar, Is.EqualTo(4));
+            Assert.That(p8.Definition.AntiSubmarineWarfare, Is.EqualTo(5));
+            Assert.That(p8.ServiceableAircraftRemaining, Is.EqualTo(4));
+        }
+
+        [Test]
+        public void ScenarioNineP8RelocatesAndSearchesFromFinalStation()
+        {
+            var game = new ScenarioOneGame(100, null, true, false,
+                new SequenceDieRoller(1), FirstIslandChainScenarios.Patroller);
+            var snapshot = game.CaptureSnapshot();
+            snapshot.activeSide = Side.UsNavy;
+            snapshot.activeFormationId = "US P-8A Poseidon";
+            snapshot.phase = ActivationPhase.AircraftAction;
+            var yuan = snapshot.formations.Single(item => item.id == "PLAN Yuan 1");
+            yuan.column = 14;
+            yuan.row = 10;
+            game.ApplySnapshot(snapshot);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.Move, Side.UsNavy,
+                game.State.Revision, new HexCoord(14, 10))).Accepted, Is.True);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                game.State.Revision, targetId: "PLAN Yuan 1", searchMode: "sonar")).Accepted, Is.True);
+            Assert.That(game.State.Detection.IsClassified(Side.UsNavy, "PLAN Yuan 1"), Is.True);
+            Assert.That(game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy,
+                game.State.Revision, targetId: "PLAN Yuan 1", searchMode: "sonar")).Violation.Code,
+                Is.EqualTo(RuleViolationCode.AlreadyActed));
+        }
+
+        [Test]
+        public void ScenarioNineThirdEastEdgeEscapeWinsForPlan()
+        {
+            var game = new ScenarioOneGame(101, null, true, false, null,
+                FirstIslandChainScenarios.Patroller);
+            var eastEdge = game.State.Map.AllHexes.First(hex =>
+                ScenarioOneGame.IsBoardEdgeHex(game.State.Map, hex, BoardEdge.East, Side.Plan));
+            foreach (var id in new[] { "PLAN Yuan 1", "PLAN Yuan 2", "PLAN Yuan 3" })
+            {
+                var snapshot = game.CaptureSnapshot();
+                snapshot.activeSide = Side.Plan;
+                snapshot.activeFormationId = id;
+                snapshot.phase = ActivationPhase.PlayerMove;
+                var formation = snapshot.formations.Single(item => item.id == id);
+                formation.column = eastEdge.Column;
+                formation.row = eastEdge.Row;
+                formation.declaredSpeed = 1;
+                formation.movementSpent = 0;
+                game.ApplySnapshot(snapshot);
+                Assert.That(game.Execute(new GameCommand(GameCommandType.ExitMap, Side.Plan,
+                    game.State.Revision)).Accepted, Is.True);
+            }
+            Assert.That(game.State.Result, Is.EqualTo("PLAN VICTORY"));
+            Assert.That(game.State.EndReason, Is.EqualTo(ScenarioEndReason.BoardEdgeExited));
         }
 
         [Test]

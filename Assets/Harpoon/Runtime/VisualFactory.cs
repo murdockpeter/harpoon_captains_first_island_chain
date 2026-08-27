@@ -118,6 +118,46 @@ namespace Harpoon.Runtime
             return root;
         }
 
+        public static Transform CreatePatrolAircraft(string name, Color sideColor)
+        {
+            var root = new GameObject(name).transform;
+            var aircraft = new GameObject("P-8A Poseidon").transform;
+            aircraft.SetParent(root);
+            aircraft.localRotation = Quaternion.Euler(0f, -35f, 0f);
+
+            var airframe = Color.Lerp(Color.white, sideColor, 0.18f);
+            var fuselage = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            fuselage.name = "Fuselage";
+            fuselage.transform.SetParent(aircraft);
+            fuselage.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
+            fuselage.transform.localScale = new Vector3(0.18f, 0.72f, 0.18f);
+            fuselage.GetComponent<Renderer>().sharedMaterial = Material(airframe, 0.28f, 0.62f);
+            AddBox(aircraft, "Main Wings", new Vector3(0f, 0f, 0f),
+                new Vector3(0.42f, 0.035f, 1.45f), airframe);
+            AddBox(aircraft, "Tailplane", new Vector3(-0.58f, 0.03f, 0f),
+                new Vector3(0.25f, 0.035f, 0.64f), airframe);
+            AddBox(aircraft, "Vertical Tail", new Vector3(-0.62f, 0.19f, 0f),
+                new Vector3(0.26f, 0.36f, 0.045f), Color.Lerp(airframe, sideColor, 0.35f));
+            for (var engine = -1; engine <= 1; engine += 2)
+            {
+                var nacelle = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                nacelle.name = engine < 0 ? "Port Engines" : "Starboard Engines";
+                nacelle.transform.SetParent(aircraft);
+                nacelle.transform.localPosition = new Vector3(0.06f, -0.04f, engine * 0.43f);
+                nacelle.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
+                nacelle.transform.localScale = new Vector3(0.1f, 0.28f, 0.1f);
+                nacelle.GetComponent<Renderer>().sharedMaterial = Material(new Color(0.3f, 0.34f, 0.38f), 0.65f, 0.5f);
+            }
+
+            var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            ring.name = "Aviation Patrol Indicator";
+            ring.transform.SetParent(root);
+            ring.transform.localPosition = new Vector3(0f, -0.34f, 0f);
+            ring.transform.localScale = new Vector3(0.92f, 0.025f, 0.92f);
+            ring.GetComponent<Renderer>().sharedMaterial = Material(new Color(0.08f, 0.86f, 1f), 0f, 0.82f);
+            return root;
+        }
+
         public static GameObject CreateMissile(Color color)
         {
             var missile = GameObject.CreatePrimitive(PrimitiveType.Sphere);

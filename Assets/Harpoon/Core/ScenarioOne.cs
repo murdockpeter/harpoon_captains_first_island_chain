@@ -13,6 +13,10 @@ namespace Harpoon.Core
         public int shortMissiles;
         public int longMissiles;
         public int embarkedAircraft;
+        public int serviceableAircraft;
+        public AircraftMissionState aircraftMissionState;
+        public int aircraftReadyTurn;
+        public int aircraftLastAttackTurn;
     }
 
     [Serializable]
@@ -62,6 +66,7 @@ namespace Harpoon.Core
         public bool entered = true;
         public int dummyCards;
         public DefensePairData[] defensePairs;
+        public string[] aircraftSearchModes;
     }
 
     [Serializable]
@@ -112,6 +117,8 @@ namespace Harpoon.Core
         public int scoreUsTieBreak;
         public int scorePlanTieBreak;
         public string scoreResult;
+        public TacticalFlightSnapshot[] tacticalFlights;
+        public AirBaseSnapshot[] airBases;
     }
 
     public static class ScenarioOne
@@ -122,8 +129,7 @@ namespace Harpoon.Core
         {
             definition ??= FirstIslandChainScenarios.ContactOffBashiChannel;
             var formations = definition.Formations.Select(item => new TaskForceState(item.Id, item.Side, item.Start,
-                item.Units.Select(slot => new UnitState(ModernPlatformDatabase.Get(slot.PlatformId)
-                    .CreateUnit(item.Side, slot.Role, slot.UnitId))), item.DummyCards,
+                item.Units.Select(slot => new UnitState(CreateScenarioUnit(item.Side, slot))), item.DummyCards,
                 item.EntryEdge != BoardEdge.None)).ToArray();
             var us = formations.First(item => item.Side == Side.UsNavy);
             var plan = formations.First(item => item.Side == Side.Plan);
@@ -131,6 +137,13 @@ namespace Harpoon.Core
             var state = new GameState(us, plan, definition.MaximumTurns, FirstIslandChainMap.Instance,
                 useDetection, definition);
             foreach (var formation in formations.Where(item => item != us && item != plan)) state.AddForce(formation);
+            if (definition.TacticalAirEnabled)
+            {
+                var bases = definition.AirBaseIds.Select(id => new AirBaseState(ModernAirBaseDatabase.Get(id))).ToArray();
+                var flights = definition.TacticalFlights.Select(item => new TacticalFlightState(item.Id,
+                    ModernTacticalAircraftDatabase.Get(item.AircraftId), item.BaseId, item.Strength)).ToArray();
+                state.ConfigureTacticalAir(flights, bases);
+            }
             state.Log.Add($"{definition.Subtitle}: {definition.Name}");
             state.Log.Add(definition.VictoryText);
             state.Trace("SETUP", $"Scenario '{definition.Id}' loaded from data; " +
@@ -139,6 +152,13 @@ namespace Harpoon.Core
             state.Trace("SETUP", $"US Task Force at {us.Position}: {string.Join(", ", us.Units.Select(unit => unit.Definition.DisplayName))}.");
             state.Trace("SETUP", $"PLAN Task Force at {plan.Position}: {string.Join(", ", plan.Units.Select(unit => unit.Definition.DisplayName))}.");
             return state;
+        }
+
+        private static UnitDefinition CreateScenarioUnit(Side side, ScenarioUnitDefinition slot)
+        {
+            if (ModernAircraftDatabase.TryGet(slot.PlatformId, out var aircraft))
+                return aircraft.CreateUnit(slot.Role, slot.UnitId);
+            return ModernPlatformDatabase.Get(slot.PlatformId).CreateUnit(side, slot.Role, slot.UnitId);
         }
     }
 
@@ -171,12 +191,14 @@ namespace Harpoon.Core
             _isNavigable = isNavigable ?? (_ => true);
             _manualOpponent = manualOpponent;
             State = ScenarioOne.Create(detectionRulesEnabled, scenario);
-            if ((State.Scenario.PlanDeploymentMinimumDistance > 0 || State.Scenario.HasDeploymentZones) &&
+            if ((State.Scenario.PlanDeploymentMinimumDistance > 0 || State.Scenario.HasDeploymentZones ||
+                 State.Scenario.HasDistanceDeployment) &&
                 !manualOpponent)
             {
                 var legal = State.Map.AllHexes.Where(hex => State.Map.IsNavigable(hex, Side.Plan) &&
                     IsLegalDeploymentHex(State.Scenario, State.Map, Side.Plan, hex)).ToArray();
-                foreach (var planForce in State.Forces.Where(force => force.Side == Side.Plan))
+                foreach (var planForce in State.Forces.Where(force => force.Side == Side.Plan &&
+                             State.Scenario.Formations.First(item => item.Id == force.Id).CanDeploy))
                 {
                     var stableId = planForce.Id.Aggregate(17,
                         (value, character) => unchecked(value * 31 + character));
@@ -276,6 +298,15 @@ namespace Harpoon.Core
                     case GameCommandType.Concede:
                         accepted = ConcedeInternal(command.Actor);
                         break;
+                    case GameCommandType.AssignCap:
+                        accepted = AssignDefensiveAirInternal(command, TacticalAirMission.Cap, out violation);
+                        break;
+                    case GameCommandType.AssignDeckInterceptor:
+                        accepted = AssignDefensiveAirInternal(command, TacticalAirMission.DeckInterceptor, out violation);
+                        break;
+                    case GameCommandType.LaunchTacticalStrike:
+                        accepted = LaunchTacticalStrikeInternal(command, out violation, out attackReport);
+                        break;
                     default:
                         violation = new RuleViolation(RuleViolationCode.UnsupportedCommand,
                             $"{command.Type} is represented by the command protocol but is not used by {State.Scenario.Name}.", "type");
@@ -340,10 +371,21 @@ namespace Harpoon.Core
             State.PlayerHasMoved = false;
             State.PlayerHasAttacked = false;
             State.PlayerHasSearched = false;
-            State.Phase = ActivationPhase.DeclareSpeed;
+            State.Phase = State.ActiveForce?.IsAircraftOnly == true
+                ? ActivationPhase.AircraftAction : ActivationPhase.DeclareSpeed;
             Trace("CHIT", $"Drew {chit.FormationId} ({chit.Side}); " +
                 $"{State.MovementCup.Remaining.Count} chit(s) remain in the cup.");
             AddLog($"{chit.FormationId} chit drawn for {State.TimeLabel}.");
+            if (State.ActiveForce?.IsAircraftOnly == true)
+            {
+                var aircraft = State.ActiveForce.ActiveUnits.FirstOrDefault();
+                if (aircraft == null || !aircraft.CanFlyAircraft(State.Turn))
+                {
+                    Trace("ACTIVATION", $"{chit.FormationId} is unavailable until turn {aircraft?.AircraftReadyTurn ?? 0}; its chit is consumed.");
+                    return EndActivationInternal(chit.Side, out violation);
+                }
+                if (State.ActiveForce.HasEnteredMap) ResolveAircraftDetectionAndSam(State.ActiveForce);
+            }
             return true;
         }
 
@@ -389,7 +431,8 @@ namespace Harpoon.Core
         {
             violation = null;
             var scenario = State.Scenario;
-            if ((scenario.PlanDeploymentMinimumDistance <= 0 && !scenario.HasDeploymentZones) ||
+            if ((scenario.PlanDeploymentMinimumDistance <= 0 && !scenario.HasDeploymentZones &&
+                 !scenario.HasDistanceDeployment) ||
                 State.Phase != ActivationPhase.AwaitingChit || State.MovementCup == null ||
                 !State.MovementCup.FirstDrawPending)
             {
@@ -400,11 +443,17 @@ namespace Harpoon.Core
             }
             var force = string.IsNullOrWhiteSpace(command.FormationId)
                 ? State.Forces.First(item => item.Side == command.Actor) : State.Formation(command.FormationId);
-            if (force == null || force.Side != command.Actor ||
+            var formationDefinition = force == null ? null : scenario.Formations.FirstOrDefault(item => item.Id == force.Id);
+            if (force == null || force.Side != command.Actor || formationDefinition == null ||
+                !formationDefinition.CanDeploy || force.IsAircraftOnly ||
                 !IsLegalDeploymentHex(scenario, State.Map, command.Actor, command.Destination))
             {
                 violation = new RuleViolation(RuleViolationCode.InvalidFormation,
-                    scenario.HasDeploymentZones
+                    scenario.HasDistanceDeployment
+                        ? command.Actor == Side.UsNavy
+                            ? $"US submarine setup must be at least {scenario.UsDeploymentMinimumDistance} hexes from Xiamen."
+                            : $"PLAN submarine setup must be within {scenario.PlanDeploymentMaximumDistance} hexes of Xiamen."
+                        : scenario.HasDeploymentZones
                         ? command.Actor == Side.UsNavy
                             ? $"US formations must deploy within {scenario.UsDeploymentRadius} hexes of {scenario.DeploymentCenter}."
                             : $"PLAN formations may not deploy at Taipei or within {scenario.PlanProhibitedRadius} hexes of {scenario.DeploymentCenter}."
@@ -422,6 +471,13 @@ namespace Harpoon.Core
             Side side, HexCoord destination)
         {
             if (scenario == null || map == null || !map.IsNavigable(destination, side)) return false;
+            if (scenario.HasDistanceDeployment)
+            {
+                var distance = destination.DistanceTo(scenario.DistanceDeploymentCenter);
+                return side == Side.UsNavy
+                    ? distance >= scenario.UsDeploymentMinimumDistance
+                    : distance <= scenario.PlanDeploymentMaximumDistance;
+            }
             if (scenario.HasDeploymentZones)
             {
                 if (side == Side.UsNavy)
@@ -507,7 +563,8 @@ namespace Harpoon.Core
                 Trace("REJECTED", $"{side} speed declaration: {violation.Message}");
                 return false;
             }
-            var force = State.ForceFor(side);
+            var force = State.ActiveForce != null && State.ActiveForce.Side == side
+                ? State.ActiveForce : State.ForceFor(side);
             if (State.DetectionRulesEnabled && !force.RadarDeclaredThisActivation)
             {
                 violation = new RuleViolation(RuleViolationCode.RadarDeclarationRequired,
@@ -553,7 +610,7 @@ namespace Harpoon.Core
                 Trace("REJECTED", violation.Message);
                 return false;
             }
-            var force = State.ForceFor(command.Actor);
+            var force = State.ActiveForce;
             if (command.Enabled && !force.CanRadiateRadar)
             {
                 violation = new RuleViolation(RuleViolationCode.SensorUnavailable,
@@ -585,6 +642,8 @@ namespace Harpoon.Core
                 Trace("REJECTED", $"{side} move to {destination}: {violation.Message}");
                 return false;
             }
+            if (State.ActiveForce?.IsAircraftOnly == true)
+                return RelocateAircraftInternal(side, destination, out violation);
             if (State.Phase == ActivationPhase.DeclareSpeed)
             {
                 violation = new RuleViolation(RuleViolationCode.SpeedNotDeclared,
@@ -604,7 +663,7 @@ namespace Harpoon.Core
                 Trace("REJECTED", $"{side} move to {destination}: {violation.Message}");
                 return false;
             }
-            var force = State.ForceFor(side);
+            var force = State.ActiveForce;
             if (!force.HasEnteredMap)
             {
                 if (force.MovementRemaining <= 0)
@@ -687,6 +746,40 @@ namespace Harpoon.Core
             return true;
         }
 
+        private bool RelocateAircraftInternal(Side side, HexCoord destination, out RuleViolation violation)
+        {
+            violation = null;
+            var force = State.ActiveForce;
+            var aircraft = force?.ActiveUnits.FirstOrDefault();
+            if (State.Phase != ActivationPhase.AircraftAction || force == null || aircraft == null)
+            {
+                violation = new RuleViolation(RuleViolationCode.WrongPhase,
+                    "Patrol-aircraft relocation is available only on its movement chit.", "phase");
+                return false;
+            }
+            if (State.PlayerHasMoved)
+            {
+                violation = new RuleViolation(RuleViolationCode.AlreadyActed,
+                    "A patrol-aircraft model relocates once when its chit is drawn.", "destination");
+                return false;
+            }
+            var home = State.Scenario.Formations.First(item => item.Id == force.Id).Start;
+            if (!State.Map.Contains(destination) || destination.DistanceTo(home) > aircraft.Definition.AircraftRadius)
+            {
+                violation = new RuleViolation(RuleViolationCode.OutsideMap,
+                    $"{aircraft.Definition.DisplayName} must remain within radius {aircraft.Definition.AircraftRadius} of {home}.",
+                    "destination");
+                return false;
+            }
+            var origin = force.Position;
+            force.RelocateAircraft(destination);
+            State.PlayerHasMoved = true;
+            Trace("MOVEMENT", $"{force.Id} patrol model relocated {origin}->{destination} within base radius {aircraft.Definition.AircraftRadius}.");
+            AddLog($"{force.Id} established patrol station at {destination}.");
+            ResolveAircraftDetectionAndSam(force);
+            return true;
+        }
+
         public static int DistanceToPatrolLine(ScenarioDefinition scenario, HexCoord destination)
         {
             if (scenario == null || !scenario.HasPatrolLine) return int.MaxValue;
@@ -720,6 +813,9 @@ namespace Harpoon.Core
         {
             if (force == null || force.IsOffMap || State.Scenario.VictoryExitEdge == BoardEdge.None ||
                 force.Side != Side.Plan || force.MovementRemaining <= 0) return false;
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape)
+                return force.IsSubmarineOnly &&
+                       IsBoardEdgeHex(State.Map, force.Position, State.Scenario.VictoryExitEdge, force.Side);
             var carrier = force.ActiveUnits.FirstOrDefault(unit => unit.Definition.IsAircraftCarrier);
             return carrier != null && carrier.CanLaunchAircraft &&
                    IsBoardEdgeHex(State.Map, force.Position, State.Scenario.VictoryExitEdge, force.Side);
@@ -728,7 +824,8 @@ namespace Harpoon.Core
         private bool ExitMapInternal(Side side, out RuleViolation violation)
         {
             violation = null;
-            var force = State.ForceFor(side);
+            var force = State.ActiveForce != null && State.ActiveForce.Side == side
+                ? State.ActiveForce : State.ForceFor(side);
             if (State.ActiveSide != side || State.Phase != ActivationPhase.PlayerMove)
             {
                 violation = new RuleViolation(RuleViolationCode.WrongPhase,
@@ -739,7 +836,9 @@ namespace Harpoon.Core
             if (!CanExitMap(force))
             {
                 violation = new RuleViolation(RuleViolationCode.ExitUnavailable,
-                    "Fujian must be on the western navigable edge, have movement remaining, and remain capable of launching aircraft.",
+                    State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape
+                        ? "A PLAN submarine must be on the eastern edge with movement remaining."
+                        : "Fujian must be on the western navigable edge, have movement remaining, and remain capable of launching aircraft.",
                     "formationId");
                 Trace("REJECTED", violation.Message);
                 return false;
@@ -747,9 +846,18 @@ namespace Harpoon.Core
             force.MarkExited();
             State.MovementCup.RemoveUndrawnFormation(force.Id);
             State.PlayerHasMoved = true;
-            Trace("VICTORY", $"{force.Id} exited the west edge with its embarked air group launch-capable.");
-            AddLog($"{force.Id} exited the west edge with aircraft launch capability intact.");
-            EndByScore(ScenarioEndReason.BoardEdgeExited);
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape)
+            {
+                Trace("VICTORY", $"{force.Id} exited the east edge; escaped submarine total={CurrentScore().UsObjectiveDamage}.");
+                AddLog($"{force.Id} escaped from the east edge.");
+                CheckGameOver();
+            }
+            else
+            {
+                Trace("VICTORY", $"{force.Id} exited the west edge with its embarked air group launch-capable.");
+                AddLog($"{force.Id} exited the west edge with aircraft launch capability intact.");
+                EndByScore(ScenarioEndReason.BoardEdgeExited);
+            }
             return true;
         }
 
@@ -789,12 +897,12 @@ namespace Harpoon.Core
                     return false;
                 }
                 State.PlayerHasSearched = true;
-                Trace("DETECTION", $"{State.ForceFor(side).Id} used its search opportunity in " +
-                    $"{State.ForceFor(side).Position}; {State.Scenario.Name} omits detection resolution.");
+                Trace("DETECTION", $"{State.ActiveForce.Id} used its search opportunity in " +
+                    $"{State.ActiveForce.Position}; {State.Scenario.Name} omits detection resolution.");
                 return true;
             }
 
-            var observer = State.ForceFor(side);
+            var observer = State.ActiveForce;
             if (observer.IsDummyOnly)
             {
                 violation = new RuleViolation(RuleViolationCode.DummyActionUnavailable,
@@ -804,6 +912,8 @@ namespace Harpoon.Core
             }
             var mode = string.IsNullOrWhiteSpace(command.SearchMode) ? command.TargetId : command.SearchMode;
             var targetId = string.IsNullOrWhiteSpace(command.SearchMode) ? string.Empty : command.TargetId;
+            if (observer.IsAircraftOnly)
+                return SearchFromPatrolAircraft(observer, mode, targetId, out violation);
             var target = FindDetectionTarget(side, targetId, mode);
             if (target == null)
             {
@@ -884,6 +994,76 @@ namespace Harpoon.Core
             return true;
         }
 
+        private bool SearchFromPatrolAircraft(TaskForceState observer, string mode, string targetId,
+            out RuleViolation violation)
+        {
+            violation = null;
+            mode = (mode ?? string.Empty).ToLowerInvariant();
+            if (State.Phase != ActivationPhase.AircraftAction || observer.IsOffMap)
+            {
+                violation = new RuleViolation(RuleViolationCode.WrongPhase,
+                    "Patrol aircraft search only from its final on-map station during its activation.", "phase");
+                return false;
+            }
+            if (mode != "sonar" && mode != "esm" && mode != "visual" && mode != "ssr" && mode != "asr")
+            {
+                violation = new RuleViolation(RuleViolationCode.InvalidPayload,
+                    "Patrol search mode must be ASR, SSR, sonar, ESM, or visual.", "searchMode");
+                return false;
+            }
+            if (observer.HasUsedAircraftSearch(mode))
+            {
+                violation = new RuleViolation(RuleViolationCode.AlreadyActed,
+                    $"This patrol model already used {mode.ToUpperInvariant()} from its current station.", "searchMode");
+                return false;
+            }
+            var target = FindDetectionTarget(observer.Side, targetId, mode);
+            if (target == null)
+            {
+                violation = new RuleViolation(RuleViolationCode.NoDetectionOpportunity,
+                    $"No opposing contact is in {mode.ToUpperInvariant()} search range.", "targetId");
+                return false;
+            }
+            var detected = false;
+            var method = DetectionMethod.ScenarioKnown;
+            if (mode == "sonar")
+            {
+                method = DetectionMethod.Sonar;
+                detected = _detection.ResolveSonar(observer, target,
+                    State.Detection.ContactFor(observer.Side, target.Id).IsDetected);
+            }
+            else if (mode == "esm")
+            {
+                method = DetectionMethod.Esm;
+                var roll = _dice.RollD6();
+                detected = roll <= 5;
+                Trace("DIE", $"PATROL ESM {observer.Id}->{target.Id}: D6={roll}; needs 1-5; " +
+                    (detected ? "DETECTED." : "NO CONTACT."));
+            }
+            else if (mode == "visual")
+            {
+                if (State.TimeOfDay == TimeOfDay.Night)
+                {
+                    violation = new RuleViolation(RuleViolationCode.NightRestricted,
+                        "Patrol-aircraft visual search is prohibited at Night.", "searchMode");
+                    return false;
+                }
+                method = DetectionMethod.Visual;
+                var roll = _dice.RollD6();
+                detected = roll <= 5;
+                Trace("DIE", $"PATROL VISUAL {observer.Id}->{target.Id}: D6={roll}; needs 1-5; " +
+                    (detected ? "DETECTED." : "NO CONTACT."));
+            }
+            else
+            {
+                method = mode == "asr" ? DetectionMethod.AirSearchRadar : DetectionMethod.SurfaceSearchRadar;
+                detected = true;
+            }
+            observer.MarkAircraftSearchUsed(mode);
+            RecordDetection(observer.Side, target, method, detected);
+            return true;
+        }
+
         public AttackReport PlayerAttack()
             => Attack(Side.UsNavy);
 
@@ -896,7 +1076,8 @@ namespace Harpoon.Core
         private AttackReport AttackInternal(Side side, out RuleViolation violation)
         {
             violation = null;
-            var actionPhase = State.Phase == ActivationPhase.PlayerMove || State.Phase == ActivationPhase.PlayerAction;
+            var actionPhase = State.Phase == ActivationPhase.PlayerMove || State.Phase == ActivationPhase.PlayerAction ||
+                              State.Phase == ActivationPhase.AircraftAction;
             if (State.ActiveSide != side || !actionPhase || State.PlayerHasAttacked)
             {
                 Trace("REJECTED", $"{side} attack: active={State.ActiveSide}, phase={State.Phase}, already attacked={State.PlayerHasAttacked}.");
@@ -905,7 +1086,14 @@ namespace Harpoon.Core
                     "Attack is not available.");
                 return null;
             }
-            var attacker = State.ForceFor(side);
+            var attacker = State.ActiveForce;
+            var attackingAircraft = attacker.IsAircraftOnly ? attacker.ActiveUnits.FirstOrDefault() : null;
+            if (attackingAircraft != null && attackingAircraft.AircraftLastAttackTurn == State.Turn)
+            {
+                violation = new RuleViolation(RuleViolationCode.AlreadyActed,
+                    "A patrol-aircraft type may attack only once per turn.");
+                return null;
+            }
             if (attacker.IsOffMap)
             {
                 violation = new RuleViolation(RuleViolationCode.NoLegalWeapon,
@@ -921,6 +1109,12 @@ namespace Harpoon.Core
                 return null;
             }
             var range = attacker.Position.DistanceTo(defender.Position);
+            if (defender.IsAircraftOnly)
+            {
+                violation = new RuleViolation(RuleViolationCode.NoLegalWeapon,
+                    "Patrol aircraft are engaged by ASR-directed SAM reaction, not surface weapons.");
+                return null;
+            }
             if (defender.IsSubmarineOnly && !attacker.IsSubmarineOnly)
             {
                 if (range != 0 || !attacker.ActiveUnits.Any(unit => unit.EffectiveAntiSubmarineWarfare > 0))
@@ -929,6 +1123,7 @@ namespace Harpoon.Core
                         "Detected submarines may be attacked only in the same hex with ASW weapons.");
                     return null;
                 }
+                if (attackingAircraft != null) attackingAircraft.MarkAircraftAttack(State.Turn);
                 return ResolveUnderseaAttack(attacker, defender, false);
             }
             if (attacker.IsSubmarineOnly && range == 0 && !State.CurrentCommand.Enabled)
@@ -969,6 +1164,7 @@ namespace Harpoon.Core
             var returnPhase = State.Phase;
             State.PendingMissileCombat = new MissileEngagement(attacker.Id, defender.Id,
                 side, State.ActiveFormationId, returnPhase) { DecisionSide = side };
+            if (attackingAircraft != null) attackingAircraft.MarkAircraftAttack(State.Turn);
             State.Phase = ActivationPhase.MissileCombat;
             Trace("COMBAT", $"{attacker.Id} opened a missile attack on {defender.Id} at range {range}; " +
                 "awaiting explicit fire allocation.");
@@ -1369,6 +1565,7 @@ namespace Harpoon.Core
 
         private bool CanCounterattack(TaskForceState attacker, TaskForceState target)
         {
+            if (attacker.IsAircraftOnly || target.IsAircraftOnly) return false;
             var range = attacker.Position.DistanceTo(target.Position);
             if (target.IsSubmarineOnly) return range == 0 &&
                 attacker.ActiveUnits.Any(unit => unit.EffectiveAntiSubmarineWarfare > 0);
@@ -1384,6 +1581,8 @@ namespace Harpoon.Core
             if (attacker == null || defender == null || attacker.IsDestroyed || defender.IsDestroyed ||
                 attacker.IsOffMap || defender.IsOffMap) return false;
             if (State.DetectionRulesEnabled && !State.Detection.IsClassified(attacker.Side, defender.Id)) return false;
+            var patrolAircraft = attacker.IsAircraftOnly ? attacker.ActiveUnits.FirstOrDefault() : null;
+            if (patrolAircraft != null && patrolAircraft.AircraftLastAttackTurn == State.Turn) return false;
             var range = attacker.Position.DistanceTo(defender.Position);
             if (range == 0 && attacker.IsSubmarineOnly)
                 return attacker.ActiveUnits.Any(unit => defender.IsSubmarineOnly
@@ -1401,7 +1600,7 @@ namespace Harpoon.Core
             var movingForce = State.Formation(engagement.MovementOwnerFormationId);
             var opponent = State.Forces.FirstOrDefault(force => force.Side != engagement.MovementOwnerSide &&
                 movingForce != null && force.Position.Equals(movingForce.Position) && !force.IsDestroyed);
-            if (movingForce != null && opponent != null &&
+            if (movingForce != null && opponent != null && !movingForce.IsAircraftOnly && !opponent.IsAircraftOnly &&
                 (movingForce.ActiveUnits.Any(unit => unit.EffectiveGuns > 0) ||
                  opponent.ActiveUnits.Any(unit => unit.EffectiveGuns > 0)))
             {
@@ -1720,15 +1919,15 @@ namespace Harpoon.Core
                     $"It is {State.ActiveSide}'s activation.", "actor");
                 return false;
             }
-            var force = State.ForceFor(side);
-            if (force.DeclaredSpeed < 0)
+            var force = State.ActiveForce;
+            if (!force.IsAircraftOnly && force.DeclaredSpeed < 0)
             {
                 violation = new RuleViolation(RuleViolationCode.SpeedNotDeclared,
                     "Declare speed before ending the activation.", "declaredSpeed");
                 Trace("REJECTED", $"{side} end activation: {violation.Message}");
                 return false;
             }
-            if (force.MovementRemaining > 0)
+            if (!force.IsAircraftOnly && force.MovementRemaining > 0)
             {
                 violation = new RuleViolation(RuleViolationCode.MovementIncomplete,
                     $"{force.MovementRemaining} declared movement step(s) remain.", "declaredSpeed");
@@ -1747,6 +1946,276 @@ namespace Harpoon.Core
             return true;
         }
 
+        private bool AssignDefensiveAirInternal(GameCommand command, TacticalAirMission mission,
+            out RuleViolation violation)
+        {
+            violation = null;
+            if (!State.Scenario.TacticalAirEnabled)
+                return TacticalReject(RuleViolationCode.TacticalAirUnavailable,
+                    "This scenario does not use tactical aircraft.", out violation);
+            if (State.Phase != ActivationPhase.AwaitingChit || !State.MovementCup.FirstDrawPending)
+                return TacticalReject(RuleViolationCode.WrongPhase,
+                    "CAP and deck-launched interceptors must be declared before the first chit draw.", out violation);
+            var flight = State.TacticalFlight(command.SourceUnitId);
+            if (flight == null || flight.Side != command.Actor)
+                return TacticalReject(RuleViolationCode.AircraftUnavailable,
+                    "Select one of your ready tactical-aircraft flights.", out violation);
+            var airBase = State.AirBase(flight.BaseId);
+            if (airBase == null || !BaseCanLaunch(airBase))
+                return TacticalReject(RuleViolationCode.BaseDisabled,
+                    "That base or carrier cannot launch aircraft.", out violation);
+            if (airBase.Definition.IsCarrier && State.TacticalFlights.Count(item => item.BaseId == flight.BaseId &&
+                    item.Mission != TacticalAirMission.Destroyed) > airBase.Definition.FlightCapacity)
+                return TacticalReject(RuleViolationCode.DeckCapacityExceeded,
+                    "The carrier air wing exceeds its printed deck capacity.", out violation);
+            if (!flight.AssignDefensiveMission(mission, command.Enabled))
+                return TacticalReject(RuleViolationCode.AircraftUnavailable,
+                    "Defensive missions require a full ready four-aircraft fighter flight.", out violation);
+            Trace("AIR", $"{flight.Id} assigned {(mission == TacticalAirMission.Cap ? "CAP" : "DLI")}; " +
+                $"radar {(command.Enabled ? "on" : "silent")}.");
+            AddLog($"{flight.Id} assigned {(mission == TacticalAirMission.Cap ? "CAP" : "deck interception")}.");
+            return true;
+        }
+
+        private bool LaunchTacticalStrikeInternal(GameCommand command, out RuleViolation violation,
+            out AttackReport attackReport)
+        {
+            violation = null;
+            attackReport = null;
+            if (!State.Scenario.TacticalAirEnabled)
+                return TacticalReject(RuleViolationCode.TacticalAirUnavailable,
+                    "This scenario does not use tactical aircraft.", out violation);
+            if (command.Actor != State.ActiveSide || State.Phase == ActivationPhase.AwaitingChit ||
+                State.Phase == ActivationPhase.MissileCombat || State.Phase == ActivationPhase.GunCombat)
+                return TacticalReject(RuleViolationCode.WrongPhase,
+                    "Launch a tactical strike during one of your formation activations.", out violation);
+            var flight = State.TacticalFlight(command.SourceUnitId);
+            if (flight == null || flight.Side != command.Actor || flight.Mission != TacticalAirMission.Ready)
+                return TacticalReject(RuleViolationCode.AircraftUnavailable,
+                    "The selected flight is not ready for another mission this turn.", out violation);
+            var airBase = State.AirBase(flight.BaseId);
+            if (airBase == null || !BaseCanLaunch(airBase))
+                return TacticalReject(RuleViolationCode.BaseDisabled,
+                    "The selected base or carrier cannot launch aircraft.", out violation);
+            var targetForce = State.Formation(command.TargetId);
+            var targetBase = State.AirBase(command.TargetId);
+            if ((targetForce == null || targetForce.Side == command.Actor || targetForce.IsDestroyed) &&
+                (targetBase == null || targetBase.Definition.Side == command.Actor))
+                return TacticalReject(RuleViolationCode.InvalidFormation,
+                    "Select an opposing formation or air base.", out violation);
+            if (targetForce != null && State.DetectionRulesEnabled &&
+                !State.Detection.IsDetected(command.Actor, targetForce.Id))
+                return TacticalReject(RuleViolationCode.TargetUndetected,
+                    "A friendly force must first detect the formation selected for an air strike.", out violation);
+            if (!Enum.TryParse(command.SearchMode, true, out TacticalWeapon weapon))
+                return TacticalReject(RuleViolationCode.InvalidPayload,
+                    "Select LongAsm, ShortAsm, or Bombs.", out violation);
+            var weaponFactor = weapon == TacticalWeapon.LongAsm ? flight.Definition.LongAsm :
+                weapon == TacticalWeapon.ShortAsm ? flight.Definition.ShortAsm : flight.Definition.Bombs;
+            if (weaponFactor <= 0)
+                return TacticalReject(RuleViolationCode.NoLegalWeapon,
+                    $"{flight.Definition.DisplayName} has no {weapon} factor.", out violation);
+            var source = AirBasePosition(airBase);
+            var target = targetForce?.Position ?? targetBase.Definition.Position;
+            var terminalRange = weapon == TacticalWeapon.LongAsm ? 3 : 1;
+            if (source.DistanceTo(target) > flight.Definition.Radius + terminalRange)
+                return TacticalReject(RuleViolationCode.RadiusExceeded,
+                    $"Target is beyond aircraft radius {flight.Definition.Radius} plus {terminalRange}-hex weapon reach.", out violation);
+            var requested = Math.Min(Math.Max(1, command.Factors), airBase.MaximumStrikeSize);
+            var launched = flight.Launch(requested);
+            if (launched == 0)
+                return TacticalReject(RuleViolationCode.AircraftUnavailable,
+                    "No aircraft in that flight are ready.", out violation);
+
+            var report = new TacticalStrikeReport
+            {
+                Launched = true, FlightId = flight.Id, TargetId = command.TargetId,
+                Weapon = weapon, AircraftLaunched = launched
+            };
+            State.LastTacticalStrike = report;
+            Trace("AIR", $"{flight.Id} launched {launched} aircraft from {airBase.Definition.DisplayName} " +
+                $"against {command.TargetId} with {weapon}; range {source.DistanceTo(target)}.");
+
+            var escorts = (command.UnitIds ?? Array.Empty<string>()).Select(State.TacticalFlight)
+                .Where(item => item != null && item.Side == command.Actor && item.BaseId == flight.BaseId &&
+                    item.IsFighter && item.Id != flight.Id && item.Mission == TacticalAirMission.Ready).ToArray();
+            foreach (var escort in escorts) escort.Launch(escort.ReadyAircraft, TacticalAirMission.Escort);
+            var electronicAttack = State.Scenario.Ea18gSensorReductionEnabled && escorts.Any(item => item.Definition.ElectronicAttack);
+            if (electronicAttack) Trace("AIR", "EA-18G escort reduced defending ASR and SSR by one (minimum zero).");
+
+            var defender = command.Actor == Side.UsNavy ? Side.Plan : Side.UsNavy;
+            var interceptors = EligibleInterceptors(defender, targetBase, targetForce, target, electronicAttack).ToList();
+            var missionAircraft = launched;
+            foreach (var interceptor in interceptors)
+            {
+                var escort = escorts.FirstOrDefault(item => item.AircraftRemaining > 0);
+                var victim = escort ?? flight;
+                var attackingAircraft = interceptor.Mission == TacticalAirMission.Cap ? 1 : interceptor.ReadyAircraft;
+                var hits = ResolveAirToAir(interceptor, victim, attackingAircraft);
+                var losses = ApplyAircraftHits(victim, hits, victim == flight ? missionAircraft : victim.AircraftRemaining);
+                if (victim == flight)
+                {
+                    missionAircraft = Math.Max(0, missionAircraft - losses.shotDown - losses.aborted);
+                    report.AircraftShotDown += losses.shotDown;
+                    report.AircraftAborted += losses.aborted;
+                }
+                if (escort != null && escort.AircraftRemaining > 0)
+                {
+                    var counterHits = ResolveAirToAir(escort, interceptor, Math.Min(escort.AircraftRemaining, 4));
+                    ApplyAircraftHits(interceptor, counterHits, interceptor.AircraftRemaining);
+                }
+                interceptor.MarkInterceptorUsed();
+            }
+
+            var longDefense = targetBase != null ? targetBase.Definition.LongSam :
+                targetForce.ActiveUnits.Select(unit => unit.EffectiveLongSam).DefaultIfEmpty(0).Max();
+            var shortDefense = targetBase != null ? targetBase.Definition.ShortSam :
+                targetForce.ActiveUnits.Select(unit => unit.EffectiveShortSam).DefaultIfEmpty(0).Max();
+            var pointDefense = targetBase != null ? targetBase.Definition.PointDefense :
+                targetForce.ActiveUnits.Select(unit => unit.EffectivePointDefense).DefaultIfEmpty(0).Max();
+
+            if (weapon != TacticalWeapon.LongAsm && missionAircraft > 0 && longDefense > 0)
+            {
+                var losses = ApplyAircraftHits(flight,
+                    _missileCombat.RollDefense("LR SAM vs strike aircraft", longDefense, CombatTableColumn.Sam), missionAircraft);
+                missionAircraft = Math.Max(0, missionAircraft - losses.shotDown - losses.aborted);
+                report.AircraftShotDown += losses.shotDown;
+                report.AircraftAborted += losses.aborted;
+            }
+            if (weapon == TacticalWeapon.Bombs && missionAircraft > 0 && shortDefense > 0)
+            {
+                var losses = ApplyAircraftHits(flight,
+                    _missileCombat.RollDefense("SR SAM vs bombing aircraft", shortDefense, CombatTableColumn.Sam), missionAircraft);
+                missionAircraft = Math.Max(0, missionAircraft - losses.shotDown - losses.aborted);
+                report.AircraftShotDown += losses.shotDown;
+                report.AircraftAborted += losses.aborted;
+            }
+
+            var attackFactors = missionAircraft * weaponFactor;
+            report.MissileFactors = weapon == TacticalWeapon.Bombs ? 0 : attackFactors;
+            if (weapon != TacticalWeapon.Bombs && attackFactors > 0)
+            {
+                foreach (var interceptor in interceptors.Where(item => item.Mission == TacticalAirMission.Cap &&
+                             item.AircraftRemaining > 0))
+                {
+                    var destroyed = TacticalAirTables.AirToAirHits(_dice.RollD6() + interceptor.Definition.AirToAir);
+                    attackFactors = Math.Max(0, attackFactors - destroyed);
+                    report.MissileFactorsIntercepted += destroyed;
+                    Trace("AIR", $"{interceptor.Id} engaged missiles at Defense 0 and destroyed {destroyed} factor(s).");
+                }
+                var lrHits = _missileCombat.RollDefense("LR SAM vs air-launched missiles", longDefense, CombatTableColumn.Sam);
+                attackFactors = Math.Max(0, attackFactors - lrHits);
+                var srHits = _missileCombat.RollDefense("SR SAM vs air-launched missiles", shortDefense, CombatTableColumn.Sam);
+                attackFactors = Math.Max(0, attackFactors - srHits);
+                var pdHits = _missileCombat.RollDefense("Point defense vs air-launched missiles", pointDefense,
+                    CombatTableColumn.PointDefense);
+                attackFactors = Math.Max(0, attackFactors - pdHits);
+            }
+
+            var impactHits = 0;
+            for (var factor = 0; factor < attackFactors; factor++)
+            {
+                var roll = _dice.RollD6();
+                var hits = TacticalAirTables.BombHits(roll);
+                impactHits += hits;
+                Trace("DIE", $"{weapon} impact {factor + 1}/{attackFactors}: D6={roll}; {hits} hit(s).");
+            }
+            if (targetBase != null)
+                report.RunwayHits = targetBase.ApplyRunwayHits(impactHits);
+            else
+            {
+                var targetUnit = targetForce.ActiveUnits.FirstOrDefault(unit => unit.Definition.Id == command.FormationId)
+                    ?? targetForce.ActiveUnits.FirstOrDefault();
+                if (targetUnit != null)
+                    report.HullHits = targetUnit.ApplyDamage(impactHits,
+                        weapon == TacticalWeapon.Bombs ? DamageSource.Bomb : DamageSource.Missile).AppliedHits;
+            }
+            report.Summary = $"{flight.Id} {weapon} strike: {launched} launched, {report.AircraftShotDown} shot down, " +
+                $"{report.AircraftAborted} aborted; {report.HullHits} hull / {report.RunwayHits} runway hit(s).";
+            AddLog(report.Summary);
+            Trace("COMBAT", report.Summary);
+            attackReport = new AttackReport { Fired = true, AttackFactors = attackFactors,
+                HullHits = report.HullHits + report.RunwayHits, Summary = report.Summary };
+            AttackResolved?.Invoke(command.Actor, attackReport);
+            CheckGameOver();
+            return true;
+        }
+
+        private IEnumerable<TacticalFlightState> EligibleInterceptors(Side defender, AirBaseState targetBase,
+            TaskForceState targetForce, HexCoord target, bool electronicAttack)
+        {
+            foreach (var flight in State.TacticalFlights.Where(item => item.Side == defender && item.IsFighter &&
+                         (item.Mission == TacticalAirMission.Cap || item.Mission == TacticalAirMission.DeckInterceptor)))
+            {
+                var ownTarget = targetBase?.Definition.Id == flight.BaseId ||
+                    (targetForce != null && State.AirBase(flight.BaseId)?.Definition.IsCarrier == true &&
+                     targetForce.Side == defender);
+                var radarRange = Math.Max(0, flight.Definition.AirSearchRadar - (electronicAttack ? 1 : 0));
+                if (ownTarget || (flight.Mission == TacticalAirMission.Cap && flight.RadarOn &&
+                    AirBasePosition(State.AirBase(flight.BaseId)).DistanceTo(target) <= radarRange)) yield return flight;
+            }
+        }
+
+        private int ResolveAirToAir(TacticalFlightState attacker, TacticalFlightState defender, int aircraft)
+        {
+            var hits = 0;
+            for (var index = 0; index < aircraft; index++)
+            {
+                var roll = _dice.RollD6();
+                var modified = roll + attacker.Definition.AirToAir - defender.Definition.Defense;
+                var result = TacticalAirTables.AirToAirHits(modified);
+                hits += result;
+                Trace("DIE", $"AIR-TO-AIR {attacker.Id} vs {defender.Id}: D6={roll} + ATA " +
+                    $"{attacker.Definition.AirToAir} - DEF {defender.Definition.Defense} = {modified}; {result} hit(s).");
+            }
+            return hits;
+        }
+
+        private (int shotDown, int aborted) ApplyAircraftHits(TacticalFlightState flight, int hits, int exposed)
+        {
+            var shotDown = 0;
+            var aborted = 0;
+            for (var hit = 0; hit < hits && shotDown + aborted < exposed; hit++)
+            {
+                var roll = _dice.RollD6();
+                var damage = CombatTables.AircraftDamage(roll);
+                Trace("DIE", $"AIRCRAFT DAMAGE {flight.Id}: D6={roll}; {damage}.");
+                if (damage == AircraftDamageResult.ShotDown) shotDown++;
+                else if (damage == AircraftDamageResult.Abort) aborted++;
+            }
+            flight.ApplyAirDamage(shotDown, aborted);
+            return (shotDown, aborted);
+        }
+
+        private HexCoord AirBasePosition(AirBaseState airBase)
+        {
+            if (airBase == null) return default;
+            if (!airBase.Definition.IsCarrier) return airBase.Definition.Position;
+            var side = airBase.Definition.Side;
+            var carrierForce = State.Forces.FirstOrDefault(force => force.Side == side && force.ActiveUnits.Any(unit =>
+                unit.Definition.Id == State.Scenario.UsObjectiveUnitId ||
+                unit.Definition.Id == State.Scenario.PlanObjectiveUnitId));
+            return carrierForce?.Position ?? State.ForceFor(side).Position;
+        }
+
+        private bool BaseCanLaunch(AirBaseState airBase)
+        {
+            if (!airBase.CanLaunch) return false;
+            if (!airBase.Definition.IsCarrier) return true;
+            var carrier = State.Forces.Where(force => force.Side == airBase.Definition.Side)
+                .SelectMany(force => force.ActiveUnits).FirstOrDefault(unit =>
+                    unit.Definition.Id == State.Scenario.UsObjectiveUnitId ||
+                    unit.Definition.Id == State.Scenario.PlanObjectiveUnitId);
+            return carrier != null && carrier.CanLaunchAircraft;
+        }
+
+        private bool TacticalReject(RuleViolationCode code, string message, out RuleViolation violation)
+        {
+            violation = new RuleViolation(code, message);
+            Trace("REJECTED", message);
+            return false;
+        }
+
         private void BeginTurn()
         {
             State.PlayerHasMoved = false;
@@ -1755,6 +2224,8 @@ namespace Harpoon.Core
             State.UsActivated = false;
             State.PlanActivated = false;
             foreach (var force in State.Forces) force.ResetActivation();
+            foreach (var unit in State.Forces.SelectMany(force => force.Units)) unit.BeginAircraftTurn(State.Turn);
+            foreach (var flight in State.TacticalFlights) flight.BeginTurn();
             State.ActiveFormationId = string.Empty;
             State.MovementCup.Reset(State.Forces);
             State.Phase = ActivationPhase.AwaitingChit;
@@ -1801,7 +2272,8 @@ namespace Harpoon.Core
                                 State.Revision, enabled: enemyForce.CanRadiateRadar));
                         }
                         var path = State.Map.FindPath(enemyForce.Position, navigationTarget, Side.Plan);
-                        var declared = State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
+                        var declared = State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape ||
+                                       State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape
                             ? enemyForce.EffectiveSpeed
                             : path.Count == 0 ? 0 : Math.Min(enemyForce.EffectiveSpeed,
                                 Math.Max(0, path.Count - 2));
@@ -2018,6 +2490,10 @@ namespace Harpoon.Core
                     .Where(hex => DistanceToPatrolLine(State.Scenario, hex) <= State.Scenario.PatrolLineRadius)
                     .OrderBy(hex => hex.Column).ThenBy(hex => Math.Abs(hex.Row - 12))
                     .DefaultIfEmpty(enemyForce.Position).First();
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape)
+                return State.Map.NavigableNeighbors(enemyForce.Position, Side.Plan).Where(_isNavigable)
+                    .OrderByDescending(hex => hex.Column).ThenBy(hex => Math.Abs(hex.Row - 10))
+                    .DefaultIfEmpty(enemyForce.Position).First();
             var trackedPlayer = State.Forces.FirstOrDefault(force => force.Side == Side.UsNavy &&
                 !force.IsOffMap && State.Detection.IsDetected(Side.Plan, force.Id));
             var targetPosition = State.DetectionRulesEnabled && trackedPlayer == null &&
@@ -2039,6 +2515,39 @@ namespace Harpoon.Core
                     Execute(new GameCommand(GameCommandType.Search, observer.Side, State.Revision,
                         targetId: sonarTarget.Id, searchMode: "sonar"));
                     if (State.Detection.IsClassified(observer.Side, sonarTarget.Id)) return;
+                }
+            }
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.CarrierPosition)
+            {
+                var carrier = State.Unit(State.Scenario.UsObjectiveUnitId);
+                var carrierForce = State.Forces.FirstOrDefault(force => force.Units.Contains(carrier));
+                if (carrier == null || carrier.IsSunk)
+                {
+                    EndByScore(ScenarioEndReason.ObjectiveSunk);
+                    return;
+                }
+                if (carrierForce != null && !carrierForce.IsOffMap && carrier.CanLaunchAircraft &&
+                    carrierForce.Position.DistanceTo(State.Scenario.CarrierObjectiveHex) <=
+                    State.Scenario.CarrierObjectiveRadius)
+                {
+                    EndByScore(ScenarioEndReason.DestinationReached);
+                    return;
+                }
+            }
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape)
+            {
+                var score = CurrentScore();
+                if (score.UsObjectiveDamage >= 3)
+                {
+                    EndByScore(ScenarioEndReason.BoardEdgeExited);
+                    return;
+                }
+                var possibleEscapes = score.UsObjectiveDamage + State.Forces.Count(force =>
+                    force.Side == Side.Plan && force.IsSubmarineOnly && !force.IsDestroyed && !force.HasArrived);
+                if (possibleEscapes < 3)
+                {
+                    EndByScore(ScenarioEndReason.FixedResult);
+                    return;
                 }
             }
             var target = FindDetectionTarget(observer.Side, string.Empty, "visual");
@@ -2066,7 +2575,8 @@ namespace Harpoon.Core
 
         private TaskForceState FindDetectionTarget(Side observer, string targetId, string mode)
         {
-            var origin = State.ForceFor(observer).Position;
+            var observingForce = State.ForceFor(observer);
+            var origin = observingForce.Position;
             var candidates = State.Forces.Where(force => force.Side != observer && !force.IsDestroyed &&
                 !force.IsOffMap);
             if (!string.IsNullOrWhiteSpace(targetId))
@@ -2074,9 +2584,18 @@ namespace Harpoon.Core
             if (string.Equals(mode, "visual", StringComparison.OrdinalIgnoreCase))
                 candidates = candidates.Where(force => force.Position == origin);
             else if (string.Equals(mode, "esm", StringComparison.OrdinalIgnoreCase))
-                candidates = candidates.Where(force => force.RadarRadiating && force.Position.DistanceTo(origin) == 1);
+                candidates = candidates.Where(force => force.RadarRadiating &&
+                    force.Position.DistanceTo(origin) <= (observingForce.IsAircraftOnly ? 3 : 1));
             else if (string.Equals(mode, "sonar", StringComparison.OrdinalIgnoreCase))
                 candidates = candidates.Where(force => force.Position.DistanceTo(origin) <= 2);
+            else if (string.Equals(mode, "ssr", StringComparison.OrdinalIgnoreCase))
+                candidates = candidates.Where(force => !force.IsAircraftOnly && force.Position == origin);
+            else if (string.Equals(mode, "asr", StringComparison.OrdinalIgnoreCase))
+            {
+                var range = observingForce.ActiveUnits.Max(unit => unit.EffectiveAirSearchRadar);
+                candidates = candidates.Where(force => force.IsAircraftOnly &&
+                    force.Position.DistanceTo(origin) <= range);
+            }
             return candidates.OrderBy(force => force.Position.DistanceTo(origin)).FirstOrDefault();
         }
 
@@ -2109,6 +2628,70 @@ namespace Harpoon.Core
                 if (enemyBase != null && enemyBase.Side != moving.Side)
                     RecordDetection(enemyBase.Side, moving, DetectionMethod.Visual, true);
             }
+        }
+
+        private void ResolveAircraftDetectionAndSam(TaskForceState aircraftForce)
+        {
+            if (!State.DetectionRulesEnabled || aircraftForce == null || !aircraftForce.IsAircraftOnly ||
+                aircraftForce.IsOffMap) return;
+            var defenders = State.Forces.Where(force => force.Side != aircraftForce.Side && force.IsSurfaceOnly &&
+                !force.IsDestroyed && !force.IsOffMap).ToArray();
+            foreach (var defender in defenders)
+            {
+                var asr = defender.ActiveUnits.Max(unit => unit.EffectiveAirSearchRadar);
+                var range = defender.Position.DistanceTo(aircraftForce.Position);
+                if (defender.RadarRadiating && asr > 0 && range <= asr)
+                    RecordDetection(defender.Side, aircraftForce, DetectionMethod.AirSearchRadar, true);
+            }
+            foreach (var defender in defenders)
+            {
+                if (aircraftForce.IsOffMap || !State.Detection.IsDetected(defender.Side, aircraftForce.Id)) break;
+                var range = defender.Position.DistanceTo(aircraftForce.Position);
+                var samFactors = range == 0
+                    ? defender.ActiveUnits.Max(unit => Math.Max(unit.EffectiveLongSam, unit.EffectiveShortSam))
+                    : defender.RadarRadiating && range <= defender.ActiveUnits.Max(unit => unit.EffectiveAirSearchRadar)
+                        ? defender.ActiveUnits.Max(unit => unit.EffectiveLongSam) : 0;
+                if (samFactors <= 0) continue;
+                ResolveSamAgainstPatrolAircraft(defender, aircraftForce, samFactors);
+            }
+        }
+
+        private AttackReport ResolveSamAgainstPatrolAircraft(TaskForceState defender,
+            TaskForceState aircraftForce, int samFactors)
+        {
+            var aircraft = aircraftForce.ActiveUnits.FirstOrDefault();
+            var report = new AttackReport { Fired = samFactors > 0, AttackFactors = samFactors };
+            if (aircraft == null || samFactors <= 0) return report;
+            var hits = _missileCombat.RollDefense($"SAM vs {aircraft.Definition.DisplayName}",
+                samFactors, CombatTableColumn.Sam);
+            var aborted = false;
+            var shotDown = 0;
+            for (var hit = 0; hit < hits && aircraft.ServiceableAircraftRemaining > 0; hit++)
+            {
+                var roll = _dice.RollD6();
+                var damage = CombatTables.AircraftDamage(roll);
+                Trace("DIE", $"AIRCRAFT DAMAGE hit {hit + 1}/{hits}: D6={roll}; {damage}.");
+                if (damage == AircraftDamageResult.ShotDown)
+                {
+                    aircraft.ShootDownAircraft(State.Turn);
+                    shotDown++;
+                }
+                else if (damage == AircraftDamageResult.Abort)
+                {
+                    aircraft.AbortAircraft(State.Turn);
+                    aborted = true;
+                }
+            }
+            if (aborted || shotDown > 0)
+                aircraftForce.RemoveAircraftFromMap();
+            report.HullHits = shotDown;
+            report.SankAnyShip = aircraft.IsSunk;
+            report.Summary = $"{defender.Id} fired {samFactors} SAM factor(s): {hits} hit(s), " +
+                $"{shotDown} aircraft shot down" + (aborted ? ", patrol aborted." : ".");
+            Trace("COMBAT", report.Summary);
+            AddLog(report.Summary);
+            AttackResolved?.Invoke(defender.Side, report);
+            return report;
         }
 
         private void ResolveAutomaticRadar(TaskForceState observer)
@@ -2168,6 +2751,20 @@ namespace Harpoon.Core
                     return;
                 }
             }
+            if (State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape)
+            {
+                var breakout = CurrentScore();
+                if (breakout.UsObjectiveDamage >= 3)
+                {
+                    EndByScore(ScenarioEndReason.BoardEdgeExited);
+                    return;
+                }
+                if (breakout.UsObjectiveDamage + breakout.UsTieBreakDamage < 3)
+                {
+                    EndByScore(ScenarioEndReason.ForceDestroyed);
+                    return;
+                }
+            }
             if (State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival)
             {
                 var merchants = State.Forces.Where(force => force.Side == Side.UsNavy)
@@ -2206,7 +2803,8 @@ namespace Harpoon.Core
                 .SelectMany(force => force.ActiveUnits).Any();
             var planEliminated = !State.Forces.Where(force => force.Side == Side.Plan)
                 .SelectMany(force => force.ActiveUnits).Any();
-            if ((usEliminated && State.Scenario.ScoringMode != ScenarioScoringMode.CarrierEscape) || (planEliminated &&
+            if ((usEliminated && State.Scenario.ScoringMode != ScenarioScoringMode.CarrierEscape &&
+                 State.Scenario.ScoringMode != ScenarioScoringMode.SubmarineEscape) || (planEliminated &&
                 State.Scenario.ScoringMode != ScenarioScoringMode.ConvoySurvival))
             {
                 EndByScore(ScenarioEndReason.ForceDestroyed);
@@ -2216,7 +2814,9 @@ namespace Harpoon.Core
             if (State.Scenario.ScoringMode == ScenarioScoringMode.ConvoyArrival ||
                 State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival ||
                 State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival ||
-                State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape) return;
+                State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape ||
+                State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape ||
+                State.Scenario.ScoringMode == ScenarioScoringMode.CarrierPosition) return;
 
             var score = CurrentScore();
             var usCanScore = CanInflictFurtherDamage(Side.UsNavy);
@@ -2296,6 +2896,27 @@ namespace Harpoon.Core
                     carrier?.HullDamage ?? 0, carrier?.EmbarkedAircraftRemaining ?? 0,
                     sunk ? "US NAVY VICTORY" : escaped ? "PLAN VICTORY" : "DRAW");
             }
+            if (scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape)
+            {
+                var submarines = State.Forces.Where(force => force.Side == Side.Plan && force.IsSubmarineOnly).ToArray();
+                var escaped = submarines.Count(force => force.HasArrived && !force.IsDestroyed);
+                var sunk = submarines.SelectMany(force => force.Units).Count(unit => unit.IsSunk);
+                var remaining = submarines.Count(force => !force.HasArrived && !force.IsDestroyed);
+                return new ScenarioScore(escaped, sunk, remaining, 0,
+                    escaped >= 3 ? "PLAN VICTORY" : "US NAVY VICTORY");
+            }
+            if (scenario.ScoringMode == ScenarioScoringMode.CarrierPosition)
+            {
+                var carrier = State.Unit(scenario.UsObjectiveUnitId);
+                var carrierForce = State.Forces.FirstOrDefault(force => force.Units.Contains(carrier));
+                var distance = carrierForce == null ? int.MaxValue :
+                    carrierForce.Position.DistanceTo(scenario.CarrierObjectiveHex);
+                var capable = carrier != null && !carrier.IsSunk && carrier.CanLaunchAircraft;
+                var reached = capable && distance <= scenario.CarrierObjectiveRadius;
+                return new ScenarioScore(reached ? 1 : 0, reached ? 0 : 1,
+                    distance == int.MaxValue ? 99 : distance, carrier?.HullDamage ?? 0,
+                    reached ? "US NAVY VICTORY" : "PLAN VICTORY");
+            }
             return new ScenarioScore(
                 State.Unit(scenario.PlanObjectiveUnitId)?.HullDamage ?? 0,
                 State.Unit(scenario.UsObjectiveUnitId)?.HullDamage ?? 0,
@@ -2349,7 +2970,9 @@ namespace Harpoon.Core
                     ? "gunfire hull hits" : State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineSurvival
                         ? "submarine survival offsets" : State.Scenario.ScoringMode == ScenarioScoringMode.ConvoySurvival
                             ? "convoy arrivals and submarine offsets" : State.Scenario.ScoringMode == ScenarioScoringMode.CarrierEscape
-                                ? "Fujian escape capability" : "objective damage";
+                                ? "Fujian escape capability" : State.Scenario.ScoringMode == ScenarioScoringMode.SubmarineEscape
+                                    ? "submarine east-edge escapes" : State.Scenario.ScoringMode == ScenarioScoringMode.CarrierPosition
+                                        ? "Ford launch-capable arrival" : "objective damage";
             Trace("VICTORY", $"{State.Result}; reason={reason}; {scoreKind} inflicted US/PLAN=" +
                 $"{score.UsObjectiveDamage}/{score.PlanObjectiveDamage}; tie-break US/PLAN=" +
                 $"{score.UsTieBreakDamage}/{score.PlanTieBreakDamage}.");
@@ -2466,7 +3089,11 @@ namespace Harpoon.Core
                     gunfireHullDamage = unit.GunfireHullDamage,
                     shortMissiles = unit.ShortMissilesRemaining,
                     longMissiles = unit.LongMissilesRemaining,
-                    embarkedAircraft = unit.EmbarkedAircraftRemaining
+                    embarkedAircraft = unit.EmbarkedAircraftRemaining,
+                    serviceableAircraft = unit.ServiceableAircraftRemaining,
+                    aircraftMissionState = unit.AircraftMissionState,
+                    aircraftReadyTurn = unit.AircraftReadyTurn,
+                    aircraftLastAttackTurn = unit.AircraftLastAttackTurn
                 }).ToArray(),
                 eventLog = redact
                     ? new[] { "Opponent position and formation contents remain hidden until detected." }
@@ -2535,7 +3162,8 @@ namespace Harpoon.Core
                     arrived = visible(force) && force.HasArrived,
                     entered = visible(force) && force.HasEnteredMap,
                     dummyCards = force.Side == viewer || !redact ? force.DummyCards : 0,
-                    defensePairs = visible(force) ? force.DefensePairs.ToArray() : Array.Empty<DefensePairData>()
+                    defensePairs = visible(force) ? force.DefensePairs.ToArray() : Array.Empty<DefensePairData>(),
+                    aircraftSearchModes = visible(force) ? force.AircraftSearchModes.ToArray() : Array.Empty<string>()
                 }).ToArray(),
                 contacts = State.Detection.Contacts.Where(contact => !redact || contact.Observer == viewer)
                     .Select(contact => contact.ToData()).ToArray(),
@@ -2547,6 +3175,12 @@ namespace Harpoon.Core
                 scoreUsTieBreak = publicScore.UsTieBreakDamage,
                 scorePlanTieBreak = publicScore.PlanTieBreakDamage,
                 scoreResult = publicScore.Result
+                ,tacticalFlights = State.TacticalFlights.Select(flight => flight.Capture()).ToArray()
+                ,airBases = State.AirBases.Select(airBase => new AirBaseSnapshot
+                {
+                    id = airBase.Definition.Id,
+                    runwayHits = airBase.RunwayHits
+                }).ToArray()
             };
         }
 
@@ -2593,6 +3227,7 @@ namespace Harpoon.Core
                     force.RestoreSensors(item.radarRadiating, item.radarDeclared);
                     force.RestoreArrival(item.arrived, item.entered);
                     force.SetDefensePairs(item.defensePairs);
+                    force.RestoreAircraftSearchModes(item.aircraftSearchModes);
                     return force;
                 }).ToArray();
                 State.ReplaceForces(restoredForces);
@@ -2601,19 +3236,29 @@ namespace Harpoon.Core
             {
                 State.Player.MoveTo(new HexCoord(snapshot.usColumn, snapshot.usRow));
                 State.Enemy.MoveTo(new HexCoord(snapshot.planColumn, snapshot.planRow));
+                State.Player.RestoreMovement(snapshot.usDeclaredSpeed, snapshot.usMovementSpent,
+                    (snapshot.usMovementPath ?? Array.Empty<HexCoordSnapshot>())
+                    .Select(item => new HexCoord(item.column, item.row)));
+                State.Enemy.RestoreMovement(snapshot.planDeclaredSpeed, snapshot.planMovementSpent,
+                    (snapshot.planMovementPath ?? Array.Empty<HexCoordSnapshot>())
+                    .Select(item => new HexCoord(item.column, item.row)));
             }
-            State.Player.RestoreMovement(snapshot.usDeclaredSpeed, snapshot.usMovementSpent,
-                (snapshot.usMovementPath ?? Array.Empty<HexCoordSnapshot>())
-                .Select(item => new HexCoord(item.column, item.row)));
-            State.Enemy.RestoreMovement(snapshot.planDeclaredSpeed, snapshot.planMovementSpent,
-                (snapshot.planMovementPath ?? Array.Empty<HexCoordSnapshot>())
-                .Select(item => new HexCoord(item.column, item.row)));
             foreach (var unitSnapshot in snapshot.units ?? Array.Empty<UnitSnapshot>())
             {
                 var unit = State.Forces.SelectMany(force => force.Units)
                     .FirstOrDefault(candidate => candidate.Definition.Id == unitSnapshot.id);
                 unit?.Restore(unitSnapshot.hullDamage, unitSnapshot.shortMissiles, unitSnapshot.longMissiles,
-                    unitSnapshot.gunfireHullDamage, unitSnapshot.embarkedAircraft);
+                        unitSnapshot.gunfireHullDamage, unitSnapshot.embarkedAircraft,
+                        unitSnapshot.serviceableAircraft, unitSnapshot.aircraftMissionState,
+                        unitSnapshot.aircraftReadyTurn, unitSnapshot.aircraftLastAttackTurn);
+            }
+            if (snapshot.tacticalFlights != null && snapshot.tacticalFlights.Length > 0)
+            {
+                var restoredBases = State.Scenario.AirBaseIds.Select(id =>
+                    new AirBaseState(ModernAirBaseDatabase.Get(id))).ToArray();
+                foreach (var savedBase in snapshot.airBases ?? Array.Empty<AirBaseSnapshot>())
+                    restoredBases.FirstOrDefault(item => item.Definition.Id == savedBase.id)?.Restore(savedBase.runwayHits);
+                State.ConfigureTacticalAir(snapshot.tacticalFlights.Select(TacticalFlightState.Restore), restoredBases);
             }
             State.Log.Clear();
             State.Log.AddRange(snapshot.eventLog ?? Array.Empty<string>());

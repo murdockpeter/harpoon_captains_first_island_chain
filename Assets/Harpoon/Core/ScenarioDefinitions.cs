@@ -12,7 +12,9 @@ namespace Harpoon.Core
         ConvoyArrival,
         SubmarineSurvival,
         ConvoySurvival,
-        CarrierEscape
+        CarrierEscape,
+        SubmarineEscape,
+        CarrierPosition
     }
 
     public enum BoardEdge { None, East, West }
@@ -39,10 +41,11 @@ namespace Harpoon.Core
         public IReadOnlyList<ScenarioUnitDefinition> Units { get; }
         public int DummyCards { get; }
         public BoardEdge EntryEdge { get; }
+        public bool CanDeploy { get; }
 
         public ScenarioFormationDefinition(string id, Side side, HexCoord start,
             IEnumerable<ScenarioUnitDefinition> units, int dummyCards = 0,
-            BoardEdge entryEdge = BoardEdge.None)
+            BoardEdge entryEdge = BoardEdge.None, bool canDeploy = true)
         {
             Id = id ?? string.Empty;
             Side = side;
@@ -50,6 +53,23 @@ namespace Harpoon.Core
             Units = (units ?? Array.Empty<ScenarioUnitDefinition>()).ToArray();
             DummyCards = Math.Max(0, dummyCards);
             EntryEdge = entryEdge;
+            CanDeploy = canDeploy;
+        }
+    }
+
+    public sealed class ScenarioTacticalFlightDefinition
+    {
+        public string Id { get; }
+        public string AircraftId { get; }
+        public string BaseId { get; }
+        public int Strength { get; }
+
+        public ScenarioTacticalFlightDefinition(string id, string aircraftId, string baseId, int strength = 4)
+        {
+            Id = id ?? string.Empty;
+            AircraftId = aircraftId ?? string.Empty;
+            BaseId = baseId ?? string.Empty;
+            Strength = Math.Max(1, Math.Min(4, strength));
         }
     }
 
@@ -81,6 +101,16 @@ namespace Harpoon.Core
         public int PatrolLineRadius { get; }
         public Side PatrolRestrictedSide { get; }
         public BoardEdge VictoryExitEdge { get; }
+        public bool HasDistanceDeployment { get; }
+        public HexCoord DistanceDeploymentCenter { get; }
+        public int UsDeploymentMinimumDistance { get; }
+        public int PlanDeploymentMaximumDistance { get; }
+        public bool TacticalAirEnabled { get; }
+        public bool Ea18gSensorReductionEnabled { get; }
+        public HexCoord CarrierObjectiveHex { get; }
+        public int CarrierObjectiveRadius { get; }
+        public IReadOnlyList<string> AirBaseIds { get; }
+        public IReadOnlyList<ScenarioTacticalFlightDefinition> TacticalFlights { get; }
         public IReadOnlyList<ScenarioFormationDefinition> Formations { get; }
 
         public ScenarioDefinition(string id, string name, string subtitle, string briefing,
@@ -94,7 +124,12 @@ namespace Harpoon.Core
             int planProhibitedRadius = 0, bool hasPatrolLine = false,
             HexCoord patrolLineStart = default, HexCoord patrolLineEnd = default,
             int patrolLineRadius = 0, Side patrolRestrictedSide = Side.Plan,
-            BoardEdge victoryExitEdge = BoardEdge.None)
+            BoardEdge victoryExitEdge = BoardEdge.None, bool hasDistanceDeployment = false,
+            HexCoord distanceDeploymentCenter = default, int usDeploymentMinimumDistance = 0,
+            int planDeploymentMaximumDistance = 0, bool tacticalAirEnabled = false,
+            bool ea18gSensorReductionEnabled = false, HexCoord carrierObjectiveHex = default,
+            int carrierObjectiveRadius = 0, IEnumerable<string> airBaseIds = null,
+            IEnumerable<ScenarioTacticalFlightDefinition> tacticalFlights = null)
         {
             Id = id ?? string.Empty;
             Name = name ?? string.Empty;
@@ -122,6 +157,16 @@ namespace Harpoon.Core
             PatrolLineRadius = Math.Max(0, patrolLineRadius);
             PatrolRestrictedSide = patrolRestrictedSide;
             VictoryExitEdge = victoryExitEdge;
+            HasDistanceDeployment = hasDistanceDeployment;
+            DistanceDeploymentCenter = distanceDeploymentCenter;
+            UsDeploymentMinimumDistance = Math.Max(0, usDeploymentMinimumDistance);
+            PlanDeploymentMaximumDistance = Math.Max(0, planDeploymentMaximumDistance);
+            TacticalAirEnabled = tacticalAirEnabled;
+            Ea18gSensorReductionEnabled = ea18gSensorReductionEnabled;
+            CarrierObjectiveHex = carrierObjectiveHex;
+            CarrierObjectiveRadius = Math.Max(0, carrierObjectiveRadius);
+            AirBaseIds = (airBaseIds ?? Array.Empty<string>()).ToArray();
+            TacticalFlights = (tacticalFlights ?? Array.Empty<ScenarioTacticalFlightDefinition>()).ToArray();
             Formations = (formations ?? Array.Empty<ScenarioFormationDefinition>()).ToArray();
         }
     }
@@ -320,7 +365,7 @@ namespace Harpoon.Core
             "A barrier of US submarines in the Bashi Channel must stop the PLAN carrier battle group " +
             "built around Fujian from reaching the western edge.",
             "The US wins by sinking Fujian. PLAN wins if Fujian exits the west edge while still capable " +
-            "of launching aircraft. If neither occurs after seven turns, the US wins.",
+            "of launching aircraft. If neither side fulfills its condition after seven turns, the game is a draw.",
             "First Island Chain p. 26; platform cards pp. 15-16, 18", 7, true,
             string.Empty, "plan-fujian", string.Empty, string.Empty,
             new[]
@@ -337,22 +382,95 @@ namespace Harpoon.Core
                 new ScenarioFormationDefinition("US Los Angeles 2", Side.UsNavy, new HexCoord(15, 17),
                     new[] { new ScenarioUnitDefinition("us-los-angeles-2", "us-los-angeles", UnitRole.Escort) },
                     entryEdge: BoardEdge.East),
-                new ScenarioFormationDefinition("PLAN Fujian", Side.Plan, new HexCoord(8, 12),
+                new ScenarioFormationDefinition("PLAN Fujian", Side.Plan, new HexCoord(9, 12),
                     new[] { new ScenarioUnitDefinition("plan-fujian", "plan-fujian", UnitRole.Objective) }),
-                new ScenarioFormationDefinition("PLAN Type 055", Side.Plan, new HexCoord(9, 12),
+                new ScenarioFormationDefinition("PLAN Type 055", Side.Plan, new HexCoord(10, 12),
                     new[] { new ScenarioUnitDefinition("plan-type-055", "plan-type-055", UnitRole.Escort) }),
-                new ScenarioFormationDefinition("PLAN Type 052D", Side.Plan, new HexCoord(10, 12),
+                new ScenarioFormationDefinition("PLAN Type 052D", Side.Plan, new HexCoord(11, 12),
                     new[] { new ScenarioUnitDefinition("plan-type-052d", "plan-type-052d", UnitRole.Escort) }),
-                new ScenarioFormationDefinition("PLAN Type 054B", Side.Plan, new HexCoord(11, 12),
+                new ScenarioFormationDefinition("PLAN Type 054B", Side.Plan, new HexCoord(12, 12),
                     new[] { new ScenarioUnitDefinition("plan-type-054b", "plan-type-054b", UnitRole.Escort) })
             }, ScenarioScoringMode.CarrierEscape, hasPatrolLine: true,
             patrolLineStart: new HexCoord(8, 12), patrolLineEnd: new HexCoord(12, 12),
             patrolLineRadius: 2, patrolRestrictedSide: Side.Plan,
             victoryExitEdge: BoardEdge.West);
 
+        public static readonly ScenarioDefinition Patroller = new ScenarioDefinition(
+            "fic-09", "Patroller", "FIRST ISLAND CHAIN · SCENARIO 9",
+            "Four PLAN submarines departing Xiamen must cross the Philippine Sea while a Kadena-based " +
+            "P-8A Poseidon and a Los Angeles-class SSN hunt them.",
+            "PLAN wins by exiting three or more submarines from the east edge within fifteen turns. " +
+            "If fewer than three escape, the US wins.",
+            "First Island Chain pp. 17, 23, 26; Captain's Rules pp. 12-13", 15, true,
+            string.Empty, string.Empty, string.Empty, string.Empty,
+            new[]
+            {
+                new ScenarioFormationDefinition("US Los Angeles", Side.UsNavy, new HexCoord(15, 20),
+                    new[] { new ScenarioUnitDefinition("us-los-angeles", "us-los-angeles", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("US P-8A Poseidon", Side.UsNavy, new HexCoord(9, 4),
+                    new[] { new ScenarioUnitDefinition("us-p8a", "us-p8a", UnitRole.Escort) }, canDeploy: false),
+                new ScenarioFormationDefinition("PLAN Yuan 1", Side.Plan, new HexCoord(5, 10),
+                    new[] { new ScenarioUnitDefinition("plan-type-039ab-1", "plan-type-039ab", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Yuan 2", Side.Plan, new HexCoord(6, 9),
+                    new[] { new ScenarioUnitDefinition("plan-type-039ab-2", "plan-type-039ab", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Yuan 3", Side.Plan, new HexCoord(6, 11),
+                    new[] { new ScenarioUnitDefinition("plan-type-039ab-3", "plan-type-039ab", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Type 093B", Side.Plan, new HexCoord(7, 10),
+                    new[] { new ScenarioUnitDefinition("plan-type-093b", "plan-type-093b", UnitRole.Escort) })
+            }, ScenarioScoringMode.SubmarineEscape, victoryExitEdge: BoardEdge.East,
+            hasDistanceDeployment: true, distanceDeploymentCenter: new HexCoord(2, 10),
+            usDeploymentMinimumDistance: 15, planDeploymentMaximumDistance: 10);
+
+        public static readonly ScenarioDefinition FirstLight = new ScenarioDefinition(
+            "fic-10", "First Light Over the East China Sea", "FIRST ISLAND CHAIN · SCENARIO 10",
+            "A Gerald R. Ford carrier strike group must push from Kadena into the East China Sea while " +
+            "PLAN submarines and Ningbo-based maritime strike aircraft attempt to stop it.",
+            "The US wins by moving Ford, still capable of launching aircraft, within two hexes of 0206 " +
+            "by the end of Turn 12. Otherwise PLAN wins.",
+            "First Island Chain pp. 13-15, 17, 19-20, 26; Captain's Rules pp. 14-16", 12, true,
+            "us-ford", string.Empty, string.Empty, string.Empty,
+            new[]
+            {
+                new ScenarioFormationDefinition("US Ford Strike Group", Side.UsNavy, new HexCoord(9, 4),
+                    new[]
+                    {
+                        new ScenarioUnitDefinition("us-ford", "us-ford", UnitRole.Objective),
+                        new ScenarioUnitDefinition("us-ticonderoga", "us-ticonderoga", UnitRole.Escort),
+                        new ScenarioUnitDefinition("us-burke-flt-iii", "us-burke-iii", UnitRole.Escort),
+                        new ScenarioUnitDefinition("us-constellation-1", "us-constellation", UnitRole.Escort),
+                        new ScenarioUnitDefinition("us-constellation-2", "us-constellation", UnitRole.Escort)
+                    }, canDeploy: false),
+                new ScenarioFormationDefinition("PLAN Type 093B 1", Side.Plan, new HexCoord(4, 8),
+                    new[] { new ScenarioUnitDefinition("plan-type-093b-first-light-1", "plan-type-093b", UnitRole.Escort) }),
+                new ScenarioFormationDefinition("PLAN Type 093B 2", Side.Plan, new HexCoord(5, 9),
+                    new[] { new ScenarioUnitDefinition("plan-type-093b-first-light-2", "plan-type-093b", UnitRole.Escort) })
+            }, ScenarioScoringMode.CarrierPosition, hasDistanceDeployment: true,
+            distanceDeploymentCenter: new HexCoord(2, 8), planDeploymentMaximumDistance: 10,
+            tacticalAirEnabled: true, ea18gSensorReductionEnabled: true,
+            carrierObjectiveHex: new HexCoord(2, 6), carrierObjectiveRadius: 2,
+            airBaseIds: new[] { "us-ford-wing", "plan-ningbo" },
+            tacticalFlights: new[]
+            {
+                new ScenarioTacticalFlightDefinition("FORD-F18-1", "us-fa18ef", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-F18-2", "us-fa18ef", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-F18-3", "us-fa18ef", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-F18-4", "us-fa18ef", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-F18-5", "us-fa18ef", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-F18-6", "us-fa18ef", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-F35-1", "us-f35c", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-F35-2", "us-f35c", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-F35-3", "us-f35c", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-F35-4", "us-f35c", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-EA18G-1", "us-ea18g", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("FORD-EA18G-2", "us-ea18g", "us-ford-wing"),
+                new ScenarioTacticalFlightDefinition("NINGBO-J16-1", "plan-j16", "plan-ningbo"),
+                new ScenarioTacticalFlightDefinition("NINGBO-J16-2", "plan-j16", "plan-ningbo"),
+                new ScenarioTacticalFlightDefinition("NINGBO-H6J-1", "plan-h6j", "plan-ningbo")
+            });
+
         public static IReadOnlyList<ScenarioDefinition> Introductory { get; } =
             new[] { ContactOffBashiChannel, FlagshipDuel, CloseAboard, PicketLine, GhostFleet,
-                WolvesOfBashiChannel, LifelineToTaiwan, HuntTheDragon };
+                WolvesOfBashiChannel, LifelineToTaiwan, HuntTheDragon, Patroller, FirstLight };
 
 
         public static ScenarioDefinition Get(string id) => Introductory.FirstOrDefault(item =>

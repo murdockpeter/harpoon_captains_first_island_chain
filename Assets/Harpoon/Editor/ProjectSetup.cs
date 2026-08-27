@@ -130,9 +130,10 @@ namespace Harpoon.Editor
             ValidateScenarioSixRelease();
             ValidateScenarioSevenRelease();
             ValidateScenarioEightRelease();
+            ValidateScenarioNineRelease();
 
             ValidateLoopbackTransport();
-            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-8 including hidden contacts, dummy deception, undersea combat, convoy arrival, carrier escape, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
+            Debug.Log("HARPOON RULE VALIDATION PASSED (Scenarios 1-9 including hidden contacts, dummy deception, undersea combat, convoy arrival, carrier escape, patrol aircraft, redacted snapshots, legal scoring, replay, hot-seat flow, and TCP loopback).");
         }
 
         public static void BuildWindowsPlayer()
@@ -498,7 +499,10 @@ namespace Harpoon.Editor
             var fujian = game.State.Unit("plan-fujian");
             Require(game.State.MaximumTurns == 7 && game.State.Forces.Count == 8 &&
                     game.State.Forces.Count(force => force.Side == Side.UsNavy && force.IsSubmarineOnly) == 4 &&
-                    game.State.Forces.Count(force => force.Side == Side.Plan) == 4,
+                    game.State.Forces.Count(force => force.Side == Side.Plan) == 4 &&
+                    game.State.Forces.Where(force => force.Side == Side.Plan)
+                        .All(force => force.Position.Row == 12 && force.Position.Column >= 8 &&
+                            force.Position.Column <= 12 && game.State.Map.IsNavigable(force.Position, Side.Plan)),
                 "Scenario 8 must load four independent US SSNs and the four-ship Fujian group for seven turns.");
             Require(fujian.Definition.IsAircraftCarrier && fujian.Definition.EmbarkedAircraftCapacity == 1 &&
                     fujian.CanLaunchAircraft,
@@ -511,6 +515,29 @@ namespace Harpoon.Editor
             fujian.ApplyDamage(3);
             Require(!fujian.CanLaunchAircraft,
                 "Half damage to Fujian must prohibit aircraft launch and therefore its victory exit.");
+        }
+
+        private static void ValidateScenarioNineRelease()
+        {
+            var game = new ScenarioOneGame(9909, null, true, false, null,
+                FirstIslandChainScenarios.Patroller);
+            var p8 = game.State.Unit("us-p8a");
+            Require(game.State.MaximumTurns == 15 && game.State.Forces.Count == 6 &&
+                    game.State.Forces.Count(force => force.Side == Side.Plan && force.IsSubmarineOnly) == 4,
+                "Scenario 9 must load four independent PLAN submarines, the US SSN, P-8A, and fifteen turns.");
+            Require(p8.Definition.IsPatrolAircraft && p8.Definition.AircraftRadius == 20 &&
+                    p8.Definition.SurfaceSearchRadar == 3 && p8.Definition.Sonar == 4 &&
+                    p8.Definition.AntiSubmarineWarfare == 5 && p8.ServiceableAircraftRemaining == 4,
+                "Scenario 9 must use the printed modern P-8A card and four-box roster.");
+            Require(CombatTables.AircraftDamage(1) == AircraftDamageResult.NoEffect &&
+                    CombatTables.AircraftDamage(2) == AircraftDamageResult.Abort &&
+                    CombatTables.AircraftDamage(4) == AircraftDamageResult.ShotDown,
+                "Scenario 9 must use the printed Aircraft Damage table.");
+            Require(ScenarioOneGame.IsLegalDeploymentHex(game.State.Scenario, game.State.Map,
+                    Side.Plan, new HexCoord(5, 10)) &&
+                    ScenarioOneGame.IsLegalDeploymentHex(game.State.Scenario, game.State.Map,
+                        Side.UsNavy, new HexCoord(15, 20)),
+                "Scenario 9 must enforce Xiamen-centered setup distances.");
         }
 
         private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,
@@ -664,7 +691,9 @@ namespace Harpoon.Editor
             {
                 host.StartHost(port);
                 client.StartClient("127.0.0.1", port);
-                var deadline = DateTime.UtcNow.AddSeconds(4);
+                // Batch-mode startup can briefly starve the accept thread while Unity finishes
+                // asset cleanup; allow enough time to distinguish that from a transport failure.
+                var deadline = DateTime.UtcNow.AddSeconds(12);
                 while ((!host.IsConnected || !client.IsConnected) && DateTime.UtcNow < deadline)
                     Thread.Sleep(10);
                 Require(host.IsConnected && client.IsConnected,

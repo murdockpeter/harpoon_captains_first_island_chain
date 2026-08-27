@@ -22,6 +22,7 @@ static class Program
             ScenarioSixRoute();
             ScenarioSevenRoute();
             ScenarioEightRoute();
+            ScenarioNineRoute();
             ReleaseVersionRoute();
             Console.WriteLine($"HARPOON CORE VALIDATION PASSED: {_checks} checks; scripted movement, missile, gunfire, scoring, stopping, and replay routes complete.");
             return 0;
@@ -628,7 +629,10 @@ static class Program
         var fujian = game.State.Unit("plan-fujian");
         Check(game.State.MaximumTurns == 7 && game.State.Forces.Count == 8 &&
             game.State.Forces.Count(force => force.Side == Side.UsNavy && force.IsSubmarineOnly) == 4 &&
-            game.State.Forces.Count(force => force.Side == Side.Plan) == 4,
+            game.State.Forces.Count(force => force.Side == Side.Plan) == 4 &&
+            game.State.Forces.Where(force => force.Side == Side.Plan)
+                .All(force => force.Position.Row == 12 && force.Position.Column >= 8 &&
+                    force.Position.Column <= 12 && game.State.Map.IsNavigable(force.Position, Side.Plan)),
             "Scenario 8 exact four-SSN barrier and four-ship PLAN order of battle");
         Check(fujian.Definition.EmbarkedAircraftCapacity == 1 && fujian.EmbarkedAircraftRemaining == 1 &&
             fujian.CanLaunchAircraft, "Scenario 8 Fujian starts with one full embarked air-group capacity unit");
@@ -706,6 +710,121 @@ static class Program
         Check(mirror.State.Scenario.Id == "fic-08" && mirror.State.Result == "PLAN VICTORY" &&
             mirror.State.Formation("PLAN Fujian").HasArrived,
             "Scenario 8 save/network snapshot retains edge exit and carrier victory state");
+    }
+
+    private static void ScenarioNineRoute()
+    {
+        var definition = FirstIslandChainScenarios.Patroller;
+        var game = new ScenarioOneGame(9909, null, true, false,
+            new SequenceDieRoller(1, 5, 6), definition);
+        var poseidon = game.State.Unit("us-p8a");
+        Check(game.State.MaximumTurns == 15 && game.State.Forces.Count == 6 &&
+              game.State.Forces.Count(force => force.Side == Side.Plan && force.IsSubmarineOnly) == 4,
+            "Scenario 9 exact fifteen-turn, four-PLAN-submarine order of battle");
+        Check(poseidon.Definition.IsPatrolAircraft && poseidon.Definition.AircraftRadius == 20 &&
+              poseidon.Definition.AirSearchRadar == 1 && poseidon.Definition.SurfaceSearchRadar == 3 &&
+              poseidon.Definition.Sonar == 4 && poseidon.Definition.AntiSubmarineWarfare == 5 &&
+              poseidon.Definition.LongSsm == 2 && poseidon.ServiceableAircraftRemaining == 4,
+            "Scenario 9 modern P-8A card and four-box serviceability roster");
+        Check(CombatTables.AircraftDamage(1) == AircraftDamageResult.NoEffect &&
+              CombatTables.AircraftDamage(2) == AircraftDamageResult.Abort &&
+              CombatTables.AircraftDamage(3) == AircraftDamageResult.Abort &&
+              CombatTables.AircraftDamage(4) == AircraftDamageResult.ShotDown &&
+              CombatTables.AircraftDamage(6) == AircraftDamageResult.ShotDown,
+            "Printed patrol-aircraft damage table 1/2-3/4-6");
+        Check(ScenarioOneGame.IsLegalDeploymentHex(definition, game.State.Map, Side.Plan, new HexCoord(5, 10)) &&
+              !ScenarioOneGame.IsLegalDeploymentHex(definition, game.State.Map, Side.Plan, new HexCoord(15, 20)) &&
+              ScenarioOneGame.IsLegalDeploymentHex(definition, game.State.Map, Side.UsNavy, new HexCoord(15, 20)),
+            "Scenario 9 Xiamen distance deployment limits");
+        Check(!game.Execute(new GameCommand(GameCommandType.DeployFormation, Side.UsNavy,
+                game.State.Revision, new HexCoord(15, 20), formationId: "US P-8A Poseidon")).Accepted,
+            "Scenario 9 Kadena-based P-8A cannot be redeployed during setup");
+
+        var snapshot = game.CaptureSnapshot();
+        snapshot.activeSide = Side.UsNavy;
+        snapshot.activeFormationId = "US P-8A Poseidon";
+        snapshot.phase = ActivationPhase.AircraftAction;
+        var p8Force = snapshot.formations.Single(item => item.id == "US P-8A Poseidon");
+        p8Force.column = 9;
+        p8Force.row = 4;
+        var yuan = snapshot.formations.Single(item => item.id == "PLAN Yuan 1");
+        yuan.column = 14;
+        yuan.row = 10;
+        game.ApplySnapshot(snapshot);
+        Check(game.Execute(new GameCommand(GameCommandType.Move, Side.UsNavy, game.State.Revision,
+                new HexCoord(14, 10))).Accepted && game.State.Formation("US P-8A Poseidon").Position == new HexCoord(14, 10),
+            "P-8A makes an unlimited non-adjacent relocation inside its twenty-hex radius");
+        Check(!game.Execute(new GameCommand(GameCommandType.Move, Side.UsNavy, game.State.Revision,
+                new HexCoord(15, 20))).Accepted,
+            "P-8A patrol model relocates only once on its movement chit");
+        Check(game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy, game.State.Revision,
+                targetId: "PLAN Yuan 1", searchMode: "sonar")).Accepted &&
+              game.State.Detection.IsClassified(Side.UsNavy, "PLAN Yuan 1"),
+            "P-8A dips sonar in its final hex and classifies a submarine contact");
+        Check(!game.Execute(new GameCommand(GameCommandType.Search, Side.UsNavy, game.State.Revision,
+                targetId: "PLAN Yuan 1", searchMode: "sonar")).Accepted,
+            "Each patrol-aircraft sensor searches only once from its station");
+        Check(game.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy, game.State.Revision,
+                targetId: "PLAN Yuan 1")).Accepted &&
+              game.State.Unit("us-p8a").AircraftLastAttackTurn == game.State.Turn,
+            "P-8A conducts an ASW attack against its classified same-hex submarine");
+        var secondSortie = game.CaptureSnapshot();
+        secondSortie.hasAttacked = false;
+        secondSortie.phase = ActivationPhase.AircraftAction;
+        secondSortie.activeSide = Side.UsNavy;
+        secondSortie.activeFormationId = "US P-8A Poseidon";
+        game.ApplySnapshot(secondSortie);
+        Check(!game.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy, game.State.Revision,
+                targetId: "PLAN Yuan 1")).Accepted,
+            "P-8A cannot make a second ASM or ASW attack in the same turn");
+
+        var mirror = new ScenarioOneGame(1, null, true);
+        mirror.ApplySnapshot(game.CaptureSnapshot());
+        var restoredP8 = mirror.State.Unit("us-p8a");
+        Check(mirror.State.Scenario.Id == "fic-09" && restoredP8.ServiceableAircraftRemaining == 4 &&
+              mirror.State.Formation("US P-8A Poseidon").HasUsedAircraftSearch("sonar"),
+            "Scenario 9 multiplayer/save snapshot retains aircraft pool and sensor transactions");
+
+        var escape = new ScenarioOneGame(9910, null, true, false, null, definition);
+        var eastEdge = escape.State.Map.AllHexes.First(hex =>
+            ScenarioOneGame.IsBoardEdgeHex(escape.State.Map, hex, BoardEdge.East, Side.Plan));
+        foreach (var id in new[] { "PLAN Yuan 1", "PLAN Yuan 2", "PLAN Yuan 3" })
+        {
+            var exitSnapshot = escape.CaptureSnapshot();
+            exitSnapshot.activeSide = Side.Plan;
+            exitSnapshot.activeFormationId = id;
+            exitSnapshot.phase = ActivationPhase.PlayerMove;
+            var formation = exitSnapshot.formations.Single(item => item.id == id);
+            formation.column = eastEdge.Column;
+            formation.row = eastEdge.Row;
+            formation.declaredSpeed = 1;
+            formation.movementSpent = 0;
+            escape.ApplySnapshot(exitSnapshot);
+            var exitResult = escape.Execute(new GameCommand(GameCommandType.ExitMap, Side.Plan,
+                escape.State.Revision));
+            Check(exitResult.Accepted, $"Scenario 9 {id} exits the east edge ({exitResult.Summary})");
+        }
+        Check(escape.State.IsGameOver && escape.State.Result == "PLAN VICTORY" &&
+              escape.State.EndReason == ScenarioEndReason.BoardEdgeExited &&
+              escape.CurrentScore().UsObjectiveDamage == 3,
+            "Three PLAN submarine escapes immediately resolve Scenario 9 victory");
+
+        var turnLimit = new ScenarioOneGame(9911, null, true, false, null, definition);
+        var final = turnLimit.CaptureSnapshot();
+        final.turn = 15;
+        final.activeSide = Side.UsNavy;
+        final.activeFormationId = "US Los Angeles";
+        final.phase = ActivationPhase.PlayerAction;
+        final.remainingChits = Array.Empty<MovementChitData>();
+        var la = final.formations.Single(item => item.id == "US Los Angeles");
+        la.declaredSpeed = 0;
+        la.movementSpent = 0;
+        turnLimit.ApplySnapshot(final);
+        Check(turnLimit.Execute(new GameCommand(GameCommandType.EndActivation, Side.UsNavy,
+                turnLimit.State.Revision)).Accepted && turnLimit.State.IsGameOver &&
+              turnLimit.State.EndReason == ScenarioEndReason.TurnLimit &&
+              turnLimit.State.Result == "US NAVY VICTORY",
+            "Fewer than three escapes after Turn 15 gives Scenario 9 victory to the US");
     }
 
     private static ScenarioOneGame ScoringGame(int usObjectiveDamage, int planObjectiveDamage,

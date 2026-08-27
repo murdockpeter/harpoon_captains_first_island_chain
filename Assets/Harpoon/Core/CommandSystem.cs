@@ -32,7 +32,10 @@ namespace Harpoon.Core
         EndActivation,
         Disengage,
         RequestScoring,
-        Concede
+        Concede,
+        AssignCap,
+        AssignDeckInterceptor,
+        LaunchTacticalStrike
     }
 
     public enum RuleViolationCode
@@ -74,7 +77,12 @@ namespace Harpoon.Core
         NoLegalWeapon,
         AlreadyActed,
         InvalidPayload,
-        UnsupportedCommand
+        UnsupportedCommand,
+        TacticalAirUnavailable,
+        AircraftUnavailable,
+        BaseDisabled,
+        DeckCapacityExceeded,
+        RadiusExceeded
     }
 
     public enum RuleEventType

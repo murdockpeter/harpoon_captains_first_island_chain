@@ -47,8 +47,8 @@ namespace Harpoon.Core
         public static AircraftDamageResult AircraftDamage(int roll)
         {
             RequireD6(roll);
-            return roll == 6 ? AircraftDamageResult.ShotDown :
-                roll >= 4 ? AircraftDamageResult.Abort : AircraftDamageResult.NoEffect;
+            return roll >= 4 ? AircraftDamageResult.ShotDown :
+                roll >= 2 ? AircraftDamageResult.Abort : AircraftDamageResult.NoEffect;
         }
 
         public static int AirToAirHits(int modifiedResult)

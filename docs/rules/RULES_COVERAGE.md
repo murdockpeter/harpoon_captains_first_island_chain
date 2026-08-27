@@ -96,6 +96,26 @@ Modern unit cards and the optional EA-18G rule necessarily come from the supplem
 | Three merchants and submarine-loss offsets | First Island Chain p. 25 | `ConvoySurvival` scoring | two-arrival/one-loss/one-sub offset route | Complete |
 | Ten-turn terminal result | First Island Chain p. 25 | scenario maximum turn and end-by-score path | deterministic turn-ten PLAN result | Complete |
 
+## Scenario 8 coverage
+
+| Rule/data | Authoritative source | Current code | Automated evidence | Status |
+|---|---|---|---|---|
+| Four PLAN ships and four independent US SSNs | First Island Chain p. 26 | `HuntTheDragon`, eight formation definitions | exact order of battle, roles, and seven-turn checks | Complete |
+| East-edge submarine entry and west-edge carrier exit | First Island Chain p. 26 | `HasEnteredMap`, `BoardEdge`, `ExitMap` | legal entry, illegal exit, snapshot, and victory checks | Complete |
+| PLAN two-hex patrol-axis restriction | First Island Chain p. 26 | data-driven patrol line and `DistanceToPatrolLine` | in-band/out-of-band movement checks | Complete |
+| Embarked air group and damage-gated launch | First Island Chain pp. 18, 26; Captain's Rules damage thresholds | `EmbarkedAircraftCapacity`, `CanLaunchAircraft` | full-capacity, half-damage mission-kill, and save checks | Complete |
+| Fujian sink/launch-capable escape victory | First Island Chain p. 26 | `CarrierEscape`, `BoardEdgeExited` | deterministic US and PLAN result routes | Complete |
+
+## Scenario 9 coverage
+
+| Rule/data | Authoritative source | Current code | Automated evidence | Status |
+|---|---|---|---|---|
+| Four PLAN submarines, US SSN, and P-8A | First Island Chain pp. 17, 23, 26 | `Patroller`, `ModernAircraftDatabase` | exact OOB, card factors, radius, and serviceability checks | Complete |
+| Patrol-aircraft chit and relocation | Captain's Rules p. 12 | `AircraftAction`, one-model aircraft formation | non-adjacent relocation, radius, and once-per-chit checks | Complete |
+| Patrol sensors and attacks | Captain's Rules pp. 12–13 | aircraft ASR/SSR/sonar/ESM/visual and ASM/ASW paths | deterministic sensor, classification, and once-per-turn checks | Complete |
+| ASR-directed SAM and aircraft damage | Captain's Rules p. 13 | automatic ASR detection, SAM reaction, `AircraftDamage` | exact 1 / 2–3 / 4–6 table and persisted mission-state checks | Complete |
+| Xiamen setup, east exit, and fifteen turns | First Island Chain p. 26 | distance deployment and `SubmarineEscape` scoring | legal setup, three-escape PLAN win, and turn-limit US win | Complete |
+
 ## Rules-family source index
 
 | Rules family | Captain's Rules | Supplement |

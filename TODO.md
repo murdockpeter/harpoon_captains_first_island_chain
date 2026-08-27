@@ -253,25 +253,25 @@ Each scenario is both playable content and the acceptance test for a new rules f
 
 ## Scenario 8 — Hunt the Dragon: carrier capability
 
-- [ ] Model carriers as ships with embarked-aircraft capacity/state.
-- [ ] Apply damage effects that prevent aircraft launch.
-- [ ] Implement board-edge entry and exit.
-- [ ] Implement patrol-line setup and movement restrictions.
-- [ ] Implement “carrier exits while still capable of launching aircraft” victory.
-- [ ] Add deterministic Scenario 8 acceptance tests.
+- [x] Model carriers as ships with embarked-aircraft capacity/state.
+- [x] Apply damage effects that prevent aircraft launch.
+- [x] Implement board-edge entry and exit.
+- [x] Implement patrol-line setup and movement restrictions.
+- [x] Implement “carrier exits while still capable of launching aircraft” victory.
+- [x] Add deterministic Scenario 8 acceptance tests.
 
 ## Scenario 9 — Patroller: patrol aircraft
 
-- [ ] Add patrol-aircraft movement chits and one-model-per-type abstraction.
-- [ ] Implement unlimited on-map relocation within base/carrier radius each activation.
-- [ ] Implement patrol ASR, SSR, sonar, ESM, and visual searches.
-- [ ] Implement once-per-turn patrol ASM and ASW attacks.
-- [ ] Implement air-search-radar detection of patrol aircraft.
-- [ ] Implement Aircraft Damage Table: no effect, abort, and shot down.
-- [ ] Implement abort/return-to-base and serviceability state.
-- [ ] Implement Kadena basing and P-8A radius.
-- [ ] Implement east-edge submarine exit objective and fifteen-turn limit.
-- [ ] Add deterministic Scenario 9 acceptance tests.
+- [x] Add patrol-aircraft movement chits and one-model-per-type abstraction.
+- [x] Implement unlimited on-map relocation within base/carrier radius each activation.
+- [x] Implement patrol ASR, SSR, sonar, ESM, and visual searches.
+- [x] Implement once-per-turn patrol ASM and ASW attacks.
+- [x] Implement air-search-radar detection of patrol aircraft.
+- [x] Implement Aircraft Damage Table: no effect, abort, and shot down.
+- [x] Implement abort/return-to-base and serviceability state.
+- [x] Implement Kadena basing and P-8A radius.
+- [x] Implement east-edge submarine exit objective and fifteen-turn limit.
+- [x] Add deterministic Scenario 9 acceptance tests.
 
 ## Scenario 10 — First Light: tactical aircraft and bases
 

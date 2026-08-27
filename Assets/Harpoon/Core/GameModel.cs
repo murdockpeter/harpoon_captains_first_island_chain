@@ -8,7 +8,9 @@ namespace Harpoon.Core
     public enum UnitRole { Escort, Objective }
     public enum DamageSource { Other, Missile, Gunfire, Torpedo, Bomb }
     public enum ShipDamageLevel { Operational, HalfDamage, TwoThirdsDamage, Sunk }
-    public enum ActivationPhase { AwaitingChit, DeclareSpeed, PlayerMove, PlayerAction, MissileCombat, GunCombat, GameOver }
+    public enum AircraftMissionState { OnStation, ReadyAtBase, Aborted, Reconstituting, Destroyed }
+    // Keep new phases at the end so numeric values in older JSON saves remain stable.
+    public enum ActivationPhase { AwaitingChit, DeclareSpeed, PlayerMove, PlayerAction, MissileCombat, GunCombat, GameOver, AircraftAction }
 
     public sealed class RuleTransaction
     {
@@ -54,12 +56,18 @@ namespace Harpoon.Core
         public int EmbarkedAircraftCapacity { get; }
         public bool IsSubmarine { get; }
         public int Torpedoes { get; }
+        public bool IsPatrolAircraft { get; }
+        public int AircraftRadius { get; }
+        public int AircraftDefense { get; }
+        public int ServiceableAircraftCapacity { get; }
 
         public UnitDefinition(string id, string displayName, Side side, UnitRole role, int shortSam,
             int longSam, int pointDefense, int shortSsm, int longSsm, int guns, int speed, int hull,
             int airSearchRadar = 0, int surfaceSearchRadar = 0, int sonar = 0,
             int antiSubmarineWarfare = 0, bool esmEquipped = true, bool isAircraftCarrier = false,
-            int torpedoes = 0, bool isSubmarine = false, int embarkedAircraftCapacity = 0)
+            int torpedoes = 0, bool isSubmarine = false, int embarkedAircraftCapacity = 0,
+            bool isPatrolAircraft = false, int aircraftRadius = 0, int aircraftDefense = 0,
+            int serviceableAircraftCapacity = 0)
         {
             Id = id;
             DisplayName = displayName;
@@ -82,6 +90,10 @@ namespace Harpoon.Core
             EmbarkedAircraftCapacity = isAircraftCarrier ? Math.Max(1, embarkedAircraftCapacity) : 0;
             Torpedoes = torpedoes;
             IsSubmarine = isSubmarine;
+            IsPatrolAircraft = isPatrolAircraft;
+            AircraftRadius = Math.Max(0, aircraftRadius);
+            AircraftDefense = Math.Max(0, aircraftDefense);
+            ServiceableAircraftCapacity = isPatrolAircraft ? Math.Max(1, serviceableAircraftCapacity) : 0;
         }
     }
 
@@ -116,7 +128,12 @@ namespace Harpoon.Core
         public int ShortMissilesRemaining { get; private set; }
         public int LongMissilesRemaining { get; private set; }
         public int EmbarkedAircraftRemaining { get; private set; }
-        public bool IsSunk => HullDamage >= Definition.Hull;
+        public int ServiceableAircraftRemaining { get; private set; }
+        public AircraftMissionState AircraftMissionState { get; private set; }
+        public int AircraftReadyTurn { get; private set; }
+        public int AircraftLastAttackTurn { get; private set; }
+        public bool IsSunk => Definition.IsPatrolAircraft
+            ? ServiceableAircraftRemaining <= 0 : HullDamage >= Definition.Hull;
         public int HullRemaining => Math.Max(0, Definition.Hull - HullDamage);
         public int HalfDamageThreshold => HalfDamageThresholdFor(Definition.Hull);
         public int TwoThirdsDamageThreshold => TwoThirdsDamageThresholdFor(Definition.Hull);
@@ -132,6 +149,9 @@ namespace Harpoon.Core
             ShortMissilesRemaining = definition.ShortSsm;
             LongMissilesRemaining = definition.LongSsm;
             EmbarkedAircraftRemaining = definition.EmbarkedAircraftCapacity;
+            ServiceableAircraftRemaining = definition.ServiceableAircraftCapacity;
+            AircraftMissionState = definition.IsPatrolAircraft
+                ? AircraftMissionState.ReadyAtBase : AircraftMissionState.Destroyed;
         }
 
         public int EffectiveSpeed
@@ -212,8 +232,50 @@ namespace Harpoon.Core
             return true;
         }
 
+        public bool CanFlyAircraft(int turn) => Definition.IsPatrolAircraft &&
+            ServiceableAircraftRemaining > 0 && turn >= AircraftReadyTurn &&
+            AircraftMissionState != AircraftMissionState.Destroyed;
+
+        public void PlaceAircraftOnStation()
+        {
+            if (!Definition.IsPatrolAircraft || ServiceableAircraftRemaining <= 0) return;
+            AircraftMissionState = AircraftMissionState.OnStation;
+        }
+
+        public void AbortAircraft(int turn)
+        {
+            if (!Definition.IsPatrolAircraft || IsSunk) return;
+            AircraftMissionState = AircraftMissionState.Aborted;
+            AircraftReadyTurn = Math.Max(AircraftReadyTurn, turn + 1);
+        }
+
+        public void ShootDownAircraft(int turn)
+        {
+            if (!Definition.IsPatrolAircraft || ServiceableAircraftRemaining <= 0) return;
+            ServiceableAircraftRemaining--;
+            AircraftReadyTurn = Math.Max(AircraftReadyTurn, turn + 1);
+            AircraftMissionState = ServiceableAircraftRemaining == 0
+                ? AircraftMissionState.Destroyed : AircraftMissionState.Reconstituting;
+        }
+
+        public void BeginAircraftTurn(int turn)
+        {
+            if (!Definition.IsPatrolAircraft || ServiceableAircraftRemaining <= 0) return;
+            if (turn >= AircraftReadyTurn && AircraftMissionState != AircraftMissionState.OnStation)
+                AircraftMissionState = AircraftMissionState.ReadyAtBase;
+        }
+
+        public bool MarkAircraftAttack(int turn)
+        {
+            if (!Definition.IsPatrolAircraft || AircraftLastAttackTurn == turn) return false;
+            AircraftLastAttackTurn = turn;
+            return true;
+        }
+
         internal void Restore(int hullDamage, int shortMissiles, int longMissiles,
-            int gunfireHullDamage = 0, int embarkedAircraft = -1)
+            int gunfireHullDamage = 0, int embarkedAircraft = -1,
+            int serviceableAircraft = -1, AircraftMissionState aircraftMissionState = AircraftMissionState.OnStation,
+            int aircraftReadyTurn = 0, int aircraftLastAttackTurn = 0)
         {
             HullDamage = Math.Max(0, Math.Min(Definition.Hull, hullDamage));
             GunfireHullDamage = Math.Max(0, Math.Min(HullDamage, gunfireHullDamage));
@@ -221,6 +283,13 @@ namespace Harpoon.Core
             LongMissilesRemaining = Math.Max(0, longMissiles);
             EmbarkedAircraftRemaining = embarkedAircraft < 0 ? Definition.EmbarkedAircraftCapacity :
                 Math.Max(0, Math.Min(Definition.EmbarkedAircraftCapacity, embarkedAircraft));
+            ServiceableAircraftRemaining = serviceableAircraft < 0 ? Definition.ServiceableAircraftCapacity :
+                Math.Max(0, Math.Min(Definition.ServiceableAircraftCapacity, serviceableAircraft));
+            AircraftMissionState = Definition.IsPatrolAircraft
+                ? (ServiceableAircraftRemaining == 0 ? AircraftMissionState.Destroyed : aircraftMissionState)
+                : AircraftMissionState.Destroyed;
+            AircraftReadyTurn = Math.Max(0, aircraftReadyTurn);
+            AircraftLastAttackTurn = Math.Max(0, aircraftLastAttackTurn);
         }
     }
 
@@ -229,6 +298,7 @@ namespace Harpoon.Core
         private readonly List<UnitState> _units;
         private readonly List<HexCoord> _movementPath = new List<HexCoord>();
         private readonly List<DefensePairData> _defensePairs = new List<DefensePairData>();
+        private readonly HashSet<string> _aircraftSearchModes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public string Id { get; }
         public Side Side { get; }
         public HexCoord Position { get; private set; }
@@ -239,18 +309,24 @@ namespace Harpoon.Core
         public IReadOnlyList<HexCoord> MovementPath => _movementPath;
         public IReadOnlyList<UnitState> Units => _units;
         public IReadOnlyList<DefensePairData> DefensePairs => _defensePairs;
+        public IReadOnlyCollection<string> AircraftSearchModes => _aircraftSearchModes;
         public bool HasArrived { get; private set; }
         public bool HasEnteredMap { get; private set; }
         public bool IsOffMap => HasArrived || !HasEnteredMap;
         public int DummyCards { get; private set; }
         public bool IsDummyOnly => _units.Count == 0 && DummyCards > 0;
         public bool IsSubmarineOnly => _units.Count > 0 && _units.All(unit => unit.Definition.IsSubmarine);
-        public bool IsSurfaceOnly => _units.Count > 0 && _units.All(unit => !unit.Definition.IsSubmarine);
+        public bool IsAircraftOnly => _units.Count > 0 && _units.All(unit => unit.Definition.IsPatrolAircraft);
+        public bool IsSurfaceOnly => _units.Count > 0 && _units.All(unit => !unit.Definition.IsSubmarine &&
+            !unit.Definition.IsPatrolAircraft);
         public IEnumerable<UnitState> ActiveUnits => _units.Where(unit => !unit.IsSunk);
         public bool IsDestroyed => _units.Count > 0 && _units.All(unit => unit.IsSunk);
         public UnitState Objective => _units.FirstOrDefault(unit => unit.Definition.Role == UnitRole.Objective);
         private bool _radarRadiating;
-        public bool RadarRadiating => _radarRadiating && CanRadiateRadar;
+        public bool RadarRadiating => IsAircraftOnly
+            ? HasEnteredMap && ActiveUnits.Any(unit => unit.EffectiveAirSearchRadar > 0 ||
+                unit.EffectiveSurfaceSearchRadar > 0)
+            : _radarRadiating && CanRadiateRadar;
         public bool RadarDeclaredThisActivation { get; private set; }
         public bool CanRadiateRadar => ActiveUnits.Any(unit => unit.EffectiveSurfaceSearchRadar > 0);
         public bool CanUseEsm => ActiveUnits.Any(unit => unit.EffectiveEsm);
@@ -262,9 +338,9 @@ namespace Harpoon.Core
             Side = side;
             Position = position;
             _units = new List<UnitState>(units);
-            if (_units.Any(unit => unit.Definition.IsSubmarine) &&
-                _units.Any(unit => !unit.Definition.IsSubmarine))
-                throw new InvalidOperationException("Submarines may not be grouped with surface vessels.");
+            if (_units.Select(unit => unit.Definition.IsPatrolAircraft ? 2 : unit.Definition.IsSubmarine ? 1 : 0)
+                .Distinct().Count() > 1)
+                throw new InvalidOperationException("Aircraft, submarines, and surface vessels require separate formations.");
             DummyCards = Math.Max(0, dummyCards);
             HasEnteredMap = !startsOffMap;
         }
@@ -283,6 +359,7 @@ namespace Harpoon.Core
             DeclaredSpeed = speed;
             MovementPointsSpent = 0;
             _movementPath.Clear();
+            _aircraftSearchModes.Clear();
             _movementPath.Add(Position);
         }
 
@@ -301,11 +378,33 @@ namespace Harpoon.Core
             _movementPath.Add(destination);
         }
 
+        public void RelocateAircraft(HexCoord destination)
+        {
+            HasEnteredMap = true;
+            HasArrived = false;
+            Position = destination;
+            _movementPath.Clear();
+            _movementPath.Add(destination);
+            foreach (var unit in ActiveUnits) unit.PlaceAircraftOnStation();
+        }
+
+        public void RemoveAircraftFromMap()
+        {
+            if (IsAircraftOnly) HasEnteredMap = false;
+        }
+
+        public bool HasUsedAircraftSearch(string mode) => _aircraftSearchModes.Contains(mode ?? string.Empty);
+        public void MarkAircraftSearchUsed(string mode)
+        {
+            if (!string.IsNullOrWhiteSpace(mode)) _aircraftSearchModes.Add(mode);
+        }
+
         public void ResetActivation()
         {
             DeclaredSpeed = -1;
             MovementPointsSpent = 0;
             _movementPath.Clear();
+            _aircraftSearchModes.Clear();
         }
 
         public void BeginSensorDeclaration() => RadarDeclaredThisActivation = false;
@@ -373,6 +472,13 @@ namespace Harpoon.Core
             RadarDeclaredThisActivation = radarDeclared;
         }
 
+        internal void RestoreAircraftSearchModes(IEnumerable<string> modes)
+        {
+            _aircraftSearchModes.Clear();
+            foreach (var mode in modes ?? Array.Empty<string>())
+                if (!string.IsNullOrWhiteSpace(mode)) _aircraftSearchModes.Add(mode);
+        }
+
         internal void RestoreArrival(bool arrived, bool entered = true)
         {
             HasArrived = arrived;
@@ -383,9 +489,13 @@ namespace Harpoon.Core
     public sealed class GameState
     {
         private readonly List<TaskForceState> _forces;
+        private readonly List<TacticalFlightState> _tacticalFlights = new List<TacticalFlightState>();
+        private readonly List<AirBaseState> _airBases = new List<AirBaseState>();
         public TaskForceState Player { get; private set; }
         public TaskForceState Enemy { get; private set; }
         public IReadOnlyList<TaskForceState> Forces => _forces;
+        public IReadOnlyList<TacticalFlightState> TacticalFlights => _tacticalFlights;
+        public IReadOnlyList<AirBaseState> AirBases => _airBases;
         public OperationalMap Map { get; }
         public int Turn { get; internal set; } = 1;
         public int MaximumTurns { get; }
@@ -403,6 +513,7 @@ namespace Harpoon.Core
         public DetectionTracker Detection { get; } = new DetectionTracker();
         public MissileEngagement PendingMissileCombat { get; internal set; }
         public GunEngagement PendingGunCombat { get; internal set; }
+        public TacticalStrikeReport LastTacticalStrike { get; internal set; }
         public int Day => ((Turn - 1) / 3) + 1;
         public TimeOfDay TimeOfDay => (TimeOfDay)((Turn - 1) % 3);
         public string TimeLabel => $"Day {Day} " + (TimeOfDay == TimeOfDay.Am ? "AM" :
@@ -474,6 +585,21 @@ namespace Harpoon.Core
 
         public UnitState Unit(string id) => _forces.SelectMany(force => force.Units)
             .FirstOrDefault(unit => string.Equals(unit.Definition.Id, id, StringComparison.Ordinal));
+
+        public TacticalFlightState TacticalFlight(string id) => _tacticalFlights.FirstOrDefault(flight =>
+            string.Equals(flight.Id, id, StringComparison.Ordinal));
+
+        public AirBaseState AirBase(string id) => _airBases.FirstOrDefault(airBase =>
+            string.Equals(airBase.Definition.Id, id, StringComparison.Ordinal));
+
+        internal void ConfigureTacticalAir(IEnumerable<TacticalFlightState> flights,
+            IEnumerable<AirBaseState> airBases)
+        {
+            _tacticalFlights.Clear();
+            _tacticalFlights.AddRange(flights ?? Array.Empty<TacticalFlightState>());
+            _airBases.Clear();
+            _airBases.AddRange(airBases ?? Array.Empty<AirBaseState>());
+        }
 
         public SideGameView ViewFor(Side viewer, bool? opponentKnown = null) =>
             new SideGameView(viewer, this, opponentKnown);
