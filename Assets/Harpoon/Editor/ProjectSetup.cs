@@ -714,12 +714,14 @@ namespace Harpoon.Editor
 
         private static void ValidateLoopbackTransport()
         {
-            var port = 48000 + System.Diagnostics.Process.GetCurrentProcess().Id % 10000;
             using (var host = new MultiplayerNetwork())
             using (var client = new MultiplayerNetwork())
             {
-                host.StartHost(port);
-                client.StartClient("127.0.0.1", port);
+                // Port zero asks the OS for a free ephemeral port. StartHost binds synchronously,
+                // so the client cannot race the listener or collide with an unrelated service.
+                host.StartHost(0);
+                Require(host.ListeningPort > 0, "TCP loopback host must bind an ephemeral port.");
+                client.StartClient("127.0.0.1", host.ListeningPort);
                 // Batch-mode startup can briefly starve the accept thread while Unity finishes
                 // asset cleanup; allow enough time to distinguish that from a transport failure.
                 var deadline = DateTime.UtcNow.AddSeconds(12);

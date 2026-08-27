@@ -40,14 +40,26 @@ namespace Harpoon.Runtime
 
         public bool IsHost { get; private set; }
         public bool IsConnected => _client != null && _client.Connected && _writer != null;
+        public int ListeningPort { get; private set; }
         public string Status => _status;
 
         public void StartHost(int port)
         {
             Stop();
             IsHost = true;
-            _status = $"Hosting on port {port}; waiting for opponent...";
-            _worker = new Thread(() => HostWorker(port)) { IsBackground = true, Name = "Harpoon Host" };
+            try
+            {
+                _listener = new TcpListener(IPAddress.Any, port);
+                _listener.Start(1);
+                ListeningPort = ((IPEndPoint)_listener.LocalEndpoint).Port;
+            }
+            catch (Exception exception)
+            {
+                _status = "Host error: " + exception.Message;
+                return;
+            }
+            _status = $"Hosting on port {ListeningPort}; waiting for opponent...";
+            _worker = new Thread(HostWorker) { IsBackground = true, Name = "Harpoon Host" };
             _worker.Start();
         }
 
@@ -80,12 +92,10 @@ namespace Harpoon.Runtime
             }
         }
 
-        private void HostWorker(int port)
+        private void HostWorker()
         {
             try
             {
-                _listener = new TcpListener(IPAddress.Any, port);
-                _listener.Start(1);
                 _client = _listener.AcceptTcpClient();
                 if (_stopping) return;
                 _status = "Opponent connected";
@@ -141,6 +151,7 @@ namespace Harpoon.Runtime
             try { _listener?.Stop(); } catch { }
             _client = null;
             _listener = null;
+            ListeningPort = 0;
             while (_inbox.TryDequeue(out _)) { }
             _stopping = false;
             _status = "Offline";
