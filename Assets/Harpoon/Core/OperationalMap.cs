@@ -149,7 +149,11 @@ namespace Harpoon.Core
                 new HexCoord(1,15),new HexCoord(2,15),
                 new HexCoord(1,16),new HexCoord(2,16),
 
-                // Hainan, separated visually from the mainland by the Qiongzhou Strait.
+                // The Qiongzhou Strait is substantially narrower than one 60-mile hex, so
+                // the coast remains visually continuous at this operational map scale.
+                new HexCoord(1,17),new HexCoord(2,17),
+
+                // Hainan and the adjacent southern China coast.
                 new HexCoord(1,18),new HexCoord(2,18),new HexCoord(3,18),new HexCoord(4,18),
                 new HexCoord(1,19),new HexCoord(2,19),new HexCoord(3,19),new HexCoord(4,19),
                 new HexCoord(1,20),new HexCoord(2,20),new HexCoord(3,20),
@@ -158,16 +162,18 @@ namespace Harpoon.Core
                 // are retained between the represented groups.
                 new HexCoord(11,1),new HexCoord(10,2),new HexCoord(8,6),new HexCoord(8,7),
 
-                // Taiwan: approximately five hex lengths north to south at this scale.
-                new HexCoord(8,8),new HexCoord(8,9),new HexCoord(8,10),
-                new HexCoord(8,11),new HexCoord(8,12),
+                // Taiwan: approximately five hex lengths north to south and two hexes at
+                // its broadest central shoulders at this scale.
+                new HexCoord(8,8),new HexCoord(9,8),new HexCoord(8,9),new HexCoord(9,9),
+                new HexCoord(8,10),new HexCoord(7,11),new HexCoord(8,11),
+                new HexCoord(7,12),new HexCoord(8,12),
 
-                // 0813 and 0714 remain open water through the Bashi Channel. Luzon begins
-                // south of that passage and runs approximately five hex lengths.
-                new HexCoord(7,15),new HexCoord(6,16),new HexCoord(7,16),
-                new HexCoord(6,17),new HexCoord(7,17),new HexCoord(8,17),
-                new HexCoord(6,18),new HexCoord(7,18),
-                new HexCoord(6,19),new HexCoord(7,19)
+                // 0813 and 0714 remain open water through the Bashi Channel. Luzon sits
+                // south-southeast of Taiwan with a broad South China Sea gap to Hainan.
+                new HexCoord(9,15),new HexCoord(8,16),new HexCoord(9,16),
+                new HexCoord(8,17),new HexCoord(9,17),new HexCoord(10,17),
+                new HexCoord(8,18),new HexCoord(9,18),
+                new HexCoord(8,19),new HexCoord(9,19)
             };
             var bases = new[]
             {
@@ -176,7 +182,7 @@ namespace Harpoon.Core
                 new NavalBase("plan-yulin", "Yulin / Sanya", Side.Plan, new HexCoord(2,18)),
                 new NavalBase("us-kadena", "Kadena AB", Side.UsNavy, new HexCoord(9,4)),
                 new NavalBase("us-taipei", "Taipei / Zuoying", Side.UsNavy, new HexCoord(8,10)),
-                new NavalBase("us-subic", "Subic Bay / Clark", Side.UsNavy, new HexCoord(7,16))
+                new NavalBase("us-subic", "Subic Bay / Clark", Side.UsNavy, new HexCoord(8,16))
             };
             // The green Hainan area is land/off-map access, not ice or restricted water.
             return new OperationalMap(1, 15, 1, 20, land, Array.Empty<HexCoord>(), bases);

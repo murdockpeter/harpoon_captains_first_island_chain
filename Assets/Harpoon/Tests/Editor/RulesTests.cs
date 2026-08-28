@@ -832,12 +832,18 @@ namespace Harpoon.Core.Tests
             Assert.That(map.AllHexes.Count(), Is.EqualTo(300));
             Assert.That(new HexCoord(10, 10).DistanceTo(new HexCoord(7, 13)), Is.EqualTo(3));
             Assert.That(map.TerrainAt(new HexCoord(8, 12)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(9, 8)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(7, 12)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(9, 9)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(7, 11)), Is.EqualTo(TerrainType.Land));
             Assert.That(map.TerrainAt(new HexCoord(8, 13)), Is.EqualTo(TerrainType.Sea));
             Assert.That(map.TerrainAt(new HexCoord(7, 14)), Is.EqualTo(TerrainType.Sea));
             Assert.That(map.TerrainAt(new HexCoord(9, 3)), Is.EqualTo(TerrainType.Sea));
             Assert.That(map.TerrainAt(new HexCoord(8, 7)), Is.EqualTo(TerrainType.Land));
-            Assert.That(map.TerrainAt(new HexCoord(7, 19)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(9, 19)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(7, 19)), Is.EqualTo(TerrainType.Sea));
             Assert.That(map.TerrainAt(new HexCoord(7, 20)), Is.EqualTo(TerrainType.Sea));
+            Assert.That(map.TerrainAt(new HexCoord(2, 17)), Is.EqualTo(TerrainType.Land));
             Assert.That(map.Bases.Count, Is.EqualTo(6));
         }
 
@@ -859,7 +865,7 @@ namespace Harpoon.Core.Tests
             Assert.That(game.DrawMovementChit().Accepted, Is.True);
             var side = game.State.ActiveSide;
             var beforeDeclaration = game.Execute(new GameCommand(GameCommandType.Move, side,
-                game.State.Revision, new HexCoord(7, 12)));
+                game.State.Revision, new HexCoord(8, 13)));
             Assert.That(beforeDeclaration.Violation.Code, Is.EqualTo(RuleViolationCode.SpeedNotDeclared));
             Assert.That(game.DeclareSpeed(side, 2).Accepted, Is.True);
             var teleport = game.Execute(new GameCommand(GameCommandType.Move, side,
@@ -868,7 +874,7 @@ namespace Harpoon.Core.Tests
                 game.State.Revision, new HexCoord(8, 12)));
             Assert.That(teleport.Violation.Code, Is.EqualTo(RuleViolationCode.NotAdjacent));
             Assert.That(land.Violation.Code, Is.EqualTo(RuleViolationCode.ImpassableTerrain));
-            Assert.That(game.TryMove(side, new HexCoord(7, 12), out _), Is.True);
+            Assert.That(game.TryMove(side, new HexCoord(8, 13), out _), Is.True);
             Assert.That(game.State.ForceFor(side).MovementRemaining, Is.EqualTo(1));
         }
 

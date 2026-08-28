@@ -14,7 +14,7 @@ namespace Harpoon.Editor
 {
     public static class ProjectSetup
     {
-        public const string DefaultReleaseVersion = "1.0.0";
+        public const string DefaultReleaseVersion = "1.0.1";
         [MenuItem("Harpoon/Public Multiplayer Setup")]
         public static void OpenPublicMultiplayerSetup()
         {
@@ -423,7 +423,7 @@ namespace Harpoon.Editor
         {
             var definition = FirstIslandChainScenarios.PicketLine;
             var game = new ScenarioOneGame(4404, null, true, false, null, definition);
-            Require(game.State.DetectionRulesEnabled && game.State.Player.Position == new HexCoord(8, 16) &&
+            Require(game.State.DetectionRulesEnabled && game.State.Player.Position == new HexCoord(7, 16) &&
                     game.State.Player.Units.Count == 5 && game.State.Enemy.Units.Count == 3,
                 "Scenario 4 must load the full Subic convoy and PLAN picket with detection enabled.");
             var hidden = game.CaptureSnapshotFor(Side.UsNavy);
@@ -837,17 +837,23 @@ namespace Harpoon.Editor
                     new HexCoord(10, 10).Neighbors().All(hex => hex.DistanceTo(new HexCoord(10, 10)) == 1),
                 "Scenario setup, adjacency, movement, range, AI, and rendering must share axial topology.");
             Require(map.TerrainAt(new HexCoord(8, 12)) == TerrainType.Land &&
+                    map.TerrainAt(new HexCoord(9, 8)) == TerrainType.Land &&
+                    map.TerrainAt(new HexCoord(7, 12)) == TerrainType.Land &&
+                    map.TerrainAt(new HexCoord(9, 9)) == TerrainType.Land &&
+                    map.TerrainAt(new HexCoord(7, 11)) == TerrainType.Land &&
                     map.TerrainAt(new HexCoord(8, 13)) == TerrainType.Sea &&
                     map.TerrainAt(new HexCoord(7, 14)) == TerrainType.Sea &&
                     map.TerrainAt(new HexCoord(9, 13)) == TerrainType.Sea &&
                     map.TerrainAt(new HexCoord(9, 3)) == TerrainType.Sea &&
                     map.TerrainAt(new HexCoord(8, 7)) == TerrainType.Land &&
-                    map.TerrainAt(new HexCoord(7, 19)) == TerrainType.Land &&
+                    map.TerrainAt(new HexCoord(9, 19)) == TerrainType.Land &&
+                    map.TerrainAt(new HexCoord(7, 19)) == TerrainType.Sea &&
                     map.TerrainAt(new HexCoord(7, 20)) == TerrainType.Sea &&
+                    map.TerrainAt(new HexCoord(2, 17)) == TerrainType.Land &&
                     !map.Contains(new HexCoord(16, 10)),
-                "Core terrain must preserve separated Ryukyus, scaled Taiwan and Luzon, the Bashi sea passage, and off-map coordinates.");
+                "Core terrain must preserve separated Ryukyus, proportioned Taiwan and Luzon, a continuous China coast, the Bashi sea passage, and off-map coordinates.");
             Require(map.Bases.Count == 6 && map.BaseAt(new HexCoord(9, 4))?.Name == "Kadena AB" &&
-                    map.BaseAt(new HexCoord(7, 16))?.Name == "Subic Bay / Clark",
+                    map.BaseAt(new HexCoord(8, 16))?.Name == "Subic Bay / Clark",
                 "All six marked First Island Chain bases must live in core map data.");
             var groundedNavalForces = FirstIslandChainScenarios.Introductory
                 .SelectMany(scenario => ScenarioOne.Create(false, scenario).Forces
@@ -910,7 +916,7 @@ namespace Harpoon.Editor
             Require(actionGame.DrawMovementChit().Accepted, "Action-window test must draw the US chit.");
             side = actionGame.State.ActiveSide;
             Require(actionGame.DeclareSpeed(side, 2).Accepted, "Action-window test must declare speed.");
-            Require(actionGame.TryMove(side, new HexCoord(7, 12), out _), "First movement step must be legal.");
+            Require(actionGame.TryMove(side, new HexCoord(8, 13), out _), "First movement step must be legal.");
             var firstSearch = actionGame.Execute(new GameCommand(GameCommandType.Search, side,
                 actionGame.State.Revision));
             var repeatedSearch = actionGame.Execute(new GameCommand(GameCommandType.Search, side,
@@ -923,7 +929,7 @@ namespace Harpoon.Editor
             if (enteredHexAttack.Accepted) ResolveDefaultMissileExchange(actionGame, declineCounterattack: true);
             Require(enteredHexAttack.Accepted && actionGame.State.Phase == ActivationPhase.PlayerMove,
                 "An attack must be legal between movement steps without ending movement.");
-            Require(actionGame.TryMove(side, new HexCoord(7, 11), out _) &&
+            Require(actionGame.TryMove(side, new HexCoord(8, 14), out _) &&
                     actionGame.Execute(new GameCommand(GameCommandType.Search, side,
                         actionGame.State.Revision)).Accepted,
                 "Entering the next hex must open a fresh action/search opportunity.");
@@ -932,9 +938,9 @@ namespace Harpoon.Editor
             Require(coexistence.DrawMovementChit().Accepted, "Coexistence test must draw the US chit.");
             side = coexistence.State.ActiveSide;
             coexistence.State.ForceFor(side == Side.UsNavy ? Side.Plan : Side.UsNavy)
-                .MoveTo(new HexCoord(7, 12));
+                .MoveTo(new HexCoord(8, 13));
             Require(coexistence.DeclareSpeed(side, 1).Accepted &&
-                    coexistence.TryMove(side, new HexCoord(7, 12), out _) &&
+                    coexistence.TryMove(side, new HexCoord(8, 13), out _) &&
                     coexistence.State.Player.Position == coexistence.State.Enemy.Position &&
                     coexistence.State.Events.Any(item => item.Type == RuleEventType.MovementOpportunity &&
                         item.Detail.Contains("enemy-occupied")),
@@ -1187,7 +1193,7 @@ namespace Harpoon.Editor
 
             var splitFire = new ScenarioOneGame(1, null, true, false,
                 new SequenceDieRoller(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1));
-            splitFire.State.Enemy.MoveTo(new HexCoord(7, 12));
+            splitFire.State.Enemy.MoveTo(new HexCoord(8, 13));
             Require(splitFire.DrawMovementChit().Accepted && splitFire.State.ActiveSide == Side.UsNavy &&
                     splitFire.DeclareSpeed(Side.UsNavy, 0).Accepted &&
                     splitFire.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
@@ -1315,7 +1321,7 @@ namespace Harpoon.Editor
 
             var counter = new ScenarioOneGame(1, null, true, false,
                 new SequenceDieRoller(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1));
-            counter.State.Enemy.MoveTo(new HexCoord(7, 12));
+            counter.State.Enemy.MoveTo(new HexCoord(8, 13));
             Require(counter.DrawMovementChit().Accepted && counter.DeclareSpeed(Side.UsNavy, 0).Accepted &&
                     counter.Execute(new GameCommand(GameCommandType.Attack, Side.UsNavy,
                         counter.State.Revision)).Accepted,

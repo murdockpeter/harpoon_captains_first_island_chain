@@ -407,7 +407,7 @@ static class Program
         var definition = FirstIslandChainScenarios.PicketLine;
         var state = ScenarioOne.Create(false, definition);
         Check(state.Scenario.Id == "fic-04" && state.DetectionRulesEnabled &&
-            state.Player.Position == new HexCoord(8, 16) && state.Enemy.Position == new HexCoord(15, 10),
+            state.Player.Position == new HexCoord(7, 16) && state.Enemy.Position == new HexCoord(15, 10),
             "Scenario 4 Subic convoy and hidden picket setup");
         Check(state.Player.Units.Count == 5 && state.Enemy.Units.Count == 3 &&
             state.Player.Units.Count(unit => unit.Definition.Role == UnitRole.Objective) == 2,

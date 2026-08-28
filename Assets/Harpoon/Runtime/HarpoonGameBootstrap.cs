@@ -911,8 +911,8 @@ namespace Harpoon.Runtime
             AddMapLabel(boardRoot, "TAIWAN", new HexCoord(9, 10), land, 0.09f);
             AddMapLabel(boardRoot, "BASHI CHANNEL", new HexCoord(10, 13), sea, 0.07f);
             AddMapLabel(boardRoot, "SOUTH CHINA\nSEA", new HexCoord(5, 16), sea, 0.08f);
-            AddMapLabel(boardRoot, "LUZON", new HexCoord(9, 17), land, 0.09f);
-            AddMapLabel(boardRoot, "PHILIPPINE\nSEA", new HexCoord(11, 16), sea, 0.08f);
+            AddMapLabel(boardRoot, "LUZON", new HexCoord(11, 18), land, 0.09f);
+            AddMapLabel(boardRoot, "PHILIPPINE\nSEA", new HexCoord(13, 16), sea, 0.08f);
         }
 
         private static void AddMapLabel(Transform parent, string text, HexCoord coordinate,

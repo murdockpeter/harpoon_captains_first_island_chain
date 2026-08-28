@@ -254,7 +254,7 @@ namespace Harpoon.Core
             "us-merchant-1", "plan-type-052d", string.Empty, string.Empty,
             new[]
             {
-                new ScenarioFormationDefinition("US Subic Convoy", Side.UsNavy, new HexCoord(8, 16),
+                new ScenarioFormationDefinition("US Subic Convoy", Side.UsNavy, new HexCoord(7, 16),
                     new[]
                     {
                         new ScenarioUnitDefinition("us-burke-iia", "us-burke-iia", UnitRole.Escort),
@@ -282,9 +282,9 @@ namespace Harpoon.Core
             "us-merchant-1", "plan-type-052d", string.Empty, string.Empty,
             new[]
             {
-                new ScenarioFormationDefinition("US Subic Convoy", Side.UsNavy, new HexCoord(8, 16),
+                new ScenarioFormationDefinition("US Subic Convoy", Side.UsNavy, new HexCoord(7, 16),
                     PicketLine.Formations.First(item => item.Side == Side.UsNavy).Units),
-                new ScenarioFormationDefinition("US Dummy Group", Side.UsNavy, new HexCoord(8, 16),
+                new ScenarioFormationDefinition("US Dummy Group", Side.UsNavy, new HexCoord(7, 16),
                     Array.Empty<ScenarioUnitDefinition>(), 3),
                 new ScenarioFormationDefinition("PLAN Picket Group", Side.Plan, new HexCoord(15, 10),
                     PicketLine.Formations.First(item => item.Side == Side.Plan).Units),

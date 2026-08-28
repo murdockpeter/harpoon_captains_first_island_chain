@@ -126,7 +126,7 @@ namespace Harpoon.Core
                 new[] { "us-f35c", "us-f35c", "us-fa18ef", "us-fa18ef", "us-fa18ef", "us-fa18ef", "us-ea18g", "us-p8a", "us-p8a" }),
             new AirBaseDefinition("us-taipei", "Taipei / Zuoying", Side.UsNavy, new HexCoord(8, 10), 2, 6, 6, 3,
                 new[] { "us-fa18ef", "us-fa18ef", "us-fa18ef", "us-fa18ef", "us-f35c", "us-f35c" }),
-            new AirBaseDefinition("us-subic", "Subic Bay / Clark", Side.UsNavy, new HexCoord(7, 16), 2, 4, 4, 3,
+            new AirBaseDefinition("us-subic", "Subic Bay / Clark", Side.UsNavy, new HexCoord(8, 16), 2, 4, 4, 3,
                 new[] { "us-fa18ef", "us-fa18ef", "us-fa18ef", "us-fa18ef", "us-p8a" }),
             new AirBaseDefinition("plan-ningbo", "Ningbo-Zhoushan", Side.Plan, new HexCoord(2, 8), 3, 10, 10, 4,
                 new[] { "plan-j16", "plan-j16", "plan-j16", "plan-j16", "plan-h6j", "plan-h6j", "plan-kj500-600" }),
