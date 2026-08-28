@@ -874,16 +874,18 @@ namespace Harpoon.Runtime
                 var terrain = FirstIslandChainMap.Instance.TerrainAt(coordinate);
                 var isLand = terrain == TerrainType.Land || terrain == TerrainType.NavalBase;
                 var height = isLand ? 0.28f + ((coordinate.Column * 17 + coordinate.Row * 11) % 4) * 0.1f : 0.055f;
-                var tile = CreateHexTile(height);
+                var variant = TerrainVariant(coordinate);
+                var baseColor = TerrainBaseColor(coordinate, terrain, height);
+                var worldPosition = WorldPosition(coordinate);
+                var tile = CreateHexTile(height, worldPosition, isLand);
                 tile.name = $"Hex {coordinate}";
                 tile.transform.SetParent(boardRoot);
-                tile.transform.position = WorldPosition(coordinate);
+                tile.transform.position = worldPosition;
                 var renderer = tile.GetComponent<Renderer>();
-                renderer.sharedMaterial = VisualFactory.Material(isLand
-                    ? new Color(0.42f, 0.38f + height * 0.15f, 0.22f)
-                    : new Color(0.025f, 0.25f, 0.37f), isLand ? 0.02f : 0.12f, isLand ? 0.18f : 0.75f);
+                renderer.sharedMaterial = VisualFactory.TerrainMaterial(baseColor, isLand, variant);
                 var view = tile.AddComponent<HexTileView>();
-                view.Initialize(coordinate);
+                view.Initialize(coordinate, baseColor, isLand);
+                if (isLand) VisualFactory.AddLandRelief(tile.transform, height, variant);
                 _tiles.Add(coordinate, view);
             }
             BuildBaseMarkers(boardRoot);
@@ -938,7 +940,7 @@ namespace Harpoon.Runtime
             }
         }
 
-        private static GameObject CreateHexTile(float height)
+        private static GameObject CreateHexTile(float height, Vector3 worldPosition, bool isLand)
         {
             var tile = new GameObject("Hex Tile");
             var vertices = new Vector3[12];
@@ -967,12 +969,46 @@ namespace Harpoon.Runtime
             var mesh = new Mesh { name = "Operational Hex" };
             mesh.vertices = vertices;
             mesh.triangles = triangles.ToArray();
+            var uv = new Vector2[vertices.Length];
+            var textureScale = isLand ? 0.17f : 0.115f;
+            for (var index = 0; index < vertices.Length; index++)
+                uv[index] = new Vector2((vertices[index].x + worldPosition.x) * textureScale,
+                    (vertices[index].z + worldPosition.z) * textureScale);
+            mesh.uv = uv;
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             tile.AddComponent<MeshFilter>().sharedMesh = mesh;
             tile.AddComponent<MeshRenderer>();
             tile.AddComponent<MeshCollider>().sharedMesh = mesh;
             return tile;
+        }
+
+        private static Color TerrainBaseColor(HexCoord coordinate, TerrainType terrain, float height)
+        {
+            var regional = Mathf.PerlinNoise((coordinate.Column + 13f) * 0.19f,
+                (coordinate.Row + 7f) * 0.16f);
+            var secondary = Mathf.PerlinNoise((coordinate.Column + 31f) * 0.37f,
+                (coordinate.Row + 19f) * 0.29f);
+            var variation = (regional - 0.5f) * 0.16f + (secondary - 0.5f) * 0.045f;
+            if (terrain == TerrainType.NavalBase)
+                return Color.Lerp(new Color(0.31f, 0.34f, 0.16f), new Color(0.43f, 0.42f, 0.21f), regional);
+            if (terrain == TerrainType.Land)
+            {
+                var dry = new Color(0.43f, 0.39f, 0.18f);
+                var green = new Color(0.31f, 0.43f, 0.16f);
+                var color = Color.Lerp(dry, green, regional);
+                return color + new Color(variation * 0.45f, variation + height * 0.025f,
+                    variation * 0.18f, 0f);
+            }
+            return new Color(0.022f + variation * 0.18f, 0.22f + variation * 0.65f,
+                0.34f + variation);
+        }
+
+        private static int TerrainVariant(HexCoord coordinate)
+        {
+            var clustered = Mathf.PerlinNoise((coordinate.Column + 5f) * 0.34f,
+                (coordinate.Row + 17f) * 0.31f);
+            return Mathf.Clamp(Mathf.FloorToInt(clustered * 6f), 0, 5);
         }
 
         private void BuildTaskForceMarkers()
@@ -999,11 +1035,11 @@ namespace Harpoon.Runtime
             if (_game == null) return;
             foreach (var pair in _tiles)
             {
-                var terrain = _game.State.Map.TerrainAt(pair.Key);
                 var placementFormation = _placingPlanDeployment
                     ? _game.State.Formation(_planDeploymentFormationId) : null;
                 var navigationSide = placementFormation?.Side ?? LocalSide;
-                var isLand = !_game.State.Map.IsNavigable(pair.Key, navigationSide);
+                var blocked = !_game.State.Map.IsNavigable(pair.Key, navigationSide);
+                var isLand = pair.Value.IsLand;
                 var hovered = _hoveredHex.HasValue && _hoveredHex.Value == pair.Key;
                 var localForce = _game.State.ActiveSide == LocalSide && _game.State.ActiveForce != null
                     ? _game.State.ActiveForce : _game.State.ForceFor(LocalSide);
@@ -1013,7 +1049,7 @@ namespace Harpoon.Runtime
                     localForce.IsAircraftOnly && !_game.State.PlayerHasMoved &&
                     pair.Key.DistanceTo(entryDefinition.Start) <= localForce.ActiveUnits.First().Definition.AircraftRadius;
                 var movable = aircraftRelocation ||
-                              (CanLocalAct() && _game.State.Phase == ActivationPhase.PlayerMove && !isLand &&
+                              (CanLocalAct() && _game.State.Phase == ActivationPhase.PlayerMove && !blocked &&
                               localForce.MovementRemaining > 0 &&
                               (entering
                                   ? entryDefinition != null && ScenarioOneGame.IsBoardEdgeHex(_game.State.Map,
@@ -1036,8 +1072,8 @@ namespace Harpoon.Runtime
                     pair.Key.DistanceTo(_game.State.Scenario.DeploymentCenter) <=
                     _game.State.Scenario.UsDeploymentRadius;
                 pair.Value.GetComponent<Renderer>().material.color = isLand
-                    ? hovered ? new Color(0.7f, 0.66f, 0.3f)
-                    : terrain == TerrainType.NavalBase ? new Color(0.34f, 0.4f, 0.24f) : new Color(0.42f, 0.43f, 0.22f)
+                    ? hovered ? Color.Lerp(pair.Value.BaseColor, new Color(0.86f, 0.75f, 0.34f), 0.62f)
+                    : pair.Value.BaseColor
                     : deployable ? (hovered ? new Color(0.8f, 0.32f, 0.92f) : new Color(0.38f, 0.12f, 0.52f))
                     : convoyDestination ? (hovered ? new Color(0.3f, 1f, 0.62f) : new Color(0.05f, 0.55f, 0.34f))
                     : hovered ? new Color(0.12f, 0.72f, 0.8f)
@@ -1048,7 +1084,7 @@ namespace Harpoon.Runtime
                     : easternEntry ? new Color(0.05f, 0.42f, 0.58f)
                     : submarinePatrolZone ? new Color(0.13f, 0.22f, 0.43f)
                     : lifelineAssembly ? new Color(0.04f, 0.34f, 0.32f)
-                    : new Color(0.025f, 0.25f, 0.37f);
+                    : pair.Value.BaseColor;
             }
             UpdateMovementPreview();
         }
@@ -1276,13 +1312,14 @@ namespace Harpoon.Runtime
 
         private IEnumerator PlayTacticalStrikeEffect(Vector3 origin, Vector3 target, TacticalStrikeReport report)
         {
+            var flight = _game.State.TacticalFlight(report.FlightId);
             var count = Mathf.Clamp(report.AircraftLaunched, 1, 4);
             var aircraft = new GameObject[count];
             var color = report.FlightId.StartsWith("FORD", StringComparison.Ordinal)
                 ? new Color(0.24f, 0.72f, 1f) : new Color(1f, 0.3f, 0.2f);
             for (var index = 0; index < count; index++)
             {
-                aircraft[index] = VisualFactory.CreateTacticalJet(color);
+                aircraft[index] = VisualFactory.CreateTacticalJet(color, flight?.Definition.Id);
                 aircraft[index].transform.position = origin + Vector3.up * (1.1f + index * 0.12f);
             }
             const float outbound = 1.05f;
