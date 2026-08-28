@@ -39,6 +39,11 @@ namespace Harpoon.Runtime
         private GUIStyle _debugHeaderStyle;
         private GUIStyle _activationStyle;
         private GUIStyle _sectionHeaderStyle;
+        private GUIStyle _objectiveSectionStyle;
+        private GUIStyle _rosterSectionStyle;
+        private GUIStyle _ordersSectionStyle;
+        private GUIStyle _systemSectionStyle;
+        private GUIStyle _eventSectionStyle;
         private Side _selectedFormation = Side.UsNavy;
         private string _selectedFormationId = "US Task Force";
         private HexCoord? _hoveredHex;
@@ -47,6 +52,7 @@ namespace Harpoon.Runtime
         private Vector2 _debugScroll;
         private Vector2 _commandPanelScroll;
         private Vector2 _formationPanelScroll;
+        private Vector2 _ordersModalScroll;
         private readonly Dictionary<string, int[]> _missileDraft = new Dictionary<string, int[]>();
         private readonly List<DefensePairData> _defensePairDraft = new List<DefensePairData>();
         private readonly Dictionary<string, int> _longRangeRemovalDraft = new Dictionary<string, int>();
@@ -114,6 +120,8 @@ namespace Harpoon.Runtime
         private UpdateCheckResult _availableUpdate;
         private bool _showObjectiveSection = true;
         private bool _showOrdersSection = true;
+        private bool _showOrdersModal;
+        private bool _reopenOrdersAfterMovementSnapshot;
         private bool _showRosterSection;
         private bool _showSystemSection;
         private bool _showEventSection;
@@ -157,6 +165,7 @@ namespace Harpoon.Runtime
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 if (_showTribute) _showTribute = false;
+                else if (_showOrdersModal) _showOrdersModal = false;
                 else if (_showDebug) _showDebug = false;
                 else if (_showBriefing) _showBriefing = false;
                 else if (_confirmRestart || _confirmExit) { _confirmRestart = false; _confirmExit = false; }
@@ -168,7 +177,7 @@ namespace Harpoon.Runtime
             if (Input.GetKeyDown(KeyCode.F3)) _showDebug = !_showDebug;
             if (Input.GetKeyDown(KeyCode.F11)) ToggleFullscreen();
             ProcessNetwork();
-            if (_isPaused || _showTribute || _showBriefing || _confirmRestart || _confirmExit) return;
+            if (_isPaused || _showTribute || _showOrdersModal || _showBriefing || _confirmRestart || _confirmExit) return;
             UpdateHoveredHex();
             if (!Input.GetMouseButtonDown(0) || IsPointerOverPanel()) { HighlightMovement(); return; }
             var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
@@ -216,6 +225,9 @@ namespace Harpoon.Runtime
             _debugScroll = Vector2.zero;
             _commandPanelScroll = Vector2.zero;
             _formationPanelScroll = Vector2.zero;
+            _ordersModalScroll = Vector2.zero;
+            _showOrdersModal = false;
+            _reopenOrdersAfterMovementSnapshot = false;
             ResetCombatDrafts();
             _selectedTacticalFlightId = string.Empty;
             _selectedTacticalTargetId = string.Empty;
@@ -246,6 +258,16 @@ namespace Harpoon.Runtime
         private bool NetworkTryReceive(out NetworkMessage message) =>
             IsPublicSession ? _publicNetwork.TryReceive(out message) : _network.TryReceive(out message);
 
+        private bool IsLocalMovementComplete()
+        {
+            if (_game == null || _game.State.IsGameOver || _game.State.ActiveSide != LocalSide)
+                return false;
+            var activeForce = _game.State.ActiveForce;
+            return activeForce != null && !activeForce.IsAircraftOnly &&
+                   activeForce.DeclaredSpeed >= 0 && activeForce.MovementRemaining == 0 &&
+                   _game.State.Phase == ActivationPhase.PlayerAction;
+        }
+
         private void TryLocalMove(HexCoord destination)
         {
             if (IsClientSession)
@@ -259,6 +281,7 @@ namespace Harpoon.Runtime
             if (result.Accepted)
             {
                 _status = $"Moved to {destination}. Attack or end activation.";
+                if (IsLocalMovementComplete()) _showOrdersModal = true;
                 if (IsHostSession) BroadcastSnapshot();
             }
             else _status = result.Summary;
@@ -270,6 +293,8 @@ namespace Harpoon.Runtime
             {
                 SendCommand(GameCommandType.DeclareSpeed, declaredSpeed: speed);
                 _status = $"Speed {speed} declaration sent to host.";
+                _showOrdersModal = false;
+                _reopenOrdersAfterMovementSnapshot = speed == 0;
                 return;
             }
             var result = _game.Execute(new GameCommand(GameCommandType.DeclareSpeed, LocalSide,
@@ -278,6 +303,7 @@ namespace Harpoon.Runtime
                 ? speed == 0 ? "Holding position. Attack, search, or end activation."
                     : $"Speed {speed} declared. Enter one highlighted adjacent hex at a time."
                 : result.Summary;
+            if (result.Accepted) _showOrdersModal = speed == 0 && IsLocalMovementComplete();
             RefreshViews();
             if (IsHostSession) BroadcastSnapshot();
         }
@@ -594,6 +620,11 @@ namespace Harpoon.Runtime
                             foreach (var observed in _game.State.CommandLog.Skip(knownCommands)
                                          .Where(item => item.actor != LocalSide))
                                 PlayClientCommandFeedback(GameCommand.FromData(observed), true);
+                            if (_reopenOrdersAfterMovementSnapshot)
+                            {
+                                _showOrdersModal = IsLocalMovementComplete();
+                                _reopenOrdersAfterMovementSnapshot = false;
+                            }
                             RefreshViews();
                             _status = _game.State.Phase == ActivationPhase.AwaitingChit
                                 ? "Draw the first movement chit to begin the turn."
@@ -605,6 +636,9 @@ namespace Harpoon.Runtime
                         if (_pendingCommands.TryGetValue(message.commandId, out var pendingCommand))
                         {
                             PlayClientCommandFeedback(pendingCommand, string.IsNullOrEmpty(message.violationCode));
+                            if (string.IsNullOrEmpty(message.violationCode) &&
+                                pendingCommand.Type == GameCommandType.Move)
+                                _reopenOrdersAfterMovementSnapshot = true;
                             _pendingCommands.Remove(message.commandId);
                         }
                         _game.State.Trace("NETWORK", string.IsNullOrEmpty(message.violationCode)
@@ -2607,7 +2641,7 @@ namespace Harpoon.Runtime
                 _showObjectiveSection = !_showObjectiveSection;
             if (_showObjectiveSection)
             {
-                GUILayout.BeginVertical(GUI.skin.box);
+                GUILayout.BeginVertical(_objectiveSectionStyle);
                 DrawScenarioControls();
                 GUILayout.EndVertical();
             }
@@ -2621,7 +2655,7 @@ namespace Harpoon.Runtime
                 _showRosterSection = !_showRosterSection;
             if (_showRosterSection)
             {
-                GUILayout.BeginVertical(GUI.skin.box);
+                GUILayout.BeginVertical(_rosterSectionStyle);
                 foreach (var force in _game.State.Forces)
                 {
                     if (IsFormationVisibleToLocal(force)) DrawForce(force);
@@ -2636,8 +2670,20 @@ namespace Harpoon.Runtime
                 _showOrdersSection = !_showOrdersSection;
             if (_showOrdersSection)
             {
-                GUILayout.BeginVertical(GUI.skin.box);
-                DrawCurrentOrders();
+                GUILayout.BeginVertical(_ordersSectionStyle);
+                var activeForce = _game.State.ActiveForce;
+                if (activeForce != null)
+                    GUILayout.Label($"{activeForce.Id.ToUpperInvariant()}  -  HEX {activeForce.Position}",
+                        _cardStatStyle);
+                GUILayout.Label(CurrentDecisionPrompt(), _cardStatStyle);
+                var priorOrderColor = GUI.backgroundColor;
+                GUI.backgroundColor = new Color(0.82f, 0.45f, 0.08f);
+                if (GUILayout.Button("OPEN ORDERS", _buttonStyle))
+                {
+                    _ordersModalScroll = Vector2.zero;
+                    _showOrdersModal = true;
+                }
+                GUI.backgroundColor = priorOrderColor;
                 GUILayout.EndVertical();
             }
 
@@ -2649,7 +2695,7 @@ namespace Harpoon.Runtime
                 _showSystemSection = !_showSystemSection;
             if (_showSystemSection)
             {
-                GUILayout.BeginVertical(GUI.skin.box);
+                GUILayout.BeginVertical(_systemSectionStyle);
                 DrawSystemControls();
                 GUILayout.EndVertical();
             }
@@ -2661,7 +2707,7 @@ namespace Harpoon.Runtime
                 _showEventSection = !_showEventSection;
             if (_showEventSection)
             {
-                GUILayout.BeginVertical(GUI.skin.box);
+                GUILayout.BeginVertical(_eventSectionStyle);
                 foreach (var entry in visibleLog.Skip(System.Math.Max(0, visibleLog.Length - 9)))
                     GUILayout.Label("• " + entry, _cardStatStyle);
                 GUILayout.EndVertical();
@@ -2682,6 +2728,58 @@ namespace Harpoon.Runtime
                 var mouse = Event.current.mousePosition;
                 GUI.Label(new Rect(mouse.x + 16f, mouse.y + 14f, 118f, 28f), $"HEX {_hoveredHex.Value}", _tooltipStyle);
             }
+            if (_showOrdersModal) DrawOrdersModal();
+        }
+
+        private void DrawOrdersModal()
+        {
+            var priorColor = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.16f);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture,
+                ScaleMode.StretchToFill);
+            GUI.color = priorColor;
+
+            var centerWidth = Screen.width - 840f;
+            var width = centerWidth >= 620f
+                ? Mathf.Min(1040f, centerWidth)
+                : Screen.width - 50f;
+            var height = Mathf.Clamp(Screen.height * 0.46f, 320f, 500f);
+            var rect = new Rect((Screen.width - width) * 0.5f, Screen.height - height - 18f,
+                width, height);
+            GUI.Box(rect, GUIContent.none);
+            var priorBackground = GUI.backgroundColor;
+            GUI.backgroundColor = new Color(0.82f, 0.45f, 0.08f);
+            GUI.Box(new Rect(rect.x, rect.y, rect.width, 6f), GUIContent.none);
+            GUI.backgroundColor = priorBackground;
+
+            GUILayout.BeginArea(new Rect(rect.x + 26f, rect.y + 20f, rect.width - 52f, rect.height - 40f));
+            GUILayout.BeginHorizontal();
+            GUILayout.BeginVertical();
+            GUILayout.Label("CURRENT ORDERS", _titleStyle);
+            var activeForce = _game.State.ActiveForce;
+            GUILayout.Label(activeForce == null
+                    ? _game.State.Phase.ToString().ToUpperInvariant()
+                    : $"{activeForce.Id.ToUpperInvariant()}  -  HEX {activeForce.Position}  -  " +
+                      _game.State.Phase.ToString().ToUpperInvariant(),
+                _cardStatStyle);
+            GUILayout.EndVertical();
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("CLOSE  [ESC]", _buttonStyle, GUILayout.Width(130f)))
+                _showOrdersModal = false;
+            GUILayout.EndHorizontal();
+
+            var decisionColor = GUI.color;
+            GUI.color = new Color(1f, 0.84f, 0.28f);
+            GUILayout.Label(CurrentDecisionPrompt(), _cardHeaderStyle);
+            GUI.color = decisionColor;
+            GUILayout.Space(6f);
+            _ordersModalScroll = GUILayout.BeginScrollView(_ordersModalScroll, false, true,
+                GUILayout.ExpandHeight(true));
+            GUILayout.BeginVertical(GUI.skin.box);
+            DrawCurrentOrders();
+            GUILayout.EndVertical();
+            GUILayout.EndScrollView();
+            GUILayout.EndArea();
         }
 
         private bool CanLocalAct()
@@ -3796,6 +3894,11 @@ namespace Harpoon.Runtime
             _sectionHeaderStyle.normal.textColor = Color.white;
             _sectionHeaderStyle.hover.textColor = Color.white;
             _sectionHeaderStyle.active.textColor = Color.white;
+            _objectiveSectionStyle = SectionBodyStyle(new Color(0.025f, 0.105f, 0.15f, 0.96f));
+            _rosterSectionStyle = SectionBodyStyle(new Color(0.035f, 0.07f, 0.15f, 0.96f));
+            _ordersSectionStyle = SectionBodyStyle(new Color(0.15f, 0.085f, 0.025f, 0.96f));
+            _systemSectionStyle = SectionBodyStyle(new Color(0.075f, 0.085f, 0.1f, 0.96f));
+            _eventSectionStyle = SectionBodyStyle(new Color(0.025f, 0.115f, 0.105f, 0.96f));
             _cardHeaderStyle = new GUIStyle(GUI.skin.label) { fontSize = 15, fontStyle = FontStyle.Bold, wordWrap = true };
             _cardHeaderStyle.normal.textColor = new Color(0.87f, 0.94f, 1f);
             _cardStatStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, wordWrap = true };
@@ -3855,6 +3958,17 @@ namespace Harpoon.Runtime
                 padding = new RectOffset(7, 7, 3, 3)
             };
             _debugStyle.normal.textColor = new Color(0.72f, 0.94f, 0.98f);
+        }
+
+        private static GUIStyle SectionBodyStyle(Color background)
+        {
+            var style = new GUIStyle(GUI.skin.box)
+            {
+                padding = new RectOffset(8, 8, 7, 8),
+                margin = new RectOffset(0, 3, 2, 5)
+            };
+            SetStyleBackground(style, SolidTexture(background));
+            return style;
         }
 
         private static GUIStyle SupplementStatStyle(Color background, Color text)
