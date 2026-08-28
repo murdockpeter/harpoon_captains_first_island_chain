@@ -13,6 +13,7 @@ namespace Harpoon.Runtime
     {
         private enum SessionMode { SinglePlayer, HotSeat, Host, Client, PublicHost, PublicClient }
         private const float HexRadius = 1.12f;
+        private const string AdmiraltyTrilogyUrl = "https://www.admiraltytrilogy.com/";
         private readonly Dictionary<HexCoord, HexTileView> _tiles = new Dictionary<HexCoord, HexTileView>();
         private ScenarioOneGame _game;
         private Transform _playerMarker;
@@ -101,6 +102,7 @@ namespace Harpoon.Runtime
         private string _seedText = "2026";
         private string _exportStatus = string.Empty;
         private bool _isPaused;
+        private bool _showTribute = true;
         private bool _showBriefing = true;
         private bool _confirmRestart;
         private bool _confirmExit;
@@ -126,6 +128,7 @@ namespace Harpoon.Runtime
         private ScenarioDefinition _selectedScenario = FirstIslandChainScenarios.ContactOffBashiChannel;
         private bool _placingPlanDeployment;
         private string _planDeploymentFormationId = "PLAN Picket Group";
+        private Texture2D _admiraltyTrilogyImage;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void EnsureBootstrap()
@@ -139,6 +142,7 @@ namespace Harpoon.Runtime
             if (!Application.isEditor) EnterBorderlessFullscreen();
             Application.targetFrameRate = 60;
             QualitySettings.shadowDistance = 80f;
+            _admiraltyTrilogyImage = Resources.Load<Texture2D>("Images/adm-tri-2-runtime");
             BuildLightingAndCamera();
             BuildBoard();
             BuildTaskForceMarkers();
@@ -152,7 +156,8 @@ namespace Harpoon.Runtime
         {
             if (Input.GetKeyDown(KeyCode.Escape))
             {
-                if (_showDebug) _showDebug = false;
+                if (_showTribute) _showTribute = false;
+                else if (_showDebug) _showDebug = false;
                 else if (_showBriefing) _showBriefing = false;
                 else if (_confirmRestart || _confirmExit) { _confirmRestart = false; _confirmExit = false; }
                 else SetPaused(!_isPaused);
@@ -163,7 +168,7 @@ namespace Harpoon.Runtime
             if (Input.GetKeyDown(KeyCode.F3)) _showDebug = !_showDebug;
             if (Input.GetKeyDown(KeyCode.F11)) ToggleFullscreen();
             ProcessNetwork();
-            if (_isPaused || _showBriefing || _confirmRestart || _confirmExit) return;
+            if (_isPaused || _showTribute || _showBriefing || _confirmRestart || _confirmExit) return;
             UpdateHoveredHex();
             if (!Input.GetMouseButtonDown(0) || IsPointerOverPanel()) { HighlightMovement(); return; }
             var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
@@ -846,14 +851,17 @@ namespace Harpoon.Runtime
             sun.color = new Color(1f, 0.94f, 0.84f);
             sun.intensity = 1.3f;
             sun.shadows = LightShadows.Soft;
-            lightObject.transform.rotation = Quaternion.Euler(48f, -32f, 0f);
+            // Directional lights point in the direction their rays travel. This vector sends
+            // warm light down and across the board from a conceptual east-northeast sun.
+            lightObject.transform.rotation = Quaternion.LookRotation(
+                new Vector3(-0.78f, -1f, -0.46f).normalized, Vector3.up);
             if (Camera.main != null) Destroy(Camera.main.gameObject);
             var cameraObject = new GameObject("Main Camera");
             cameraObject.tag = "MainCamera";
             var camera = cameraObject.AddComponent<Camera>();
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = new Color(0.018f, 0.035f, 0.06f);
-            var focus = new Vector3(12.5f, 0f, 28f);
+            var focus = new Vector3(12.5f, 0f, -28f);
             camera.fieldOfView = 44f;
             camera.nearClipPlane = 0.15f;
             camera.farClipPlane = 180f;
@@ -866,7 +874,7 @@ namespace Harpoon.Runtime
             var ocean = GameObject.CreatePrimitive(PrimitiveType.Plane);
             ocean.name = "Ocean Surface";
             ocean.transform.SetParent(boardRoot);
-            ocean.transform.position = new Vector3(11f, -0.32f, 27f);
+            ocean.transform.position = new Vector3(11f, -0.32f, -27f);
             ocean.transform.localScale = new Vector3(4.2f, 1f, 7f);
             ocean.GetComponent<Renderer>().sharedMaterial = VisualFactory.Material(new Color(0.018f, 0.12f, 0.19f), 0.15f, 0.88f);
             foreach (var coordinate in FirstIslandChainMap.Instance.AllHexes)
@@ -904,7 +912,7 @@ namespace Harpoon.Runtime
             AddMapLabel(boardRoot, "BASHI CHANNEL", new HexCoord(10, 13), sea, 0.07f);
             AddMapLabel(boardRoot, "SOUTH CHINA\nSEA", new HexCoord(5, 16), sea, 0.08f);
             AddMapLabel(boardRoot, "LUZON", new HexCoord(9, 17), land, 0.09f);
-            AddMapLabel(boardRoot, "PHILIPPINE\nSEA", new HexCoord(13, 9), sea, 0.08f);
+            AddMapLabel(boardRoot, "PHILIPPINE\nSEA", new HexCoord(11, 16), sea, 0.08f);
         }
 
         private static void AddMapLabel(Transform parent, string text, HexCoord coordinate,
@@ -913,8 +921,7 @@ namespace Harpoon.Runtime
             var label = new GameObject("Map Label " + text.Replace('\n', ' '));
             label.transform.SetParent(parent, false);
             label.transform.position = WorldPosition(coordinate) + Vector3.up * 0.72f;
-            label.transform.rotation = Quaternion.AngleAxis(180f, Vector3.up) *
-                                       Quaternion.Euler(-90f, 0f, 0f);
+            label.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
             var mesh = label.AddComponent<TextMesh>();
             mesh.text = text;
             mesh.anchor = TextAnchor.MiddleCenter;
@@ -1642,7 +1649,9 @@ namespace Harpoon.Runtime
         private static Vector3 WorldPosition(HexCoord coordinate)
         {
             var point = coordinate.ToMapPoint(HexRadius);
-            return new Vector3((float)point.X, 0f, (float)point.Y);
+            // Core rows increase southward. Unity's positive Z is treated as geographic north
+            // so the default camera can show a conventional north-up, west-left chart.
+            return new Vector3((float)point.X, 0f, (float)-point.Y);
         }
 
         private bool IsPointerOverPanel()
@@ -2476,10 +2485,78 @@ namespace Harpoon.Runtime
             GUILayout.EndArea();
         }
 
+        private void DrawTributeOverlay()
+        {
+            var priorColor = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.82f);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture,
+                ScaleMode.StretchToFill);
+            GUI.color = priorColor;
+
+            var width = Mathf.Min(600f, Screen.width - 40f);
+            var height = Mathf.Min(620f, Screen.height - 40f);
+            var rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+            GUI.Box(rect, GUIContent.none);
+
+            var centeredTitle = new GUIStyle(_titleStyle)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 24
+            };
+            var centeredHeader = new GUIStyle(_cardHeaderStyle)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 16
+            };
+            centeredHeader.normal.textColor = new Color(0.3f, 0.84f, 1f);
+            var centeredBody = new GUIStyle(_labelStyle)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 14,
+                wordWrap = true
+            };
+
+            GUILayout.BeginArea(new Rect(rect.x + 34f, rect.y + 24f, rect.width - 68f, rect.height - 48f));
+            GUILayout.Label("IN HONOR OF THE ORIGINAL", centeredHeader);
+            GUILayout.Label("ADMIRALTY TRILOGY GAMES", centeredTitle);
+            GUILayout.Space(10f);
+            GUILayout.BeginHorizontal();
+            GUILayout.FlexibleSpace();
+            if (_admiraltyTrilogyImage != null)
+                GUILayout.Label(_admiraltyTrilogyImage, GUILayout.Width(200f), GUILayout.Height(193f));
+            else
+                GUILayout.Label("ADMIRALTY TRILOGY GAMES", centeredHeader,
+                    GUILayout.Width(240f), GUILayout.Height(193f));
+            GUILayout.FlexibleSpace();
+            GUILayout.EndHorizontal();
+            GUILayout.Space(10f);
+            GUILayout.Label(
+                "Harpoon Captain's Edition is an independent digital adaptation created in appreciation " +
+                "of the tabletop rules, research, and naval-wargaming tradition published by Admiralty Trilogy Games.",
+                centeredBody);
+            GUILayout.Label(
+                "Credit for the original game design and source material belongs to their respective " +
+                "authors and publisher. This project is not an official Admiralty Trilogy Games product.",
+                centeredBody);
+            GUILayout.Label(
+                "Please support the original creators of Harpoon by purchasing their available products " +
+                "via their website links.",
+                centeredBody);
+            GUILayout.Space(5f);
+            GUILayout.Label(AdmiraltyTrilogyUrl, centeredHeader);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("VISIT ADMIRALTY TRILOGY GAMES", _buttonStyle))
+                Application.OpenURL(AdmiraltyTrilogyUrl);
+            if (GUILayout.Button("CONTINUE TO BRIEFING", _buttonStyle))
+                _showTribute = false;
+            GUILayout.EndArea();
+        }
+
         private void OnGUI()
         {
             if (_game == null) return;
             EnsureStyles();
+            if (_showTribute) { DrawTributeOverlay(); return; }
             if (_showBriefing) { DrawBriefingOverlay(); return; }
             if (_confirmRestart) { DrawConfirmationOverlay(true); return; }
             if (_confirmExit) { DrawConfirmationOverlay(false); return; }
