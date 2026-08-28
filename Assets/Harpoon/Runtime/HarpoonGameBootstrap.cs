@@ -1032,7 +1032,7 @@ namespace Harpoon.Runtime
 
         private void HighlightMovement()
         {
-            if (_game == null) return;
+            if (_game == null || _playerMarker == null) return;
             foreach (var pair in _tiles)
             {
                 var placementFormation = _placingPlanDeployment
@@ -1152,7 +1152,7 @@ namespace Harpoon.Runtime
 
         private void RefreshViews()
         {
-            if (_game == null || _playerMarker == null) return;
+            if (_game == null) return;
             if (_carrierObjectiveMarker != null)
                 _carrierObjectiveMarker.gameObject.SetActive(
                     _game.State.Scenario.ScoringMode == ScenarioScoringMode.CarrierPosition);
@@ -1189,12 +1189,15 @@ namespace Harpoon.Runtime
                 }
                 var knownContact = force.Side == LocalSide || !_game.State.DetectionRulesEnabled ||
                     _game.State.Detection.IsDetected(LocalSide, force.Id);
-                marker.position = WorldPosition(force.Position) + Vector3.up * (force.IsDestroyed ? 0.38f : 0.75f);
+                var formationView = marker.GetComponent<FormationView>();
+                var markerPosition = WorldPosition(force.Position) +
+                                     Vector3.up * (force.IsDestroyed ? 0.38f : 0.75f);
+                if (formationView != null) formationView.SetBoardPosition(markerPosition);
+                else marker.position = markerPosition;
                 marker.gameObject.SetActive(knownContact && !force.IsOffMap);
                 var selected = force.Id == _selectedFormationId;
                 var active = force.Id == _game.State.ActiveFormationId;
                 marker.localScale = Vector3.one * (selected ? 1.18f : active ? 1.1f : 0.92f);
-                var formationView = marker.GetComponent<FormationView>();
                 formationView?.SetSensorState(force.RadarRadiating, knownContact && force.Side != LocalSide);
                 formationView?.SetTacticalState(IsLegalAttackTarget(force), active, selected);
                 var totalHull = Mathf.Max(1, force.Units.Sum(unit => unit.Definition.Hull));

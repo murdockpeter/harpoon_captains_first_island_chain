@@ -153,7 +153,7 @@ namespace Harpoon.Runtime
             }
             var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             ring.name = "Side Indicator";
-            ring.transform.SetParent(root);
+            ring.transform.SetParent(root, false);
             ring.transform.localPosition = new Vector3(0f, -0.38f, 0f);
             ring.transform.localScale = new Vector3(0.92f, 0.025f, 0.92f);
             ring.GetComponent<Renderer>().sharedMaterial = Material(sideColor, 0f, 0.65f);
@@ -166,7 +166,7 @@ namespace Harpoon.Runtime
             CreateShip(root, Vector3.zero, 1.12f, sideColor, false, true);
             var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             ring.name = "Carrier Indicator";
-            ring.transform.SetParent(root);
+            ring.transform.SetParent(root, false);
             ring.transform.localPosition = new Vector3(0f, -0.38f, 0f);
             ring.transform.localScale = new Vector3(1.05f, 0.025f, 1.05f);
             ring.GetComponent<Renderer>().sharedMaterial = Material(sideColor, 0f, 0.7f);
@@ -178,7 +178,7 @@ namespace Harpoon.Runtime
             var root = new GameObject(name).transform;
             var buoy = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             buoy.name = "Unresolved Contact";
-            buoy.transform.SetParent(root);
+            buoy.transform.SetParent(root, false);
             buoy.transform.localPosition = new Vector3(0f, 0.12f, 0f);
             buoy.transform.localScale = new Vector3(0.18f, 0.42f, 0.18f);
             buoy.GetComponent<Renderer>().sharedMaterial = Material(
@@ -186,7 +186,7 @@ namespace Harpoon.Runtime
 
             var beacon = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             beacon.name = "Contact Beacon";
-            beacon.transform.SetParent(root);
+            beacon.transform.SetParent(root, false);
             beacon.transform.localPosition = new Vector3(0f, 0.58f, 0f);
             beacon.transform.localScale = Vector3.one * 0.34f;
             beacon.GetComponent<Renderer>().sharedMaterial = Material(
@@ -194,7 +194,7 @@ namespace Harpoon.Runtime
 
             var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             ring.name = "Contact Ring";
-            ring.transform.SetParent(root);
+            ring.transform.SetParent(root, false);
             ring.transform.localPosition = new Vector3(0f, -0.28f, 0f);
             ring.transform.localScale = new Vector3(0.72f, 0.025f, 0.72f);
             ring.GetComponent<Renderer>().sharedMaterial = Material(sideColor, 0f, 0.7f);
@@ -206,7 +206,7 @@ namespace Harpoon.Runtime
             var root = new GameObject(name).transform;
             var hull = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             hull.name = "Submarine Hull";
-            hull.transform.SetParent(root);
+            hull.transform.SetParent(root, false);
             hull.transform.localPosition = new Vector3(0f, -0.08f, 0f);
             hull.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
             hull.transform.localScale = new Vector3(0.26f, 0.82f, 0.3f);
@@ -222,7 +222,7 @@ namespace Harpoon.Runtime
 
             var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             ring.name = "Submarine Indicator";
-            ring.transform.SetParent(root);
+            ring.transform.SetParent(root, false);
             ring.transform.localPosition = new Vector3(0f, -0.36f, 0f);
             ring.transform.localScale = new Vector3(0.82f, 0.025f, 0.82f);
             ring.GetComponent<Renderer>().sharedMaterial = Material(sideColor, 0f, 0.68f);
@@ -233,15 +233,14 @@ namespace Harpoon.Runtime
         {
             var root = new GameObject(name).transform;
             var aircraft = new GameObject("P-8A Poseidon").transform;
-            aircraft.SetParent(root);
+            aircraft.SetParent(root, false);
             aircraft.localRotation = Quaternion.Euler(0f, -35f, 0f);
 
             var airframe = Color.Lerp(new Color(0.88f, 0.91f, 0.93f), sideColor, 0.12f);
             var underside = Color.Lerp(airframe, new Color(0.42f, 0.48f, 0.53f), 0.2f);
             var trim = Color.Lerp(sideColor, new Color(0.1f, 0.2f, 0.31f), 0.34f);
             var fuselage = new GameObject("Tapered Airliner Fuselage");
-            fuselage.name = "Tapered Airliner Fuselage";
-            fuselage.transform.SetParent(aircraft);
+            fuselage.transform.SetParent(aircraft, false);
             fuselage.transform.localPosition = new Vector3(-0.02f, 0.145f, 0f);
             fuselage.AddComponent<MeshFilter>().sharedMesh = BuildTaperedFuselageMesh(
                 "P-8A Continuous Fuselage", 1.74f, 0.135f, 16, 0.72f);
@@ -268,15 +267,14 @@ namespace Harpoon.Runtime
 
             var cockpit = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             cockpit.name = "Integrated Cockpit Glazing";
-            cockpit.transform.SetParent(aircraft);
+            cockpit.transform.SetParent(aircraft, false);
             cockpit.transform.localPosition = new Vector3(0.62f, 0.235f, 0f);
             cockpit.transform.localScale = new Vector3(0.17f, 0.035f, 0.085f);
             cockpit.GetComponent<Renderer>().sharedMaterial = Material(trim, 0.52f, 0.82f);
             for (var engine = -1; engine <= 1; engine += 2)
             {
                 var nacelle = new GameObject(engine < 0 ? "Port CFM56 Engine" : "Starboard CFM56 Engine");
-                nacelle.name = engine < 0 ? "Port CFM56 Engine" : "Starboard CFM56 Engine";
-                nacelle.transform.SetParent(aircraft);
+                nacelle.transform.SetParent(aircraft, false);
                 nacelle.transform.localPosition = new Vector3(0.015f, 0.035f, engine * 0.34f);
                 nacelle.AddComponent<MeshFilter>().sharedMesh = BuildTaperedFuselageMesh(
                     engine < 0 ? "Port Integrated Nacelle" : "Starboard Integrated Nacelle",
@@ -286,23 +284,25 @@ namespace Harpoon.Runtime
 
                 var intake = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
                 intake.name = engine < 0 ? "Port Engine Intake" : "Starboard Engine Intake";
-                intake.transform.SetParent(aircraft);
+                intake.transform.SetParent(aircraft, false);
                 intake.transform.localPosition = new Vector3(0.198f, 0.035f, engine * 0.34f);
                 intake.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
                 intake.transform.localScale = new Vector3(0.043f, 0.008f, 0.043f);
-                intake.GetComponent<Renderer>().sharedMaterial = Material(new Color(0.08f, 0.11f, 0.14f), 0.72f, 0.35f);
+                intake.GetComponent<Renderer>().sharedMaterial = Material(
+                    new Color(0.08f, 0.11f, 0.14f), 0.72f, 0.35f);
             }
 
             var sensor = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             sensor.name = "Ventral EO-IR Sensor";
-            sensor.transform.SetParent(aircraft);
+            sensor.transform.SetParent(aircraft, false);
             sensor.transform.localPosition = new Vector3(0.39f, 0.035f, 0f);
             sensor.transform.localScale = new Vector3(0.04f, 0.03f, 0.04f);
-            sensor.GetComponent<Renderer>().sharedMaterial = Material(new Color(0.18f, 0.23f, 0.27f), 0.54f, 0.72f);
+            sensor.GetComponent<Renderer>().sharedMaterial = Material(
+                new Color(0.18f, 0.23f, 0.27f), 0.54f, 0.72f);
 
             var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             ring.name = "Aviation Patrol Indicator";
-            ring.transform.SetParent(root);
+            ring.transform.SetParent(root, false);
             ring.transform.localPosition = new Vector3(0f, -0.34f, 0f);
             ring.transform.localScale = new Vector3(0.92f, 0.025f, 0.92f);
             ring.GetComponent<Renderer>().sharedMaterial = Material(new Color(0.08f, 0.86f, 1f), 0f, 0.82f);
@@ -313,7 +313,7 @@ namespace Harpoon.Runtime
             Vector2[] outline, float thickness, Color color)
         {
             var surface = new GameObject(name);
-            surface.transform.SetParent(parent);
+            surface.transform.SetParent(parent, false);
             surface.transform.localPosition = position;
             surface.AddComponent<MeshFilter>().sharedMesh = BuildExtrudedPlanform(name, outline, thickness);
             surface.AddComponent<MeshRenderer>().sharedMaterial = Material(color, 0.24f, 0.55f);
@@ -425,7 +425,7 @@ namespace Harpoon.Runtime
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
             var fin = new GameObject(name);
-            fin.transform.SetParent(parent);
+            fin.transform.SetParent(parent, false);
             fin.transform.localPosition = position;
             fin.AddComponent<MeshFilter>().sharedMesh = mesh;
             fin.AddComponent<MeshRenderer>().sharedMaterial = Material(color, 0.2f, 0.48f);
@@ -458,7 +458,7 @@ namespace Harpoon.Runtime
             var root = new GameObject(string.IsNullOrEmpty(aircraftId)
                 ? "Tactical Strike Aircraft" : $"Tactical Aircraft {aircraftId}");
             var airframe = new GameObject("Detailed Airframe").transform;
-            airframe.SetParent(root.transform);
+            airframe.SetParent(root.transform, false);
             // Strike animation uses Transform.LookAt (+Z); model construction uses nose-forward +X.
             airframe.localRotation = Quaternion.Euler(0f, -90f, 0f);
             airframe.localScale = Vector3.one * (bomber ? 1.18f : 0.86f);
@@ -467,7 +467,7 @@ namespace Harpoon.Runtime
             var panelColor = Color.Lerp(bodyColor, Color.black, 0.16f);
             var body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             body.name = bomber ? "Bomber Fuselage" : "Fighter Fuselage";
-            body.transform.SetParent(airframe);
+            body.transform.SetParent(airframe, false);
             body.transform.localPosition = new Vector3(bomber ? 0f : 0.05f, 0.05f, 0f);
             body.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
             body.transform.localScale = bomber
@@ -531,7 +531,7 @@ namespace Harpoon.Runtime
 
             var canopy = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             canopy.name = "Cockpit Canopy";
-            canopy.transform.SetParent(airframe);
+            canopy.transform.SetParent(airframe, false);
             canopy.transform.localPosition = new Vector3(bomber ? 0.5f : 0.36f, 0.16f, 0f);
             canopy.transform.localScale = bomber
                 ? new Vector3(0.2f, 0.075f, 0.13f) : new Vector3(0.2f, 0.09f, 0.13f);
@@ -544,7 +544,7 @@ namespace Harpoon.Runtime
                 var exhaust = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
                 exhaust.name = engine < 0f ? "Port Engine Exhaust" : engine > 0f
                     ? "Starboard Engine Exhaust" : "Single Engine Exhaust";
-                exhaust.transform.SetParent(airframe);
+                exhaust.transform.SetParent(airframe, false);
                 exhaust.transform.localPosition = new Vector3(bomber ? -0.46f : -0.37f, 0.035f, engine * engineOffset);
                 exhaust.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
                 exhaust.transform.localScale = new Vector3(bomber ? 0.075f : 0.055f, 0.11f, bomber ? 0.075f : 0.055f);
@@ -569,7 +569,7 @@ namespace Harpoon.Runtime
             Color color, bool amphibious, bool carrier)
         {
             var ship = new GameObject(carrier ? "Aircraft Carrier" : amphibious ? "Amphibious Ship" : "Escort").transform;
-            ship.SetParent(parent);
+            ship.SetParent(parent, false);
             ship.localPosition = localPosition;
             ship.localRotation = Quaternion.Euler(0f, -35f, 0f);
             ship.localScale = Vector3.one * scale;
@@ -578,7 +578,7 @@ namespace Harpoon.Runtime
             var hullWidth = carrier ? 0.47f : amphibious ? 0.37f : 0.255f;
 
             var hull = new GameObject("Hull");
-            hull.transform.SetParent(ship);
+            hull.transform.SetParent(ship, false);
             hull.transform.localPosition = Vector3.zero;
             var mesh = BuildHullMesh(hullLength, hullWidth);
             hull.AddComponent<MeshFilter>().sharedMesh = mesh;
@@ -613,7 +613,7 @@ namespace Harpoon.Runtime
 
             var mast = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             mast.name = "Mast";
-            mast.transform.SetParent(ship);
+            mast.transform.SetParent(ship, false);
             mast.transform.localPosition = new Vector3(-0.08f, 0.7f, 0f);
             mast.transform.localScale = new Vector3(0.032f, 0.24f, 0.032f);
             mast.GetComponent<Renderer>().sharedMaterial = Material(new Color(0.34f, 0.37f, 0.39f), 0.7f, 0.3f);
@@ -622,13 +622,13 @@ namespace Harpoon.Runtime
             {
                 var radar = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 radar.name = "Radar Array";
-                radar.transform.SetParent(ship);
+                radar.transform.SetParent(ship, false);
                 radar.transform.localPosition = new Vector3(-0.08f, 0.86f, 0f);
                 radar.transform.localScale = new Vector3(0.13f, 0.08f, 0.13f);
                 radar.GetComponent<Renderer>().sharedMaterial = Material(new Color(0.68f, 0.72f, 0.7f), 0.55f, 0.4f);
                 var gun = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
                 gun.name = "Forward Gun Mount";
-                gun.transform.SetParent(ship);
+                gun.transform.SetParent(ship, false);
                 gun.transform.localPosition = new Vector3(hullLength * 0.28f, 0.34f, 0f);
                 gun.transform.localScale = new Vector3(0.1f, 0.055f, 0.1f);
                 gun.GetComponent<Renderer>().sharedMaterial = Material(new Color(0.4f, 0.44f, 0.46f), 0.5f, 0.3f);
@@ -641,7 +641,7 @@ namespace Harpoon.Runtime
             float length, float width, Color color)
         {
             var deck = new GameObject(name);
-            deck.transform.SetParent(parent);
+            deck.transform.SetParent(parent, false);
             deck.transform.localPosition = position;
             deck.transform.localScale = new Vector3(1f, 0.18f, 1f);
             deck.AddComponent<MeshFilter>().sharedMesh = BuildHullMesh(length, width);
@@ -651,7 +651,7 @@ namespace Harpoon.Runtime
         private static void AddDeckAircraft(Transform parent, Vector3 position, float length)
         {
             var miniature = new GameObject("Deck Aircraft").transform;
-            miniature.SetParent(parent);
+            miniature.SetParent(parent, false);
             miniature.localPosition = position;
             var scale = length / 0.72f;
             miniature.localScale = Vector3.one * scale;
@@ -665,7 +665,7 @@ namespace Harpoon.Runtime
                 }, 0.025f, new Color(0.72f, 0.75f, 0.76f));
             var body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             body.name = "Deck Jet Fuselage";
-            body.transform.SetParent(miniature);
+            body.transform.SetParent(miniature, false);
             body.transform.localPosition = new Vector3(0f, 0.03f, 0f);
             body.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
             body.transform.localScale = new Vector3(0.045f, 0.24f, 0.045f);
@@ -676,7 +676,7 @@ namespace Harpoon.Runtime
         {
             var box = GameObject.CreatePrimitive(PrimitiveType.Cube);
             box.name = name;
-            box.transform.SetParent(parent);
+            box.transform.SetParent(parent, false);
             box.transform.localPosition = position;
             box.transform.localScale = scale;
             box.GetComponent<Renderer>().sharedMaterial = Material(color, 0.35f, 0.3f);

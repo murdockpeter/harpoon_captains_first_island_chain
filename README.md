@@ -36,6 +36,10 @@ Release validation is also one command: `release-check.cmd`. Use `test.cmd` for 
 
 Windows builds check published GitHub Releases for verified updates. Release tags drive the tested build/publish workflow, while installation remains an explicit player choice under **Match & System**. See [`docs/AUTO_UPDATES.md`](docs/AUTO_UPDATES.md) for the release contract, one-time Unity license setup, security checks, and recovery path.
 
+Authored model provenance is recorded in [`THIRD_PARTY_ASSETS.md`](THIRD_PARTY_ASSETS.md).
+Platform art currently remains procedurally generated; the separately supplied P-8A STL is
+retained but suppressed.
+
 To create a fully certified beta ZIP locally, run `beta-package.cmd`. The distributable and its SHA-256 checksum are written to `Artifacts/`.
 
 ## Architecture

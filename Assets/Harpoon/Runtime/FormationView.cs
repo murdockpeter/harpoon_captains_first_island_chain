@@ -21,6 +21,12 @@ namespace Harpoon.Runtime
         private Transform[] _shipModels;
         private float _damageFraction;
         private bool _destroyed;
+        private bool _hasBoardPosition;
+        private bool _hasHeading;
+        private bool _directionalCounter;
+        private Vector3 _boardPosition;
+        private Vector3 _modelForwardLocal = Vector3.forward;
+        private Quaternion _targetRotation;
         public Side Side { get; private set; }
         public string FormationId { get; private set; }
         public void Initialize(Side side, string formationId = "")
@@ -29,11 +35,51 @@ namespace Harpoon.Runtime
             FormationId = formationId ?? string.Empty;
             _shipModels = transform.Cast<Transform>().Where(child =>
                 child.name == "Escort" || child.name == "Amphibious Ship").ToArray();
+            ConfigureModelForward();
             _shipRenderers = _shipModels.SelectMany(ship => ship.GetComponentsInChildren<Renderer>()).ToArray();
             _baseColors = _shipRenderers.Select(renderer => renderer.material.color).ToArray();
             BuildSensorRing();
             BuildDamageEffects();
             BuildTacticalRing();
+        }
+
+        public void SetBoardPosition(Vector3 position)
+        {
+            if (_hasBoardPosition)
+            {
+                var travel = position - _boardPosition;
+                travel.y = 0f;
+                if (_directionalCounter && travel.sqrMagnitude > 0.001f)
+                {
+                    var modelHeading = Quaternion.LookRotation(_modelForwardLocal, Vector3.up);
+                    _targetRotation = Quaternion.LookRotation(travel.normalized, Vector3.up) *
+                                      Quaternion.Inverse(modelHeading);
+                    _hasHeading = true;
+                }
+            }
+            transform.position = position;
+            _boardPosition = position;
+            _hasBoardPosition = true;
+        }
+
+        private void ConfigureModelForward()
+        {
+            var model = transform.Cast<Transform>().FirstOrDefault(child =>
+                child.name == "Escort" || child.name == "Amphibious Ship" ||
+                child.name == "Aircraft Carrier" || child.name == "P-8A Poseidon");
+            if (model != null)
+            {
+                _modelForwardLocal = model.localRotation * Vector3.right;
+                _modelForwardLocal.y = 0f;
+                _modelForwardLocal.Normalize();
+                _directionalCounter = true;
+                return;
+            }
+            if (transform.Find("Submarine Hull") != null)
+            {
+                _modelForwardLocal = Vector3.right;
+                _directionalCounter = true;
+            }
         }
 
         public void SetTacticalState(bool legalTarget, bool active, bool selected)
@@ -78,6 +124,9 @@ namespace Harpoon.Runtime
         private void Update()
         {
             const int segments = 48;
+            if (_hasHeading)
+                transform.rotation = Quaternion.RotateTowards(transform.rotation, _targetRotation,
+                    360f * Time.deltaTime);
             if (_sensorRing != null && (_radiating || _contactKnown))
             {
                 var radius = (_radiating ? 1.12f : 0.82f) +
