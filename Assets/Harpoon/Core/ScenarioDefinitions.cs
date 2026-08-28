@@ -254,7 +254,7 @@ namespace Harpoon.Core
             "us-merchant-1", "plan-type-052d", string.Empty, string.Empty,
             new[]
             {
-                new ScenarioFormationDefinition("US Subic Convoy", Side.UsNavy, new HexCoord(7, 16),
+                new ScenarioFormationDefinition("US Subic Convoy", Side.UsNavy, new HexCoord(8, 16),
                     new[]
                     {
                         new ScenarioUnitDefinition("us-burke-iia", "us-burke-iia", UnitRole.Escort),
@@ -282,9 +282,9 @@ namespace Harpoon.Core
             "us-merchant-1", "plan-type-052d", string.Empty, string.Empty,
             new[]
             {
-                new ScenarioFormationDefinition("US Subic Convoy", Side.UsNavy, new HexCoord(7, 16),
+                new ScenarioFormationDefinition("US Subic Convoy", Side.UsNavy, new HexCoord(8, 16),
                     PicketLine.Formations.First(item => item.Side == Side.UsNavy).Units),
-                new ScenarioFormationDefinition("US Dummy Group", Side.UsNavy, new HexCoord(7, 16),
+                new ScenarioFormationDefinition("US Dummy Group", Side.UsNavy, new HexCoord(8, 16),
                     Array.Empty<ScenarioUnitDefinition>(), 3),
                 new ScenarioFormationDefinition("PLAN Picket Group", Side.Plan, new HexCoord(15, 10),
                     PicketLine.Formations.First(item => item.Side == Side.Plan).Units),
@@ -311,7 +311,7 @@ namespace Harpoon.Core
                     }),
                 new ScenarioFormationDefinition("US Los Angeles", Side.UsNavy, new HexCoord(15, 14),
                     new[] { new ScenarioUnitDefinition("us-los-angeles", "us-los-angeles", UnitRole.Escort) }),
-                new ScenarioFormationDefinition("PLAN Yuan 1", Side.Plan, new HexCoord(8, 12),
+                new ScenarioFormationDefinition("PLAN Yuan 1", Side.Plan, new HexCoord(9, 12),
                     new[] { new ScenarioUnitDefinition("plan-type-039ab-1", "plan-type-039ab", UnitRole.Escort) }),
                 new ScenarioFormationDefinition("PLAN Yuan 2", Side.Plan, new HexCoord(10, 12),
                     new[] { new ScenarioUnitDefinition("plan-type-039ab-2", "plan-type-039ab", UnitRole.Escort) }),
@@ -431,7 +431,7 @@ namespace Harpoon.Core
             "us-ford", string.Empty, string.Empty, string.Empty,
             new[]
             {
-                new ScenarioFormationDefinition("US Ford Strike Group", Side.UsNavy, new HexCoord(9, 4),
+                new ScenarioFormationDefinition("US Ford Strike Group", Side.UsNavy, new HexCoord(10, 4),
                     new[]
                     {
                         new ScenarioUnitDefinition("us-ford", "us-ford", UnitRole.Objective),
