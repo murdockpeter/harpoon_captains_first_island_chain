@@ -888,8 +888,45 @@ namespace Harpoon.Runtime
                 if (isLand) VisualFactory.AddLandRelief(tile.transform, height, variant);
                 _tiles.Add(coordinate, view);
             }
+            BuildMapLabels(boardRoot);
             BuildBaseMarkers(boardRoot);
             BuildCarrierObjectiveMarker(boardRoot);
+        }
+
+        private static void BuildMapLabels(Transform boardRoot)
+        {
+            var sea = new Color(0.5f, 0.86f, 0.96f, 0.82f);
+            var land = new Color(0.95f, 0.84f, 0.55f, 0.88f);
+            AddMapLabel(boardRoot, "CHINA\nFUJIAN / ZHEJIANG COAST", new HexCoord(2, 3), land, 0.06f);
+            AddMapLabel(boardRoot, "EAST CHINA\nSEA", new HexCoord(6, 4), sea, 0.08f);
+            AddMapLabel(boardRoot, "RYUKYU\nISLANDS", new HexCoord(11, 3), land, 0.07f);
+            AddMapLabel(boardRoot, "TAIWAN", new HexCoord(9, 10), land, 0.09f);
+            AddMapLabel(boardRoot, "BASHI CHANNEL", new HexCoord(10, 13), sea, 0.07f);
+            AddMapLabel(boardRoot, "SOUTH CHINA\nSEA", new HexCoord(5, 16), sea, 0.08f);
+            AddMapLabel(boardRoot, "LUZON", new HexCoord(9, 17), land, 0.09f);
+            AddMapLabel(boardRoot, "PHILIPPINE\nSEA", new HexCoord(13, 9), sea, 0.08f);
+        }
+
+        private static void AddMapLabel(Transform parent, string text, HexCoord coordinate,
+            Color color, float characterSize)
+        {
+            var label = new GameObject("Map Label " + text.Replace('\n', ' '));
+            label.transform.SetParent(parent, false);
+            label.transform.position = WorldPosition(coordinate) + Vector3.up * 0.72f;
+            label.transform.rotation = Quaternion.AngleAxis(180f, Vector3.up) *
+                                       Quaternion.Euler(-90f, 0f, 0f);
+            var mesh = label.AddComponent<TextMesh>();
+            mesh.text = text;
+            mesh.anchor = TextAnchor.MiddleCenter;
+            mesh.alignment = TextAlignment.Center;
+            mesh.fontSize = 64;
+            mesh.characterSize = characterSize;
+            mesh.lineSpacing = 0.82f;
+            mesh.fontStyle = FontStyle.Bold;
+            mesh.color = color;
+            var renderer = label.GetComponent<MeshRenderer>();
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
         }
 
         private void BuildCarrierObjectiveMarker(Transform boardRoot)

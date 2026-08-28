@@ -124,24 +124,50 @@ namespace Harpoon.Core
 
         private static OperationalMap Create()
         {
-            // Transcribed from First Island Chain Supplement p. 6. The four-digit labels
-            // are axial column/row coordinates; 1010 -> 0713 is three southwest steps.
+            // The supplement's 15-by-20 scenario grid, with the coastline generalized at
+            // its stated 60-mile hex scale. Major land masses are intentionally contiguous;
+            // sub-hex Ryukyu islands are represented by separated island hexes instead of a
+            // solid land bridge. The four-digit labels are axial column/row coordinates.
             var land = new HashSet<HexCoord>
             {
-                new HexCoord(1,1),new HexCoord(2,1),new HexCoord(3,1),new HexCoord(1,2),new HexCoord(2,2),new HexCoord(3,2),
-                new HexCoord(1,3),new HexCoord(2,3),new HexCoord(1,4),new HexCoord(2,4),new HexCoord(3,4),new HexCoord(1,5),
-                new HexCoord(2,5),new HexCoord(3,5),new HexCoord(1,6),new HexCoord(2,6),new HexCoord(1,7),new HexCoord(2,7),
-                new HexCoord(3,7),new HexCoord(1,8),new HexCoord(2,8),new HexCoord(3,8),new HexCoord(1,9),new HexCoord(2,9),
-                new HexCoord(1,10),new HexCoord(2,10),new HexCoord(3,10),new HexCoord(1,11),new HexCoord(2,11),new HexCoord(3,11),
-                new HexCoord(1,12),new HexCoord(2,12),new HexCoord(1,13),new HexCoord(2,13),new HexCoord(3,13),new HexCoord(1,14),
-                new HexCoord(2,14),new HexCoord(1,15),new HexCoord(2,15),new HexCoord(3,15),new HexCoord(1,16),new HexCoord(2,16),
-                new HexCoord(1,17),new HexCoord(2,17),new HexCoord(3,17),new HexCoord(4,17),new HexCoord(1,18),new HexCoord(2,18),
-                new HexCoord(3,18),new HexCoord(4,18),new HexCoord(1,19),new HexCoord(2,19),new HexCoord(3,19),new HexCoord(1,20),
-                new HexCoord(2,20),new HexCoord(3,20),
-                new HexCoord(10,1),new HexCoord(11,1),new HexCoord(9,2),new HexCoord(9,3),new HexCoord(8,4),new HexCoord(8,5),
-                new HexCoord(7,6),new HexCoord(8,7),new HexCoord(8,8),new HexCoord(8,9),new HexCoord(8,10),new HexCoord(8,11),
-                new HexCoord(8,12),new HexCoord(8,13),new HexCoord(7,14),new HexCoord(7,15),new HexCoord(6,16),new HexCoord(7,16),
-                new HexCoord(6,17),new HexCoord(7,17),new HexCoord(8,17),new HexCoord(6,18),new HexCoord(7,18)
+                // China coast: a continuous mainland with broader capes and readable bays.
+                new HexCoord(1,1),new HexCoord(2,1),new HexCoord(3,1),
+                new HexCoord(1,2),new HexCoord(2,2),new HexCoord(3,2),
+                new HexCoord(1,3),new HexCoord(2,3),new HexCoord(3,3),
+                new HexCoord(1,4),new HexCoord(2,4),
+                new HexCoord(1,5),new HexCoord(2,5),
+                new HexCoord(1,6),new HexCoord(2,6),new HexCoord(3,6),
+                new HexCoord(1,7),new HexCoord(2,7),new HexCoord(3,7),
+                new HexCoord(1,8),new HexCoord(2,8),new HexCoord(3,8),
+                new HexCoord(1,9),new HexCoord(2,9),new HexCoord(3,9),
+                new HexCoord(1,10),new HexCoord(2,10),
+                new HexCoord(1,11),new HexCoord(2,11),
+                // 0312 is the scenario's established offshore western exit lane.
+                new HexCoord(1,12),new HexCoord(2,12),
+                new HexCoord(1,13),new HexCoord(2,13),new HexCoord(3,13),
+                new HexCoord(1,14),new HexCoord(2,14),new HexCoord(3,14),
+                new HexCoord(1,15),new HexCoord(2,15),
+                new HexCoord(1,16),new HexCoord(2,16),
+
+                // Hainan, separated visually from the mainland by the Qiongzhou Strait.
+                new HexCoord(1,18),new HexCoord(2,18),new HexCoord(3,18),new HexCoord(4,18),
+                new HexCoord(1,19),new HexCoord(2,19),new HexCoord(3,19),new HexCoord(4,19),
+                new HexCoord(1,20),new HexCoord(2,20),new HexCoord(3,20),
+
+                // Ryukyu groups. Most islands are smaller than a 60-mile hex, so sea gaps
+                // are retained between the represented groups.
+                new HexCoord(11,1),new HexCoord(10,2),new HexCoord(8,6),new HexCoord(8,7),
+
+                // Taiwan: approximately five hex lengths north to south at this scale.
+                new HexCoord(8,8),new HexCoord(8,9),new HexCoord(8,10),
+                new HexCoord(8,11),new HexCoord(8,12),
+
+                // 0813 and 0714 remain open water through the Bashi Channel. Luzon begins
+                // south of that passage and runs approximately five hex lengths.
+                new HexCoord(7,15),new HexCoord(6,16),new HexCoord(7,16),
+                new HexCoord(6,17),new HexCoord(7,17),new HexCoord(8,17),
+                new HexCoord(6,18),new HexCoord(7,18),
+                new HexCoord(6,19),new HexCoord(7,19)
             };
             var bases = new[]
             {

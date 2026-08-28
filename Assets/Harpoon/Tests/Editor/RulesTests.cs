@@ -831,7 +831,13 @@ namespace Harpoon.Core.Tests
             var map = FirstIslandChainMap.Instance;
             Assert.That(map.AllHexes.Count(), Is.EqualTo(300));
             Assert.That(new HexCoord(10, 10).DistanceTo(new HexCoord(7, 13)), Is.EqualTo(3));
-            Assert.That(map.TerrainAt(new HexCoord(8, 13)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(8, 12)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(8, 13)), Is.EqualTo(TerrainType.Sea));
+            Assert.That(map.TerrainAt(new HexCoord(7, 14)), Is.EqualTo(TerrainType.Sea));
+            Assert.That(map.TerrainAt(new HexCoord(9, 3)), Is.EqualTo(TerrainType.Sea));
+            Assert.That(map.TerrainAt(new HexCoord(8, 7)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(7, 19)), Is.EqualTo(TerrainType.Land));
+            Assert.That(map.TerrainAt(new HexCoord(7, 20)), Is.EqualTo(TerrainType.Sea));
             Assert.That(map.Bases.Count, Is.EqualTo(6));
         }
 
@@ -848,7 +854,7 @@ namespace Harpoon.Core.Tests
             var teleport = game.Execute(new GameCommand(GameCommandType.Move, side,
                 game.State.Revision, new HexCoord(9, 11)));
             var land = game.Execute(new GameCommand(GameCommandType.Move, side,
-                game.State.Revision, new HexCoord(8, 13)));
+                game.State.Revision, new HexCoord(8, 12)));
             Assert.That(teleport.Violation.Code, Is.EqualTo(RuleViolationCode.NotAdjacent));
             Assert.That(land.Violation.Code, Is.EqualTo(RuleViolationCode.ImpassableTerrain));
             Assert.That(game.TryMove(side, new HexCoord(7, 12), out _), Is.True);
@@ -860,9 +866,10 @@ namespace Harpoon.Core.Tests
         {
             var map = FirstIslandChainMap.Instance;
             var origin = new HexCoord(7, 13);
-            var destination = new HexCoord(9, 13);
+            var destination = new HexCoord(8, 14);
             var path = map.FindPath(origin, destination, Side.UsNavy);
-            Assert.That(path.Count - 1, Is.GreaterThan(origin.DistanceTo(destination)));
+            Assert.That(path.Count, Is.EqualTo(3));
+            Assert.That(path.Contains(new HexCoord(8, 13)) || path.Contains(new HexCoord(7, 14)), Is.True);
             Assert.That(path, Has.All.Matches<HexCoord>(hex => map.IsNavigable(hex, Side.UsNavy)));
             for (var index = 1; index < path.Count; index++)
                 Assert.That(path[index - 1].IsAdjacentTo(path[index]), Is.True);

@@ -836,26 +836,33 @@ namespace Harpoon.Editor
             Require(new HexCoord(10, 10).DistanceTo(new HexCoord(7, 13)) == 3 &&
                     new HexCoord(10, 10).Neighbors().All(hex => hex.DistanceTo(new HexCoord(10, 10)) == 1),
                 "Scenario setup, adjacency, movement, range, AI, and rendering must share axial topology.");
-            Require(map.TerrainAt(new HexCoord(8, 13)) == TerrainType.Land &&
+            Require(map.TerrainAt(new HexCoord(8, 12)) == TerrainType.Land &&
+                    map.TerrainAt(new HexCoord(8, 13)) == TerrainType.Sea &&
+                    map.TerrainAt(new HexCoord(7, 14)) == TerrainType.Sea &&
                     map.TerrainAt(new HexCoord(9, 13)) == TerrainType.Sea &&
+                    map.TerrainAt(new HexCoord(9, 3)) == TerrainType.Sea &&
+                    map.TerrainAt(new HexCoord(8, 7)) == TerrainType.Land &&
+                    map.TerrainAt(new HexCoord(7, 19)) == TerrainType.Land &&
+                    map.TerrainAt(new HexCoord(7, 20)) == TerrainType.Sea &&
                     !map.Contains(new HexCoord(16, 10)),
-                "Core terrain must distinguish printed land, sea, and off-map coordinates.");
+                "Core terrain must preserve separated Ryukyus, scaled Taiwan and Luzon, the Bashi sea passage, and off-map coordinates.");
             Require(map.Bases.Count == 6 && map.BaseAt(new HexCoord(9, 4))?.Name == "Kadena AB" &&
                     map.BaseAt(new HexCoord(7, 16))?.Name == "Subic Bay / Clark",
                 "All six marked First Island Chain bases must live in core map data.");
 
-            var coastPath = map.FindPath(new HexCoord(7, 13), new HexCoord(9, 13), Side.UsNavy);
-            Require(coastPath.Count > 0 && coastPath.Count - 1 > new HexCoord(7, 13).DistanceTo(new HexCoord(9, 13)) &&
+            var coastPath = map.FindPath(new HexCoord(7, 13), new HexCoord(8, 14), Side.UsNavy);
+            Require(coastPath.Count == 3 &&
+                    coastPath.Any(hex => hex == new HexCoord(8, 13) || hex == new HexCoord(7, 14)) &&
                     coastPath.Zip(coastPath.Skip(1), (left, right) => left.IsAdjacentTo(right)).All(value => value) &&
                     coastPath.All(hex => map.IsNavigable(hex, Side.UsNavy)),
-                "Core pathfinding must route step-by-step around the Taiwan coastline.");
+                "Core pathfinding must cross the open Bashi passage south of Taiwan.");
 
             var terrainGame = new ScenarioOneGame(1, null, true);
             Require(terrainGame.DrawMovementChit().Accepted, "Terrain test must draw the US chit.");
             var side = terrainGame.State.ActiveSide;
             Require(terrainGame.DeclareSpeed(side, 1).Accepted, "A legal speed must be accepted.");
             var landMove = terrainGame.Execute(new GameCommand(GameCommandType.Move, side,
-                terrainGame.State.Revision, new HexCoord(8, 13)));
+                terrainGame.State.Revision, new HexCoord(8, 12)));
             Require(!landMove.Accepted && landMove.Violation.Code == RuleViolationCode.ImpassableTerrain,
                 "Movement into a printed land hex must be rejected by the core.");
 
