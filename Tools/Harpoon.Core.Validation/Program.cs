@@ -54,6 +54,13 @@ static class Program
                 true, false, null, scenario);
             Check(game.State.Scenario == scenario && !game.State.IsGameOver,
                 $"{scenario.Id} creates from its release definition");
+            var groundedNavalForces = game.State.Forces.Where(force =>
+                !force.IsAircraftOnly && !force.IsDummyOnly &&
+                game.State.Map.TerrainAt(force.Position) != TerrainType.Sea).ToArray();
+            Check(groundedNavalForces.Length == 0,
+                $"{scenario.Id} starts every naval formation at sea" +
+                (groundedNavalForces.Length == 0 ? string.Empty :
+                    ": " + string.Join(", ", groundedNavalForces.Select(force => $"{force.Id} {force.Position}"))));
             var result = game.Execute(new GameCommand(GameCommandType.Concede, Side.UsNavy,
                 game.State.Revision));
             Check(result.Accepted && game.State.IsGameOver &&
@@ -400,7 +407,7 @@ static class Program
         var definition = FirstIslandChainScenarios.PicketLine;
         var state = ScenarioOne.Create(false, definition);
         Check(state.Scenario.Id == "fic-04" && state.DetectionRulesEnabled &&
-            state.Player.Position == new HexCoord(7, 16) && state.Enemy.Position == new HexCoord(15, 10),
+            state.Player.Position == new HexCoord(8, 16) && state.Enemy.Position == new HexCoord(15, 10),
             "Scenario 4 Subic convoy and hidden picket setup");
         Check(state.Player.Units.Count == 5 && state.Enemy.Units.Count == 3 &&
             state.Player.Units.Count(unit => unit.Definition.Role == UnitRole.Objective) == 2,
