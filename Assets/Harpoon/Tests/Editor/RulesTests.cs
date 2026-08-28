@@ -842,6 +842,17 @@ namespace Harpoon.Core.Tests
         }
 
         [Test]
+        public void EveryScenarioStartsNavalFormationsAtSea()
+        {
+            var map = FirstIslandChainMap.Instance;
+            foreach (var scenario in FirstIslandChainScenarios.Introductory)
+            foreach (var force in ScenarioOne.Create(false, scenario).Forces
+                         .Where(item => !item.IsAircraftOnly && !item.IsDummyOnly))
+                Assert.That(map.TerrainAt(force.Position), Is.EqualTo(TerrainType.Sea),
+                    $"{scenario.Id} {force.Id} starts at {force.Position}");
+        }
+
+        [Test]
         public void MovementRequiresDeclarationAndOneAdjacentNavigableHex()
         {
             var game = new ScenarioOneGame(1, null, true);

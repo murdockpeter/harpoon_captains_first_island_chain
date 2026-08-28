@@ -423,7 +423,7 @@ namespace Harpoon.Editor
         {
             var definition = FirstIslandChainScenarios.PicketLine;
             var game = new ScenarioOneGame(4404, null, true, false, null, definition);
-            Require(game.State.DetectionRulesEnabled && game.State.Player.Position == new HexCoord(7, 16) &&
+            Require(game.State.DetectionRulesEnabled && game.State.Player.Position == new HexCoord(8, 16) &&
                     game.State.Player.Units.Count == 5 && game.State.Enemy.Units.Count == 3,
                 "Scenario 4 must load the full Subic convoy and PLAN picket with detection enabled.");
             var hidden = game.CaptureSnapshotFor(Side.UsNavy);
@@ -849,6 +849,16 @@ namespace Harpoon.Editor
             Require(map.Bases.Count == 6 && map.BaseAt(new HexCoord(9, 4))?.Name == "Kadena AB" &&
                     map.BaseAt(new HexCoord(7, 16))?.Name == "Subic Bay / Clark",
                 "All six marked First Island Chain bases must live in core map data.");
+            var groundedNavalForces = FirstIslandChainScenarios.Introductory
+                .SelectMany(scenario => ScenarioOne.Create(false, scenario).Forces
+                    .Where(force => !force.IsAircraftOnly && !force.IsDummyOnly)
+                    .Select(force => new { Scenario = scenario.Id, Force = force }))
+                .Where(item => map.TerrainAt(item.Force.Position) != TerrainType.Sea)
+                .ToArray();
+            Require(groundedNavalForces.Length == 0,
+                "Every scenario naval formation must begin at sea: " +
+                string.Join(", ", groundedNavalForces.Select(item =>
+                    $"{item.Scenario} {item.Force.Id} {item.Force.Position}")));
 
             var coastPath = map.FindPath(new HexCoord(7, 13), new HexCoord(8, 14), Side.UsNavy);
             Require(coastPath.Count == 3 &&
