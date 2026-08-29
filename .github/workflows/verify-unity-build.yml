@@ -1,0 +1,79 @@
+name: Verify Unity release credentials
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-unity-release-credentials
+  cancel-in-progress: false
+
+jobs:
+  verify-unity-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Run Unity-independent suite
+        shell: pwsh
+        run: ./test.ps1
+
+      - name: Cache Unity Library
+        uses: actions/cache@v6
+        with:
+          path: Library
+          key: Library-${{ runner.os }}-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: |
+            Library-${{ runner.os }}-
+
+      - name: Verify Unity activation secrets
+        shell: bash
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          if [[ -z "$UNITY_LICENSE" && -z "$UNITY_SERIAL" ]]; then
+            echo "::error::UNITY_LICENSE or UNITY_SERIAL is missing."
+            exit 1
+          fi
+          if [[ -z "$UNITY_EMAIL" || -z "$UNITY_PASSWORD" ]]; then
+            echo "::error::UNITY_EMAIL or UNITY_PASSWORD is missing."
+            exit 1
+          fi
+
+      - name: Build Windows player without publishing
+        uses: game-ci/unity-builder@v5
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          unityVersion: 6000.2.12f1
+          targetPlatform: StandaloneWindows64
+          buildMethod: Harpoon.Editor.ProjectSetup.BuildWindowsPlayer
+
+      - name: Verify required Windows outputs
+        shell: pwsh
+        run: |
+          $required = @(
+            'Build/Windows/HarpoonCaptainsEdition.exe',
+            'Build/Windows/HarpoonAccessibilitySpeech.exe',
+            'Build/Windows/HarpoonCaptainsEdition_Data',
+            'Build/Windows/UnityPlayer.dll',
+            'Build/Windows/harpoon-version.txt'
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path -LiteralPath $path)) { throw "Missing build output: $path" }
+          }
+          Write-Host "Unity credentials and Windows release build verified at version $((Get-Content -LiteralPath 'Build/Windows/harpoon-version.txt' -Raw).Trim())."
