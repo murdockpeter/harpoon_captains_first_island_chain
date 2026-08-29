@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using DiagnosticsProcess = System.Diagnostics.Process;
+using DiagnosticsProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 using System.Threading;
 using Harpoon.Core;
 using Harpoon.Runtime;
@@ -14,7 +16,7 @@ namespace Harpoon.Editor
 {
     public static class ProjectSetup
     {
-        public const string DefaultReleaseVersion = "1.0.1";
+        public const string DefaultReleaseVersion = "1.0.2";
         [MenuItem("Harpoon/Public Multiplayer Setup")]
         public static void OpenPublicMultiplayerSetup()
         {
@@ -158,8 +160,37 @@ namespace Harpoon.Editor
             var report = BuildPipeline.BuildPlayer(options);
             if (report.summary.result != BuildResult.Succeeded)
                 throw new InvalidOperationException($"Windows build failed: {report.summary.result}");
+            BuildAccessibilitySpeechHelper(outputDirectory);
             File.WriteAllText("Build/Windows/harpoon-version.txt", PlayerSettings.bundleVersion);
             Debug.Log($"HARPOON WINDOWS BUILD PASSED: {outputPath}");
+        }
+
+        private static void BuildAccessibilitySpeechHelper(string outputDirectory)
+        {
+            var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            var framework = Path.Combine(windows, "Microsoft.NET", "Framework64", "v4.0.30319");
+            var compiler = Path.Combine(framework, "csc.exe");
+            var speechAssembly = Path.Combine(framework, "WPF", "System.Speech.dll");
+            var source = Path.GetFullPath("Tools/AccessibilitySpeech/Program.cs");
+            var output = Path.GetFullPath(Path.Combine(outputDirectory, "HarpoonAccessibilitySpeech.exe"));
+            if (!File.Exists(compiler) || !File.Exists(speechAssembly) || !File.Exists(source))
+                throw new InvalidOperationException("Windows accessibility speech build prerequisites are missing.");
+            var startInfo = new DiagnosticsProcessStartInfo(compiler,
+                $"/nologo /target:exe /optimize+ /reference:\"{speechAssembly}\" /out:\"{output}\" \"{source}\"")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            using (var process = DiagnosticsProcess.Start(startInfo))
+            {
+                var stdout = process.StandardOutput.ReadToEnd();
+                var stderr = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+                if (process.ExitCode != 0)
+                    throw new InvalidOperationException("Accessibility speech helper build failed. " + stdout + stderr);
+            }
         }
 
         private static string ReleaseVersionFromCommandLine()

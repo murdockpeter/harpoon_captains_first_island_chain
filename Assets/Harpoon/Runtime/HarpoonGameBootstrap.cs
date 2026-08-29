@@ -117,6 +117,29 @@ namespace Harpoon.Runtime
         private bool _showRosterSection;
         private bool _showSystemSection;
         private bool _showEventSection;
+        private readonly WindowsSpeechService _speech = new WindowsSpeechService();
+        private readonly List<AccessibleAction> _accessibleActions = new List<AccessibleAction>();
+        private bool _accessibilityMode;
+        private bool _selfVoicing = true;
+        private bool _voiceCommandsEnabled;
+        private bool _showAccessibilityHelp;
+        private int _accessibleActionIndex;
+        private int _speechRate;
+        private int _speechVolume = 100;
+        private int _textScaleStep;
+        private bool _highContrast;
+        private string _lastSpoken = string.Empty;
+        private string _lastRecognized = string.Empty;
+        private string _accessibilityNotice = "Press F2 to enable accessible command mode.";
+        private AccessibleAction _pendingVoiceAction;
+        private HexCoord _accessibleCursor;
+        private bool _accessibleCursorActive;
+        private bool _accessibleSystemMenu;
+        private const float GuidanceToastDuration = 5f;
+        private string _guidanceKey = string.Empty;
+        private string _guidancePrompt = string.Empty;
+        private float _guidanceUntil;
+        private GuidanceTarget _guidanceTarget;
         private bool _showAirOperations = true;
         private string _selectedTacticalFlightId = string.Empty;
         private string _selectedTacticalTargetId = string.Empty;
@@ -139,6 +162,7 @@ namespace Harpoon.Runtime
 
         private void Awake()
         {
+            LoadAccessibilitySettings();
             if (!Application.isEditor) EnterBorderlessFullscreen();
             Application.targetFrameRate = 60;
             QualitySettings.shadowDistance = 80f;
@@ -149,11 +173,13 @@ namespace Harpoon.Runtime
             BuildSoundboard();
             BuildGameAudio();
             Restart();
+            InitializeAccessibilitySpeech();
             if (!Application.isEditor) StartCoroutine(CheckForUpdates());
         }
 
         private void Update()
         {
+            UpdateAccessibilityInput();
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 if (_showTribute) _showTribute = false;
@@ -164,7 +190,7 @@ namespace Harpoon.Runtime
                 return;
             }
             if (Input.GetKeyDown(KeyCode.P)) SetPaused(!_isPaused);
-            if (Input.GetKeyDown(KeyCode.F1)) _showBriefing = !_showBriefing;
+            if (Input.GetKeyDown(KeyCode.F1) && !_accessibilityMode) _showBriefing = !_showBriefing;
             if (Input.GetKeyDown(KeyCode.F3)) _showDebug = !_showDebug;
             if (Input.GetKeyDown(KeyCode.F11)) ToggleFullscreen();
             ProcessNetwork();
@@ -212,6 +238,8 @@ namespace Harpoon.Runtime
             _game.CommandProcessed += OnCommandProcessed;
             _selectedFormation = LocalSide;
             _selectedFormationId = _game.State.Forces.First(force => force.Side == LocalSide).Id;
+            _accessibleCursor = _game.State.Forces.First(force => force.Side == LocalSide).Position;
+            _accessibleCursorActive = false;
             _status = "Draw the first movement chit to begin the turn.";
             _debugScroll = Vector2.zero;
             _commandPanelScroll = Vector2.zero;
@@ -262,6 +290,7 @@ namespace Harpoon.Runtime
                 if (IsHostSession) BroadcastSnapshot();
             }
             else _status = result.Summary;
+            RefreshViews();
         }
 
         private void DeclareLocalSpeed(int speed)
@@ -1918,7 +1947,9 @@ namespace Harpoon.Runtime
             var attackLabel = legalTargets.Length == 0 ? "NO TARGET IN WEAPON RANGE" :
                 legalTargets.Length == 1 ? $"ATTACK {legalTargets[0].Id.ToUpperInvariant()}" :
                 "ATTACK SELECTED RED-RINGED TARGET";
-            if (GUILayout.Button(attackLabel, _buttonStyle))
+            var attackClicked = GUILayout.Button(attackLabel, _buttonStyle);
+            DrawGuidanceAroundLastControl(GuidanceTarget.AttackOrEnd);
+            if (attackClicked)
             {
                 var targetFormationId = attackTarget?.Id;
                 var torpedoes = !_preferSubmarineSsm && activeForce.IsSubmarineOnly && attackTarget != null &&
@@ -1961,7 +1992,10 @@ namespace Harpoon.Runtime
             GUI.enabled = !_game.State.IsGameOver && CanLocalAct() &&
                           ((activeForce.IsAircraftOnly && _game.State.Phase == ActivationPhase.AircraftAction) ||
                            (activeForce.DeclaredSpeed >= 0 && activeForce.MovementRemaining == 0));
-            if (GUILayout.Button("END ACTIVATION", _buttonStyle))
+            var endActivationClicked = GUILayout.Button("END ACTIVATION", _buttonStyle);
+            DrawGuidanceAroundLastControl(_guidanceTarget == GuidanceTarget.AttackOrEnd
+                ? GuidanceTarget.AttackOrEnd : GuidanceTarget.EndActivation);
+            if (endActivationClicked)
             {
                 if (IsClientSession)
                 {
@@ -2397,6 +2431,147 @@ namespace Harpoon.Runtime
                 : "NO WEAPON IN RANGE - end this formation's activation.";
         }
 
+        private void UpdateGuidanceCue()
+        {
+            var target = CurrentGuidanceTarget();
+            var prompt = CurrentGuidancePrompt(target);
+            var key = $"{_game.State.Revision}|{target}|{prompt}";
+            if (key == _guidanceKey) return;
+
+            _guidanceKey = key;
+            _guidancePrompt = prompt;
+            _guidanceTarget = target;
+            _guidanceUntil = Time.unscaledTime + GuidanceToastDuration;
+            if (target != GuidanceTarget.None) _showOrdersSection = true;
+        }
+
+        private GuidanceTarget CurrentGuidanceTarget()
+        {
+            if (_game.State.IsGameOver) return GuidanceTarget.None;
+            if (_game.State.Phase == ActivationPhase.AwaitingChit) return GuidanceTarget.DrawChit;
+            if (_game.State.Phase == ActivationPhase.MissileCombat)
+            {
+                var missile = _game.State.PendingMissileCombat;
+                if (missile == null || missile.DecisionSide != LocalSide) return GuidanceTarget.None;
+                switch (missile.Phase)
+                {
+                    case MissileCombatPhase.AllocateFire: return GuidanceTarget.MissileAllocation;
+                    case MissileCombatPhase.DefensiveDeployment: return GuidanceTarget.MissileDeployment;
+                    case MissileCombatPhase.LongRangeRemoval: return GuidanceTarget.LongRangeRemoval;
+                    case MissileCombatPhase.ShortRangeDefense: return GuidanceTarget.ShortRangeDefense;
+                    case MissileCombatPhase.CounterattackDecision: return GuidanceTarget.Counterattack;
+                }
+            }
+            if (_game.State.Phase == ActivationPhase.GunCombat)
+            {
+                var gun = _game.State.PendingGunCombat;
+                if (gun == null || gun.DecisionSide != LocalSide) return GuidanceTarget.None;
+                switch (gun.Phase)
+                {
+                    case GunCombatPhase.EngageDecision:
+                    case GunCombatPhase.BreakOffAttacker:
+                    case GunCombatPhase.BreakOffDefender:
+                        return GuidanceTarget.GunDecision;
+                    case GunCombatPhase.ArrangeAttacker:
+                    case GunCombatPhase.ArrangeDefender:
+                        return GuidanceTarget.GunArrangement;
+                    case GunCombatPhase.Firing: return GuidanceTarget.GunTarget;
+                }
+            }
+            if (_game.State.ActiveSide != LocalSide) return GuidanceTarget.None;
+            if (_game.State.Phase == ActivationPhase.DeclareSpeed)
+                return _game.State.DetectionRulesEnabled && !_game.State.ActiveForce.RadarDeclaredThisActivation
+                    ? GuidanceTarget.RadarChoice : GuidanceTarget.SpeedChoice;
+
+            var force = _game.State.ActiveForce;
+            if (force == null) return GuidanceTarget.None;
+            if (_game.State.Phase == ActivationPhase.AircraftAction && !_game.State.PlayerHasMoved)
+                return GuidanceTarget.None;
+            if (force.MovementRemaining > 0) return GuidanceTarget.None;
+            return _game.State.Forces.Any(IsLegalAttackTarget)
+                ? GuidanceTarget.AttackOrEnd : GuidanceTarget.EndActivation;
+        }
+
+        private string CurrentGuidancePrompt(GuidanceTarget target)
+        {
+            switch (target)
+            {
+                case GuidanceTarget.DrawChit: return "Click DRAW FIRST CHIT to begin the turn.";
+                case GuidanceTarget.RadarChoice: return "Choose RADAR SILENT or RADIATE SSR.";
+                case GuidanceTarget.SpeedChoice: return "Choose a formation speed.";
+                case GuidanceTarget.AttackOrEnd: return "Attack the highlighted target, or click END ACTIVATION.";
+                case GuidanceTarget.EndActivation: return "Click END ACTIVATION to continue.";
+                case GuidanceTarget.MissileAllocation: return "Allocate missile factors, then click LAUNCH.";
+                case GuidanceTarget.MissileDeployment: return "Choose defense pairs, then click DEPLOY DEFENSE.";
+                case GuidanceTarget.LongRangeRemoval: return "Assign every LR SAM removal, then confirm.";
+                case GuidanceTarget.ShortRangeDefense: return "Assign short-range defenses, then resolve the raid.";
+                case GuidanceTarget.Counterattack: return "Choose COUNTERATTACK or DECLINE.";
+                case GuidanceTarget.GunDecision: return "Choose the highlighted gun-combat decision.";
+                case GuidanceTarget.GunArrangement: return "Arrange firing ships, then lock the formation.";
+                case GuidanceTarget.GunTarget: return "Choose which enemy ship receives this gun attack.";
+                default: return CurrentDecisionPrompt();
+            }
+        }
+
+        private void DrawGuidanceToast()
+        {
+            if (Time.unscaledTime >= _guidanceUntil || string.IsNullOrEmpty(_guidancePrompt)) return;
+            var remaining = _guidanceUntil - Time.unscaledTime;
+            var alpha = Mathf.Clamp01(remaining);
+            var width = Mathf.Min(680f, Screen.width - 420f);
+            if (width < 360f) width = Mathf.Max(280f, Screen.width - 32f);
+            const float height = 72f;
+            var left = (Screen.width - width) * 0.5f;
+            var top = Time.unscaledTime < _chitBannerUntil ? 162f : 88f;
+            var oldColor = GUI.color;
+            GUI.color = new Color(0.06f, 0.1f, 0.14f, 0.94f * alpha);
+            GUI.Box(new Rect(left, top, width, height), GUIContent.none);
+            GUI.color = new Color(1f, 0.72f, 0.12f, alpha);
+            GUI.Box(new Rect(left, top, width, 5f), GUIContent.none);
+            GUI.color = new Color(1f, 1f, 1f, alpha);
+            GUI.Label(new Rect(left + 14f, top + 8f, width - 28f, 22f), "NEXT INPUT", _activationStyle);
+            GUI.Label(new Rect(left + 14f, top + 33f, width - 28f, 30f), _guidancePrompt, _activationStyle);
+            GUI.color = oldColor;
+        }
+
+        private void DrawGuidanceAroundLastControl(GuidanceTarget target)
+        {
+            if (target != _guidanceTarget || Time.unscaledTime >= _guidanceUntil ||
+                Event.current.type != EventType.Repaint) return;
+            var rect = GUILayoutUtility.GetLastRect();
+            rect.xMin -= 7f;
+            rect.xMax += 7f;
+            rect.yMin -= 5f;
+            rect.yMax += 5f;
+            var pulse = 0.55f + 0.45f * Mathf.Sin(Time.unscaledTime * 7f);
+            DrawEllipse(rect, new Color(1f, 0.67f, 0.08f, 0.72f + pulse * 0.28f), 3f);
+        }
+
+        private static void DrawEllipse(Rect rect, Color color, float thickness)
+        {
+            const int segments = 32;
+            var oldColor = GUI.color;
+            var oldMatrix = GUI.matrix;
+            GUI.color = color;
+            var center = rect.center;
+            var radiusX = rect.width * 0.5f;
+            var radiusY = rect.height * 0.5f;
+            var previous = center + new Vector2(radiusX, 0f);
+            for (var segment = 1; segment <= segments; segment++)
+            {
+                var angle = segment * Mathf.PI * 2f / segments;
+                var next = center + new Vector2(Mathf.Cos(angle) * radiusX, Mathf.Sin(angle) * radiusY);
+                var delta = next - previous;
+                GUIUtility.RotateAroundPivot(Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg, previous);
+                GUI.DrawTexture(new Rect(previous.x, previous.y - thickness * 0.5f, delta.magnitude, thickness),
+                    Texture2D.whiteTexture);
+                GUI.matrix = oldMatrix;
+                previous = next;
+            }
+            GUI.color = oldColor;
+            GUI.matrix = oldMatrix;
+        }
+
         private void DrawBriefingOverlay()
         {
             GUI.Box(new Rect(0f, 0f, Screen.width, Screen.height), GUIContent.none);
@@ -2561,6 +2736,7 @@ namespace Harpoon.Runtime
             if (_confirmRestart) { DrawConfirmationOverlay(true); return; }
             if (_confirmExit) { DrawConfirmationOverlay(false); return; }
             if (_isPaused) { DrawPauseOverlay(); return; }
+            UpdateGuidanceCue();
             var commandPanelHeight = Mathf.Max(300f, Screen.height - 36f);
             GUI.Box(new Rect(18, 18, 370, commandPanelHeight), GUIContent.none);
             GUILayout.BeginArea(new Rect(28, 28, 350, commandPanelHeight - 20f));
@@ -2673,10 +2849,12 @@ namespace Harpoon.Runtime
             DrawChitBanner();
             DrawMissileCombatRibbon();
             DrawGunCombatRibbon();
+            DrawGuidanceToast();
             DrawVictoryOverlay();
             if (_sessionMode != SessionMode.SinglePlayer && _sessionMode != SessionMode.HotSeat) DrawChatAndSoundboard();
             if (_showMultiplayer) DrawMultiplayerLobby();
             if (_showDebug) DrawDebugPanel();
+            if (_accessibilityMode) DrawAccessibilityOverlay();
             if (_hoveredHex.HasValue && !IsPointerOverPanel())
             {
                 var mouse = Event.current.mousePosition;
@@ -2688,6 +2866,1168 @@ namespace Harpoon.Runtime
         {
             if (_game.State.IsGameOver || _game.State.ActiveSide != LocalSide) return false;
             return _sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat || NetworkConnected;
+        }
+
+        private void LoadAccessibilitySettings()
+        {
+            _accessibilityMode = PlayerPrefs.GetInt("accessibility.enabled", 0) == 1 ||
+                                 Environment.GetCommandLineArgs().Any(value =>
+                                     string.Equals(value, "-accessibility", StringComparison.OrdinalIgnoreCase));
+            _selfVoicing = PlayerPrefs.GetInt("accessibility.selfVoicing", 1) == 1;
+            _speechRate = PlayerPrefs.GetInt("accessibility.speechRate", 0);
+            _speechVolume = PlayerPrefs.GetInt("accessibility.speechVolume", 100);
+            _textScaleStep = Mathf.Clamp(PlayerPrefs.GetInt("accessibility.textScale", 0), 0, 2);
+            _highContrast = PlayerPrefs.GetInt("accessibility.highContrast", 0) == 1;
+            // Voice input is deliberately opt-in on every launch so a microphone is never opened silently.
+            _voiceCommandsEnabled = false;
+        }
+
+        private void SaveAccessibilitySettings()
+        {
+            PlayerPrefs.SetInt("accessibility.enabled", _accessibilityMode ? 1 : 0);
+            PlayerPrefs.SetInt("accessibility.selfVoicing", _selfVoicing ? 1 : 0);
+            PlayerPrefs.SetInt("accessibility.speechRate", _speechRate);
+            PlayerPrefs.SetInt("accessibility.speechVolume", _speechVolume);
+            PlayerPrefs.SetInt("accessibility.textScale", _textScaleStep);
+            PlayerPrefs.SetInt("accessibility.highContrast", _highContrast ? 1 : 0);
+            PlayerPrefs.Save();
+        }
+
+        private void InitializeAccessibilitySpeech()
+        {
+            _speech.Initialize(Array.Empty<string>());
+            _speech.SetVoice(_speechRate, _speechVolume);
+            if (_accessibilityMode)
+                Announce("Accessible command mode on. Press F five for status, F six for legal actions, " +
+                         "F seven for location, or F one for accessibility help.");
+        }
+
+        private static string[] AccessibilityVoicePhrases()
+        {
+            var phrases = new List<string>
+            {
+                "help", "status", "repeat", "where am i", "location", "legal actions", "list actions",
+                "next action", "previous action", "activate", "confirm", "cancel", "draw chit",
+                "radar silent", "radiate radar", "attack", "end activation", "continue", "resume",
+                "move north", "move north east", "move south east", "move south",
+                "move south west", "move north west", "voice commands off"
+                , "increase text", "decrease text", "high contrast on", "high contrast off",
+                "self voicing on", "self voicing off", "cursor north", "cursor north east",
+                "cursor south east", "cursor south", "cursor south west", "cursor north west",
+                "inspect cursor", "deploy here", "relocate here"
+                , "multiplayer", "system menu", "pause game", "paste join code",
+                "send clipboard chat", "read chat"
+            };
+            var numbers = SpokenNumbers();
+            for (var index = 0; index < numbers.Length; index++)
+            {
+                phrases.Add("choose " + numbers[index]);
+                phrases.Add("speed " + numbers[index]);
+            }
+            return phrases.ToArray();
+        }
+
+        private void UpdateAccessibilityInput()
+        {
+            if (Input.GetKeyDown(KeyCode.F2))
+            {
+                _accessibilityMode = !_accessibilityMode;
+                SaveAccessibilitySettings();
+                if (_accessibilityMode)
+                    Announce("Accessible command mode on. Press F one for help.");
+                else
+                {
+                    _speech.StopListening();
+                    _accessibilityNotice = "Press F2 to enable accessible command mode.";
+                }
+            }
+            if (!_accessibilityMode) return;
+
+            if (Input.GetKeyDown(KeyCode.F1))
+            {
+                _showAccessibilityHelp = !_showAccessibilityHelp;
+                Announce(_showAccessibilityHelp ? AccessibilityHelpText() : "Accessibility help closed.");
+            }
+            if (Input.GetKeyDown(KeyCode.F5)) Announce(DescribeAccessibleState());
+            if (Input.GetKeyDown(KeyCode.F6)) AnnounceAccessibleActions();
+            if (Input.GetKeyDown(KeyCode.F7)) Announce(DescribeAccessibleLocation());
+            if (Input.GetKeyDown(KeyCode.F8)) ToggleVoiceCommands();
+            if ((Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) &&
+                Input.GetKeyDown(KeyCode.R)) Announce(_lastSpoken, false);
+
+            if (_voiceCommandsEnabled && Input.GetKeyDown(KeyCode.F4))
+            {
+                if (_speech.StartListening())
+                    _accessibilityNotice = "LISTENING - release F4 after speaking";
+                else Announce("Voice input unavailable. " + _speech.LastError);
+            }
+            if (_voiceCommandsEnabled && Input.GetKeyUp(KeyCode.F4))
+            {
+                _speech.StopListening();
+                _accessibilityNotice = "Processing voice command.";
+            }
+            while (_speech.TryGetRecognized(out var recognized))
+            {
+                _lastRecognized = $"{recognized.Text} ({recognized.Confidence:P0})";
+                if (recognized.Confidence < 0.58f)
+                    Announce("Command confidence too low. Please try again.");
+                else ExecuteVoiceCommand(recognized.Text);
+            }
+
+            RebuildAccessibleActions();
+            if (Input.GetKeyDown(KeyCode.Tab))
+            {
+                MoveAccessibleActionSelection(Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift) ? -1 : 1);
+            }
+            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                ExecuteAccessibleAction(_accessibleActionIndex);
+            if (Input.GetKeyDown(KeyCode.Keypad8)) ExecuteAccessibleDirection("north");
+            if (Input.GetKeyDown(KeyCode.Keypad9)) ExecuteAccessibleDirection("north east");
+            if (Input.GetKeyDown(KeyCode.Keypad6)) ExecuteAccessibleDirection("south east");
+            if (Input.GetKeyDown(KeyCode.Keypad2)) ExecuteAccessibleDirection("south");
+            if (Input.GetKeyDown(KeyCode.Keypad1)) ExecuteAccessibleDirection("south west");
+            if (Input.GetKeyDown(KeyCode.Keypad4)) ExecuteAccessibleDirection("north west");
+        }
+
+        private void ToggleVoiceCommands()
+        {
+            _voiceCommandsEnabled = !_voiceCommandsEnabled;
+            _speech.Dispose();
+            _speech.Initialize(_voiceCommandsEnabled ? AccessibilityVoicePhrases() : Array.Empty<string>());
+            _speech.SetVoice(_speechRate, _speechVolume);
+            Announce(_voiceCommandsEnabled
+                ? _speech.RecognitionAvailable
+                    ? "Voice commands on. Hold F four while speaking. Microphone audio remains on this computer."
+                    : "Voice commands could not start. " + _speech.LastError
+                : "Voice commands off.");
+            if (!_speech.RecognitionAvailable) _voiceCommandsEnabled = false;
+        }
+
+        private void Announce(string text, bool interrupt = true)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            _lastSpoken = text;
+            _accessibilityNotice = text;
+            if (_selfVoicing) _speech.Speak(text, interrupt);
+        }
+
+        private string DescribeAccessibleState()
+        {
+            if (_game == null) return "Game state is not ready.";
+            if (_showTribute) return "Admiralty Trilogy Games tribute screen. Choose Continue to proceed.";
+            if (_showBriefing) return $"Scenario briefing. {_game.State.Scenario.Name}.";
+            if (_isPaused) return "Game paused.";
+            if (_game.State.IsGameOver) return $"Game over. {_game.State.Result}. {_game.State.EndReason}.";
+            var force = _game.State.ActiveSide == LocalSide ? _game.State.ActiveForce : null;
+            var forceText = force == null ? "No active formation." :
+                $"Active formation {force.Id}, hex {SpeakHex(force.Position)}, " +
+                $"speed {(force.DeclaredSpeed < 0 ? "not declared" : force.DeclaredSpeed.ToString())}, " +
+                $"movement remaining {Math.Max(0, force.MovementRemaining)}.";
+            return $"Turn {_game.State.Turn}. {_game.State.TimeLabel}. Phase {_game.State.Phase}. " +
+                   $"{SideLabel(_game.State.ActiveSide)} to act. {forceText} {_status}";
+        }
+
+        private string DescribeAccessibleLocation()
+        {
+            if (_game == null) return "No formation location.";
+            var force = _game.State.Formation(_selectedFormationId);
+            if (force == null || force.Side != LocalSide)
+                force = _game.State.ActiveSide == LocalSide ? _game.State.ActiveForce : _game.State.ForceFor(LocalSide);
+            if (force == null) return "No friendly formation location.";
+            var terrain = _game.State.Map.TerrainAt(force.Position).ToString();
+            var visibleContacts = _game.State.Forces.Where(other => other.Id != force.Id &&
+                IsFormationVisibleToLocal(other)).OrderBy(other => other.Position.DistanceTo(force.Position)).ToArray();
+            var contactText = visibleContacts.Length == 0 ? "No visible contacts." : string.Join(" ",
+                visibleContacts.Take(5).Select(other => $"{other.Id}, range {force.Position.DistanceTo(other.Position)}, " +
+                    $"bearing {AccessibleBearing(force.Position, other.Position)}."));
+            return $"{force.Id} is at hex {SpeakHex(force.Position)}, {terrain}. {contactText}";
+        }
+
+        private void RebuildAccessibleActions()
+        {
+            _accessibleActions.Clear();
+            PopulateAccessibleActions();
+            _accessibleActionIndex = Mathf.Clamp(_accessibleActionIndex, 0,
+                Math.Max(0, _accessibleActions.Count - 1));
+        }
+
+        private void PopulateAccessibleActions()
+        {
+            if (_showTribute)
+            {
+                AddAccessibleAction("Continue to briefing", () => _showTribute = false);
+                return;
+            }
+            if (_showAccessibilityHelp)
+            {
+                AddAccessibleAction("Close accessibility help", () => _showAccessibilityHelp = false);
+                return;
+            }
+            if (_showMultiplayer)
+            {
+                AddAccessibleMultiplayerActions();
+                return;
+            }
+            if (_confirmRestart || _confirmExit)
+            {
+                AddAccessibleAction(_confirmRestart ? "Confirm restart scenario" : "Confirm exit game",
+                    () =>
+                    {
+                        if (_confirmRestart) Restart();
+                        else QuitGame();
+                    }, true);
+                AddAccessibleAction("Cancel confirmation", () => { _confirmRestart = false; _confirmExit = false; });
+                return;
+            }
+            if (_showBriefing)
+            {
+                AddAccessibleAction("Begin or return to action", () => _showBriefing = false);
+                return;
+            }
+            if (_isPaused)
+            {
+                AddAccessibleAction("Resume game", () => SetPaused(false));
+                AddAccessibleAction("Save match", SaveMatch);
+                AddAccessibleAction("Load last save", LoadMatch, true);
+                AddAccessibleAction("Open briefing", () => { SetPaused(false); _showBriefing = true; });
+                AddAccessibleAction("Restart scenario", () => _confirmRestart = true, true);
+                AddAccessibleAction("Exit game", () => _confirmExit = true, true);
+                return;
+            }
+            if (_game == null || _game.State.IsGameOver || !CanLocalAct()) return;
+
+            var force = _game.State.ActiveForce;
+            if (_accessibleSystemMenu)
+            {
+                AddAccessibleSystemActions();
+                return;
+            }
+            AddAccessibleAction("Open accessible system menu", () => _accessibleSystemMenu = true);
+            if (_sessionMode != SessionMode.SinglePlayer && _sessionMode != SessionMode.HotSeat)
+            {
+                AddAccessibleAction("Read recent chat", AnnounceRecentChat);
+                AddAccessibleAction("Send clipboard text to chat", SendClipboardChat);
+                for (var sound = 0; sound < SoundboardNames.Length; sound++)
+                {
+                    var capturedSound = sound;
+                    AddAccessibleAction("Send soundboard " + SoundboardLabel(sound), () => SendSoundboard(capturedSound));
+                }
+            }
+            AddAccessibleAction($"Increase text size, currently {AccessibleTextScalePercent()} percent", () => AdjustTextScale(1));
+            AddAccessibleAction($"Decrease text size, currently {AccessibleTextScalePercent()} percent", () => AdjustTextScale(-1));
+            AddAccessibleAction((_highContrast ? "Disable" : "Enable") + " high contrast", ToggleHighContrast);
+            AddAccessibleAction((_selfVoicing ? "Disable" : "Enable") + " self voicing", ToggleSelfVoicing);
+            AddAccessibleTacticalAirActions();
+            if (_game.State.Phase == ActivationPhase.AwaitingChit)
+            {
+                AddAccessibleSetupActions();
+                AddAccessibleAction("Draw movement chit", DrawLocalMovementChit);
+            }
+            else if (_game.State.Phase == ActivationPhase.DeclareSpeed && force != null)
+            {
+                if (_game.State.DetectionRulesEnabled && !force.RadarDeclaredThisActivation)
+                {
+                    AddAccessibleAction("Keep surface radar silent", () => DeclareLocalRadar(false));
+                    if (force.CanRadiateRadar) AddAccessibleAction("Radiate surface search radar", () => DeclareLocalRadar(true));
+                }
+                else
+                    for (var speed = 0; speed <= force.EffectiveSpeed; speed++)
+                    {
+                        var selectedSpeed = speed;
+                        AddAccessibleAction("Declare speed " + speed, () => DeclareLocalSpeed(selectedSpeed));
+                    }
+            }
+            else if (_game.State.Phase == ActivationPhase.PlayerMove && force != null)
+            {
+                foreach (var direction in AccessibleDirections())
+                {
+                    var destination = Offset(force.Position, direction.OffsetColumn, direction.OffsetRow);
+                    if (force.MovementRemaining > 0 && _game.State.Map.IsNavigable(destination, force.Side))
+                    {
+                        var captured = destination;
+                        AddAccessibleAction($"Move {direction.Name} to hex {SpeakHex(captured)}",
+                            () => TryLocalMove(captured));
+                    }
+                }
+            }
+            if ((_game.State.Phase == ActivationPhase.PlayerAction ||
+                 _game.State.Phase == ActivationPhase.AircraftAction) && force != null)
+            {
+                if (_game.State.Phase == ActivationPhase.AircraftAction && force.IsAircraftOnly &&
+                    !_game.State.PlayerHasMoved)
+                {
+                    AddAccessibleAction("Start aircraft relocation cursor", () =>
+                    { _accessibleCursor = force.Position; _accessibleCursorActive = true; });
+                    if (_accessibleCursorActive)
+                    {
+                        AddAccessibleCursorActions();
+                        var definition = _game.State.Scenario.Formations.First(item => item.Id == force.Id);
+                        var radius = force.ActiveUnits.First().Definition.AircraftRadius;
+                        if (_game.State.Map.IsNavigable(_accessibleCursor, force.Side) &&
+                            _accessibleCursor.DistanceTo(definition.Start) <= radius)
+                            AddAccessibleAction($"Relocate aircraft to cursor hex {SpeakHex(_accessibleCursor)}",
+                                () => TryLocalMove(_accessibleCursor));
+                    }
+                }
+                AddAccessibleDetectionActions(force);
+                foreach (var target in _game.State.Forces.Where(IsLegalAttackTarget))
+                {
+                    var captured = target;
+                    AddAccessibleAction($"Attack {captured.Id}, range {force.Position.DistanceTo(captured.Position)}",
+                        () => BeginAccessibleAttack(captured), true);
+                }
+                if ((force.IsAircraftOnly && _game.State.Phase == ActivationPhase.AircraftAction) ||
+                    force.DeclaredSpeed >= 0 && force.MovementRemaining == 0)
+                    AddAccessibleAction("End activation", EndLocalActivation, true);
+            }
+            else if (_game.State.Phase == ActivationPhase.MissileCombat)
+                AddAccessibleMissileActions();
+            else if (_game.State.Phase == ActivationPhase.GunCombat)
+                AddAccessibleGunActions();
+        }
+
+        private void AddAccessibleSystemActions()
+        {
+            AddAccessibleAction("Close accessible system menu", () => _accessibleSystemMenu = false);
+            AddAccessibleAction("Pause game", () => SetPaused(true));
+            AddAccessibleAction("Open briefing", () => _showBriefing = true);
+            AddAccessibleAction("Save match", SaveMatch);
+            AddAccessibleAction("Load last save", LoadMatch, true);
+            var scenarios = FirstIslandChainScenarios.Introductory;
+            foreach (var scenario in scenarios)
+            {
+                var captured = scenario;
+                AddAccessibleAction("Start scenario " + scenario.Name, () =>
+                {
+                    _selectedScenario = captured;
+                    _publicSessionName = $"Harpoon Captain's Edition - {captured.Name}";
+                    _accessibleSystemMenu = false;
+                    Restart();
+                    _showBriefing = true;
+                }, true);
+            }
+            AddAccessibleAction(_sessionMode == SessionMode.HotSeat ? "Return to solo play" : "Start hot seat one versus one",
+                () =>
+                {
+                    _sessionMode = _sessionMode == SessionMode.HotSeat ? SessionMode.SinglePlayer : SessionMode.HotSeat;
+                    _accessibleSystemMenu = false;
+                    Restart();
+                }, true);
+            AddAccessibleAction("Open multiplayer connection screen", () => _showMultiplayer = true);
+            AddAccessibleAction("Restart scenario", () => _confirmRestart = true, true);
+            AddAccessibleAction("Exit game", () => _confirmExit = true, true);
+        }
+
+        private void AddAccessibleMultiplayerActions()
+        {
+            AddAccessibleAction("Close multiplayer screen", () => _showMultiplayer = false);
+            AddAccessibleAction("Host as United States Navy", () => _hostSideChoice = Side.UsNavy);
+            AddAccessibleAction("Host as P L A N", () => _hostSideChoice = Side.Plan);
+            AddAccessibleAction("Toggle public discoverability, currently " +
+                (_publicDiscoverable ? "listed" : "private"), () => _publicDiscoverable = !_publicDiscoverable);
+            AddAccessibleAction("Use clipboard as private match password", () =>
+            {
+                _publicPassword = (GUIUtility.systemCopyBuffer ?? string.Empty).Trim();
+                _status = string.IsNullOrEmpty(_publicPassword) ? "Private password cleared." : "Private password loaded from clipboard.";
+            });
+            AddAccessibleAction("Host public relay match", StartPublicHost, true);
+            AddAccessibleAction("Refresh public match browser", () => _publicNetwork.RefreshListings());
+            AddAccessibleAction("Paste relay join code and join", () =>
+            {
+                _joinCode = (GUIUtility.systemCopyBuffer ?? string.Empty).Trim();
+                JoinPublicByCode();
+            }, true);
+            foreach (var listing in _publicNetwork.Listings.Take(8))
+            {
+                var captured = listing;
+                AddAccessibleAction($"Join public match {listing.Name}, {listing.AvailableSlots} slot, " +
+                    (listing.HasPassword ? "password required" : "open"), () => JoinPublicListing(captured.Id), true);
+            }
+            if (!string.IsNullOrEmpty(_publicNetwork.JoinCode))
+                AddAccessibleAction("Copy and announce host join code", () =>
+                {
+                    GUIUtility.systemCopyBuffer = _publicNetwork.JoinCode;
+                    Announce("Host join code " + string.Join(" ", _publicNetwork.JoinCode.ToCharArray()) + ". Copied.");
+                });
+            AddAccessibleAction("Host direct I P match", StartHosting, true);
+            AddAccessibleAction("Paste direct I P address and join", () =>
+            {
+                var clipboard = (GUIUtility.systemCopyBuffer ?? string.Empty).Trim();
+                var separator = clipboard.LastIndexOf(':');
+                if (separator > 0)
+                {
+                    _ipAddress = clipboard.Substring(0, separator);
+                    _portText = clipboard.Substring(separator + 1);
+                }
+                else _ipAddress = clipboard;
+                JoinHost();
+            }, true);
+            if (_sessionMode != SessionMode.SinglePlayer)
+                AddAccessibleAction("Disconnect and return to solo", ReturnToSinglePlayer, true);
+        }
+
+        private void AnnounceRecentChat()
+        {
+            Announce(_chat.Count == 0 ? "No chat messages." : string.Join(" ", _chat.Skip(Math.Max(0, _chat.Count - 5))));
+        }
+
+        private void SendClipboardChat()
+        {
+            _chatInput = (GUIUtility.systemCopyBuffer ?? string.Empty).Trim();
+            if (_chatInput.Length > 240) _chatInput = _chatInput.Substring(0, 240);
+            SendChat();
+        }
+
+        private void AddAccessibleDetectionActions(TaskForceState observer)
+        {
+            if (!_game.State.DetectionRulesEnabled || observer == null || observer.Side != LocalSide) return;
+            var targets = _game.State.Forces.Where(force => force.Side != LocalSide && !force.IsDestroyed).ToArray();
+            var selected = targets.FirstOrDefault(force => force.Id == _selectedFormationId);
+            var visual = selected != null && selected.Position == observer.Position ? selected :
+                targets.FirstOrDefault(force => force.Position == observer.Position);
+            var esmRange = observer.IsAircraftOnly ? 3 : 1;
+            var esm = selected != null && selected.RadarRadiating &&
+                      selected.Position.DistanceTo(observer.Position) <= esmRange ? selected :
+                targets.FirstOrDefault(force => force.RadarRadiating &&
+                    force.Position.DistanceTo(observer.Position) <= esmRange);
+            var sonarRange = observer.IsAircraftOnly ? 0 : 2;
+            var sonar = targets.Where(force => force.Position.DistanceTo(observer.Position) <= sonarRange)
+                .OrderByDescending(force => force == selected)
+                .ThenBy(force => force.Position.DistanceTo(observer.Position)).FirstOrDefault();
+            if (observer.IsAircraftOnly)
+            {
+                var surface = targets.Where(force => !force.IsAircraftOnly && force.Position == observer.Position)
+                    .OrderByDescending(force => force == selected).FirstOrDefault();
+                var airRange = observer.ActiveUnits.Max(unit => unit.EffectiveAirSearchRadar);
+                var air = targets.Where(force => force.IsAircraftOnly &&
+                        force.Position.DistanceTo(observer.Position) <= airRange)
+                    .OrderByDescending(force => force == selected).FirstOrDefault();
+                if (surface != null && !observer.HasUsedAircraftSearch("ssr"))
+                {
+                    var captured = surface;
+                    AddAccessibleAction("Surface radar search for " + surface.Id, () => SearchLocal("ssr", captured));
+                }
+                if (air != null && !observer.HasUsedAircraftSearch("asr"))
+                {
+                    var captured = air;
+                    AddAccessibleAction("Air radar search for " + air.Id, () => SearchLocal("asr", captured));
+                }
+            }
+            if (!observer.IsDummyOnly && visual != null && (observer.IsAircraftOnly || !observer.RadarRadiating) &&
+                (!observer.IsAircraftOnly || !observer.HasUsedAircraftSearch("visual")) &&
+                _game.State.TimeOfDay != TimeOfDay.Night)
+            {
+                var captured = visual;
+                AddAccessibleAction("Visual search for " + visual.Id, () => SearchLocal("visual", captured));
+            }
+            if (!observer.IsDummyOnly && esm != null && observer.CanUseEsm &&
+                (!observer.IsAircraftOnly || !observer.HasUsedAircraftSearch("esm")))
+            {
+                var captured = esm;
+                AddAccessibleAction("Electronic support search for " + esm.Id, () => SearchLocal("esm", captured));
+            }
+            if (!observer.IsDummyOnly && sonar != null &&
+                observer.ActiveUnits.Any(unit => unit.EffectiveSonar > 0) &&
+                (!observer.IsAircraftOnly || !observer.HasUsedAircraftSearch("sonar")))
+            {
+                var captured = sonar;
+                AddAccessibleAction("Sonar search for " + sonar.Id, () => SearchLocal("sonar", captured));
+            }
+        }
+
+        private void AddAccessibleSetupActions()
+        {
+            var splittable = _game.State.Forces.FirstOrDefault(force => force.Side == LocalSide && force.Units.Count > 1);
+            if (splittable != null)
+                foreach (var unit in splittable.Units.ToArray())
+                {
+                    var captured = unit;
+                    AddAccessibleAction($"Split {unit.Definition.DisplayName} from {splittable.Id}",
+                        () => SplitLocalFormation(splittable, captured), true);
+                }
+
+            if (_game.State.Scenario.Id == "fic-05")
+            {
+                var friendly = _game.State.Forces.Where(force => force.Side == LocalSide).ToArray();
+                foreach (var source in friendly.Where(force => force.DummyCards > 0))
+                {
+                    var capturedSource = source;
+                    AddAccessibleAction($"Create dummy task force from {source.Id}",
+                        () => TransferDummy(capturedSource), true);
+                    foreach (var target in friendly.Where(candidate => candidate.Id != source.Id))
+                    {
+                        var capturedTarget = target;
+                        AddAccessibleAction($"Transfer one dummy from {source.Id} to {target.Id}",
+                            () => TransferDummy(capturedSource, capturedTarget), true);
+                    }
+                }
+            }
+
+            var scenario = _game.State.Scenario;
+            if (!(scenario.PlanDeploymentMinimumDistance > 0 || scenario.HasDeploymentZones ||
+                  scenario.HasDistanceDeployment) || !_game.State.MovementCup.FirstDrawPending) return;
+            var deploymentForces = (scenario.HasDeploymentZones || scenario.HasDistanceDeployment)
+                ? _game.State.Forces.Where(candidate =>
+                    (_sessionMode == SessionMode.HotSeat || candidate.Side == LocalSide) &&
+                    scenario.Formations.First(item => item.Id == candidate.Id).CanDeploy)
+                : _game.State.Forces.Where(candidate => candidate.Side == Side.Plan &&
+                    (_sessionMode == SessionMode.HotSeat || LocalSide == Side.Plan));
+            foreach (var formation in deploymentForces)
+            {
+                var captured = formation;
+                AddAccessibleAction("Position formation " + formation.Id, () =>
+                {
+                    _planDeploymentFormationId = captured.Id;
+                    _placingPlanDeployment = true;
+                    _accessibleCursor = captured.Position;
+                    _accessibleCursorActive = true;
+                });
+            }
+            if (_placingPlanDeployment && _accessibleCursorActive)
+            {
+                AddAccessibleCursorActions();
+                if (IsLegalPlanDeployment(_accessibleCursor))
+                    AddAccessibleAction($"Deploy {_planDeploymentFormationId} at cursor hex {SpeakHex(_accessibleCursor)}",
+                        () => DeployFormation(_accessibleCursor), true);
+            }
+        }
+
+        private void AddAccessibleCursorActions()
+        {
+            foreach (var direction in AccessibleDirections())
+            {
+                var captured = direction;
+                var destination = Offset(_accessibleCursor, direction.OffsetColumn, direction.OffsetRow);
+                if (_game.State.Map.Contains(destination))
+                    AddAccessibleAction($"Move cursor {direction.Name} to hex {SpeakHex(destination)}",
+                        () => MoveAccessibleCursor(captured.Name));
+            }
+            AddAccessibleAction("Inspect map cursor", () => Announce(DescribeAccessibleCursor()));
+        }
+
+        private void MoveAccessibleCursor(string directionName)
+        {
+            var direction = AccessibleDirections().First(item => item.Name == directionName);
+            var destination = Offset(_accessibleCursor, direction.OffsetColumn, direction.OffsetRow);
+            if (!_game.State.Map.Contains(destination)) { Announce("Cursor cannot leave the map."); return; }
+            _accessibleCursor = destination;
+            _accessibleCursorActive = true;
+            Announce(DescribeAccessibleCursor());
+        }
+
+        private string DescribeAccessibleCursor()
+        {
+            if (!_accessibleCursorActive) return "Map cursor is not active.";
+            var terrain = _game.State.Map.TerrainAt(_accessibleCursor);
+            var visible = _game.State.Forces.Where(force => force.Position == _accessibleCursor &&
+                IsFormationVisibleToLocal(force)).Select(force => force.Id).ToArray();
+            return $"Cursor at hex {SpeakHex(_accessibleCursor)}, {terrain}. " +
+                   (visible.Length == 0 ? "No visible formations." : "Visible formations: " + string.Join(", ", visible) + ".");
+        }
+
+        private void AddAccessibleTacticalAirActions()
+        {
+            if (!_game.State.Scenario.TacticalAirEnabled) return;
+            var ownSide = _sessionMode == SessionMode.HotSeat && _game.State.Phase == ActivationPhase.AwaitingChit
+                ? _airOperationsSide : LocalSide;
+            var flights = _game.State.TacticalFlights.Where(flight => flight.Side == ownSide &&
+                flight.Mission != TacticalAirMission.Destroyed).ToArray();
+            if (flights.Length == 0) return;
+            var selected = flights.FirstOrDefault(flight => flight.Id == _selectedTacticalFlightId) ??
+                           flights.FirstOrDefault(flight => flight.Mission == TacticalAirMission.Ready) ?? flights[0];
+            _selectedTacticalFlightId = selected.Id;
+            foreach (var flight in flights)
+            {
+                var captured = flight;
+                AddAccessibleAction($"Select tactical flight {flight.Id}, {flight.Definition.DisplayName}, " +
+                    $"{flight.Mission}, {flight.ReadyAircraft} ready", () => _selectedTacticalFlightId = captured.Id);
+            }
+            var setupWindow = _game.State.Phase == ActivationPhase.AwaitingChit &&
+                              _game.State.MovementCup.FirstDrawPending;
+            if (setupWindow && selected.IsFighter && selected.Mission == TacticalAirMission.Ready &&
+                selected.ReadyAircraft == 4)
+            {
+                var selectedId = selected.Id;
+                AddAccessibleAction("Assign selected flight to radar C A P", () => SubmitTacticalCommand(
+                    new GameCommand(GameCommandType.AssignCap, ownSide, _game.State.Revision,
+                        sourceUnitId: selectedId, enabled: true)));
+                AddAccessibleAction("Assign selected flight to silent C A P", () => SubmitTacticalCommand(
+                    new GameCommand(GameCommandType.AssignCap, ownSide, _game.State.Revision,
+                        sourceUnitId: selectedId, enabled: false)));
+                if (_game.State.AirBase(selected.BaseId)?.Definition.IsCarrier == true)
+                    AddAccessibleAction("Assign selected flight as deck launched interceptor", () => SubmitTacticalCommand(
+                        new GameCommand(GameCommandType.AssignDeckInterceptor, ownSide, _game.State.Revision,
+                            sourceUnitId: selectedId)));
+            }
+            var canStrike = selected.Mission == TacticalAirMission.Ready && selected.ReadyAircraft > 0 &&
+                            _game.State.ActiveSide == ownSide && _game.State.Phase != ActivationPhase.AwaitingChit &&
+                            _game.State.Phase != ActivationPhase.MissileCombat &&
+                            _game.State.Phase != ActivationPhase.GunCombat;
+            if (!canStrike) return;
+            for (var strength = 1; strength <= Math.Min(4, selected.ReadyAircraft); strength++)
+            {
+                var captured = strength;
+                AddAccessibleAction("Set strike strength " + strength, () => _selectedTacticalStrength = captured);
+            }
+            if (selected.Definition.LongAsm > 0)
+                AddAccessibleAction("Select long range air launched missiles", () => _selectedTacticalWeapon = TacticalWeapon.LongAsm);
+            if (selected.Definition.ShortAsm > 0)
+                AddAccessibleAction("Select short range air launched missiles", () => _selectedTacticalWeapon = TacticalWeapon.ShortAsm);
+            if (selected.Definition.Bombs > 0)
+                AddAccessibleAction("Select bombs", () => _selectedTacticalWeapon = TacticalWeapon.Bombs);
+            var targetIds = _game.State.Forces.Where(force => force.Side != ownSide && !force.IsDestroyed &&
+                    !force.IsOffMap && (!_game.State.DetectionRulesEnabled ||
+                    _game.State.Detection.IsDetected(ownSide, force.Id))).Select(force => force.Id)
+                .Concat(_game.State.AirBases.Where(item => item.Definition.Side != ownSide &&
+                    !item.Definition.IsCarrier).Select(item => item.Definition.Id)).Distinct().ToArray();
+            foreach (var targetId in targetIds)
+            {
+                var captured = targetId;
+                AddAccessibleAction("Select tactical strike target " + targetId,
+                    () => _selectedTacticalTargetId = captured);
+            }
+            foreach (var escort in flights.Where(flight => flight.Id != selected.Id && flight.IsFighter &&
+                         flight.BaseId == selected.BaseId && flight.Mission == TacticalAirMission.Ready))
+            {
+                var captured = escort.Id;
+                AddAccessibleAction((_selectedTacticalEscortId == escort.Id ? "Remove escort " : "Add escort ") + escort.Id,
+                    () => _selectedTacticalEscortId = _selectedTacticalEscortId == captured ? string.Empty : captured);
+            }
+            if (!string.IsNullOrEmpty(_selectedTacticalTargetId))
+            {
+                var flightId = selected.Id;
+                AddAccessibleAction("Launch configured tactical strike", () =>
+                {
+                    var targetForce = _game.State.Formation(_selectedTacticalTargetId);
+                    var targetUnit = targetForce?.Objective ?? targetForce?.ActiveUnits.FirstOrDefault();
+                    SubmitTacticalCommand(new GameCommand(GameCommandType.LaunchTacticalStrike, ownSide,
+                        _game.State.Revision, factors: _selectedTacticalStrength,
+                        targetId: _selectedTacticalTargetId, sourceUnitId: flightId,
+                        formationId: targetUnit?.Definition.Id,
+                        unitIds: string.IsNullOrEmpty(_selectedTacticalEscortId)
+                            ? Array.Empty<string>() : new[] { _selectedTacticalEscortId },
+                        searchMode: _selectedTacticalWeapon.ToString()));
+                    _selectedTacticalEscortId = string.Empty;
+                }, true);
+            }
+        }
+
+        private void BeginAccessibleAttack(TaskForceState target)
+        {
+            var activeForce = _game.State.ActiveForce;
+            if (activeForce == null || target == null || !IsLegalAttackTarget(target))
+            {
+                _status = "That target is not legal now.";
+                return;
+            }
+            SelectFormation(target.Side, target.Id);
+            var useTorpedoes = activeForce.IsSubmarineOnly && !target.IsSubmarineOnly &&
+                               activeForce.Position == target.Position;
+            var targetUnit = target.ActiveUnits.FirstOrDefault();
+            var torpedoes = useTorpedoes && targetUnit != null
+                ? activeForce.ActiveUnits.Where(unit => unit.EffectiveTorpedoes > 0).Select((unit, index) =>
+                    new MissileAllocationData
+                    {
+                        id = $"TORP-{index + 1}", sourceUnitId = unit.Definition.Id,
+                        targetUnitId = targetUnit.Definition.Id, shortFactors = unit.EffectiveTorpedoes
+                    }).ToArray()
+                : Array.Empty<MissileAllocationData>();
+            var command = new GameCommand(GameCommandType.Attack, LocalSide, _game.State.Revision,
+                targetId: target.Id, enabled: !useTorpedoes && _preferSubmarineSsm,
+                missileAllocations: torpedoes);
+            if (IsClientSession)
+            {
+                _pendingCommands[command.Id] = command;
+                NetworkSend(new NetworkMessage { kind = "command", command = command.ToData() });
+                _status = "Attack command sent to host.";
+                return;
+            }
+            var result = _game.Execute(command);
+            _status = result.Accepted && _game.State.Phase == ActivationPhase.MissileCombat
+                ? "Missile engagement opened. Choose missile allocations."
+                : result.Accepted && _game.State.Phase == ActivationPhase.GunCombat
+                    ? "Close action opened. Choose gun combat actions."
+                    : result.Summary;
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void AddAccessibleMissileActions()
+        {
+            var engagement = _game.State.PendingMissileCombat;
+            if (engagement == null || engagement.DecisionSide != LocalSide) return;
+            EnsureAccessibleCombatDraft(engagement);
+            if (engagement.Phase == MissileCombatPhase.AllocateFire)
+            {
+                var attacker = _game.State.Formation(engagement.AttackerFormationId);
+                var defender = _game.State.Formation(engagement.DefenderFormationId);
+                var range = attacker.Position.DistanceTo(defender.Position);
+                foreach (var source in attacker.ActiveUnits.Where(unit =>
+                             unit.AvailableShortSsm > 0 || unit.AvailableLongSsm > 0))
+                foreach (var target in defender.ActiveUnits)
+                {
+                    var key = source.Definition.Id + "|" + target.Definition.Id;
+                    if (!_missileDraft.ContainsKey(key)) _missileDraft[key] = new int[2];
+                    var capturedKey = key;
+                    var capturedSource = source;
+                    if (range <= 1)
+                        AddAccessibleAction($"Add short range missile from {source.Definition.DisplayName} to {target.Definition.DisplayName}",
+                            () => AdjustAccessibleMissile(capturedKey, capturedSource, true, 1));
+                    if (range <= 3)
+                        AddAccessibleAction($"Add long range missile from {source.Definition.DisplayName} to {target.Definition.DisplayName}",
+                            () => AdjustAccessibleMissile(capturedKey, capturedSource, false, 1));
+                    if (_missileDraft[key][0] > 0)
+                        AddAccessibleAction($"Remove short range missile from {source.Definition.DisplayName} to {target.Definition.DisplayName}",
+                            () => AdjustAccessibleMissile(capturedKey, capturedSource, true, -1));
+                    if (_missileDraft[key][1] > 0)
+                        AddAccessibleAction($"Remove long range missile from {source.Definition.DisplayName} to {target.Definition.DisplayName}",
+                            () => AdjustAccessibleMissile(capturedKey, capturedSource, false, -1));
+                }
+                var allocations = AccessibleMissileAllocations();
+                if (allocations.Length > 0)
+                    AddAccessibleAction($"Launch {allocations.Sum(item => item.shortFactors + item.longFactors)} allocated missile factors",
+                        () => SubmitCombatCommand(new GameCommand(GameCommandType.AllocateMissileFire, LocalSide,
+                            _game.State.Revision, missileAllocations: AccessibleMissileAllocations()),
+                            "Missile allocation sent to host."), true);
+            }
+            else if (engagement.Phase == MissileCombatPhase.DefensiveDeployment)
+            {
+                var defender = _game.State.Formation(engagement.DefenderFormationId);
+                var paired = new HashSet<string>(_defensePairDraft.SelectMany(pair =>
+                    new[] { pair.firstUnitId, pair.secondUnitId }));
+                foreach (var ship in defender.ActiveUnits.Where(unit => !paired.Contains(unit.Definition.Id)))
+                {
+                    var captured = ship.Definition.Id;
+                    AddAccessibleAction($"Select {ship.Definition.DisplayName} for defense pair",
+                        () => SelectAccessibleDefenseShip(captured));
+                }
+                if (_defensePairDraft.Count > 0 || !string.IsNullOrEmpty(_pairSelection))
+                    AddAccessibleAction("Clear defense pairs", () => { _defensePairDraft.Clear(); _pairSelection = string.Empty; });
+                AddAccessibleAction("Deploy defense pairs", () => SubmitCombatCommand(
+                    new GameCommand(GameCommandType.Defend, LocalSide, _game.State.Revision,
+                        defensePairs: _defensePairDraft.ToArray()), "Defensive deployment sent to host."), true);
+            }
+            else if (engagement.Phase == MissileCombatPhase.LongRangeRemoval)
+            {
+                foreach (var salvo in engagement.Salvos.Where(item => item.RemainingFactors > 0))
+                {
+                    if (!_longRangeRemovalDraft.ContainsKey(salvo.Id)) _longRangeRemovalDraft[salvo.Id] = 0;
+                    var captured = salvo;
+                    if (_longRangeRemovalDraft.Values.Sum() < engagement.LongRangeHits &&
+                        _longRangeRemovalDraft[salvo.Id] < salvo.RemainingFactors)
+                        AddAccessibleAction($"Remove one factor from salvo {salvo.Id} targeting {salvo.TargetUnitId}",
+                            () => _longRangeRemovalDraft[captured.Id]++);
+                    if (_longRangeRemovalDraft[salvo.Id] > 0)
+                        AddAccessibleAction($"Restore one factor to salvo {salvo.Id}",
+                            () => _longRangeRemovalDraft[captured.Id]--);
+                }
+                if (_longRangeRemovalDraft.Values.Sum() == engagement.LongRangeHits)
+                    AddAccessibleAction("Confirm long range S A M removals", () => SubmitCombatCommand(
+                        new GameCommand(GameCommandType.Defend, LocalSide, _game.State.Revision,
+                            missileReductions: _longRangeRemovalDraft.Where(item => item.Value > 0)
+                                .Select(item => new MissileReductionData { salvoId = item.Key, factors = item.Value }).ToArray()),
+                        "Long-range S A M removals sent to host."), true);
+            }
+            else if (engagement.Phase == MissileCombatPhase.ShortRangeDefense)
+            {
+                var defender = _game.State.Formation(engagement.DefenderFormationId);
+                foreach (var ship in defender.ActiveUnits.Where(unit => unit.EffectiveShortSam > 0))
+                {
+                    var mate = engagement.PairMate(ship.Definition.Id);
+                    foreach (var salvo in engagement.Salvos.Where(salvo => salvo.RemainingFactors > 0 &&
+                                 (salvo.TargetUnitId == ship.Definition.Id || salvo.TargetUnitId == mate)))
+                    {
+                        var shipId = ship.Definition.Id;
+                        var salvoId = salvo.Id;
+                        AddAccessibleAction($"Assign {ship.Definition.DisplayName} short range S A M to salvo {salvo.Id}",
+                            () => _shortRangeDefenseDraft[shipId] = salvoId);
+                    }
+                }
+                AddAccessibleAction("Fire short range defenses and resolve raid", () => SubmitCombatCommand(
+                    new GameCommand(GameCommandType.Defend, LocalSide, _game.State.Revision,
+                        shortRangeDefenses: _shortRangeDefenseDraft.Select(item =>
+                            new ShortRangeDefenseData { defendingUnitId = item.Key, salvoId = item.Value }).ToArray()),
+                    "Short-range defense assignments sent to host."), true);
+            }
+            else if (engagement.Phase == MissileCombatPhase.CounterattackDecision)
+            {
+                AddAccessibleAction("Launch counterattack", () => SubmitCombatCommand(
+                    new GameCommand(GameCommandType.Counterattack, LocalSide, _game.State.Revision, enabled: true),
+                    "Counterattack decision sent to host."), true);
+                AddAccessibleAction("Decline counterattack", () => SubmitCombatCommand(
+                    new GameCommand(GameCommandType.Counterattack, LocalSide, _game.State.Revision, enabled: false),
+                    "Counterattack declined."), true);
+            }
+        }
+
+        private void AddAccessibleGunActions()
+        {
+            var engagement = _game.State.PendingGunCombat;
+            if (engagement == null || engagement.DecisionSide != LocalSide) return;
+            if (engagement.Phase == GunCombatPhase.EngageDecision)
+            {
+                AddAccessibleGunDecision("Evade close action", true);
+                AddAccessibleGunDecision("Engage in close action", false);
+            }
+            else if (engagement.Phase == GunCombatPhase.BreakOffAttacker ||
+                     engagement.Phase == GunCombatPhase.BreakOffDefender)
+            {
+                AddAccessibleGunDecision("Break off gun combat", true);
+                AddAccessibleGunDecision("Continue gun combat", false);
+            }
+            else if (engagement.Phase == GunCombatPhase.ArrangeAttacker ||
+                     engagement.Phase == GunCombatPhase.ArrangeDefender)
+            {
+                var attacker = _game.State.Formation(engagement.AttackerFormationId);
+                var force = attacker.Side == LocalSide ? attacker : _game.State.Formation(engagement.DefenderFormationId);
+                if (_gunPairDraft.Count == 0) _gunPairDraft.AddRange(ScenarioOneGame.DefaultGunPairs(force));
+                foreach (var pair in _gunPairDraft.Where(item => !string.IsNullOrEmpty(item.screenedUnitId)))
+                {
+                    var captured = pair;
+                    AddAccessibleAction($"Swap firing ship {UnitName(force, pair.firingUnitId)} with {UnitName(force, pair.screenedUnitId)}",
+                        () => { var old = captured.firingUnitId; captured.firingUnitId = captured.screenedUnitId; captured.screenedUnitId = old; });
+                }
+                AddAccessibleAction("Lock gun firing formation", () => SubmitCombatCommand(
+                    new GameCommand(GameCommandType.ArrangeGunfire, LocalSide, _game.State.Revision,
+                        gunPairs: _gunPairDraft.ToArray()), "Gunfire formation sent to host."), true);
+            }
+            else if (engagement.Phase == GunCombatPhase.Firing && engagement.FiringIndex < engagement.FiringOrder.Count)
+            {
+                var shooterId = engagement.FiringOrder[engagement.FiringIndex];
+                var attacker = _game.State.Formation(engagement.AttackerFormationId);
+                var targets = attacker.Side == LocalSide ? _game.State.Formation(engagement.DefenderFormationId) : attacker;
+                foreach (var target in targets.ActiveUnits)
+                {
+                    var captured = target;
+                    AddAccessibleAction($"Fire {shooterId} at {target.Definition.DisplayName}" +
+                        (engagement.IsScreened(target.Definition.Id) ? ", screened" : ", exposed"), () =>
+                        SubmitCombatCommand(new GameCommand(GameCommandType.FireGuns, LocalSide,
+                            _game.State.Revision, targetId: captured.Definition.Id, sourceUnitId: shooterId),
+                            "Gun target sent to host."), true);
+                }
+            }
+        }
+
+        private void AddAccessibleGunDecision(string label, bool enabled) => AddAccessibleAction(label, () =>
+            SubmitCombatCommand(new GameCommand(GameCommandType.BreakOff, LocalSide,
+                _game.State.Revision, enabled: enabled), "Gun engagement decision sent to host."), true);
+
+        private void EnsureAccessibleCombatDraft(MissileEngagement engagement)
+        {
+            var marker = engagement.AttackerFormationId + "|" + engagement.DefenderFormationId + "|" +
+                         engagement.IsCounterattack + "|" + engagement.Phase;
+            if (_combatDraftMarker == marker) return;
+            _missileDraft.Clear();
+            _defensePairDraft.Clear();
+            _longRangeRemovalDraft.Clear();
+            _shortRangeDefenseDraft.Clear();
+            _pairSelection = string.Empty;
+            _combatDraftMarker = marker;
+        }
+
+        private void AdjustAccessibleMissile(string key, UnitState source, bool shortRange, int delta)
+        {
+            var index = shortRange ? 0 : 1;
+            var used = _missileDraft.Where(item => item.Key.StartsWith(source.Definition.Id + "|"))
+                .Sum(item => item.Value[index]);
+            var available = shortRange ? source.AvailableShortSsm : source.AvailableLongSsm;
+            _missileDraft[key][index] = Mathf.Clamp(_missileDraft[key][index] + delta, 0,
+                _missileDraft[key][index] + Math.Max(0, available - used));
+        }
+
+        private MissileAllocationData[] AccessibleMissileAllocations() => _missileDraft
+            .Where(item => item.Value[0] + item.Value[1] > 0).Select((item, index) =>
+            {
+                var ids = item.Key.Split('|');
+                return new MissileAllocationData
+                {
+                    id = $"SALVO-{_game.State.Revision}-{index + 1}", sourceUnitId = ids[0],
+                    targetUnitId = ids[1], shortFactors = item.Value[0], longFactors = item.Value[1]
+                };
+            }).ToArray();
+
+        private void SelectAccessibleDefenseShip(string shipId)
+        {
+            if (string.IsNullOrEmpty(_pairSelection)) _pairSelection = shipId;
+            else if (_pairSelection != shipId)
+            {
+                _defensePairDraft.Add(new DefensePairData { firstUnitId = _pairSelection, secondUnitId = shipId });
+                _pairSelection = string.Empty;
+            }
+        }
+
+        private void AddAccessibleAction(string label, Action execute, bool requiresVoiceConfirmation = false) =>
+            _accessibleActions.Add(new AccessibleAction(label, execute, requiresVoiceConfirmation));
+
+        private void MoveAccessibleActionSelection(int delta)
+        {
+            RebuildAccessibleActions();
+            if (_accessibleActions.Count == 0) { Announce("No legal actions available."); return; }
+            _accessibleActionIndex = (_accessibleActionIndex + delta + _accessibleActions.Count) % _accessibleActions.Count;
+            Announce($"Action {_accessibleActionIndex + 1} of {_accessibleActions.Count}. " +
+                     _accessibleActions[_accessibleActionIndex].Label);
+        }
+
+        private void ExecuteAccessibleAction(int index, bool fromVoice = false)
+        {
+            RebuildAccessibleActions();
+            if (index < 0 || index >= _accessibleActions.Count) { Announce("No action selected."); return; }
+            var action = _accessibleActions[index];
+            if (fromVoice && action.RequiresVoiceConfirmation)
+            {
+                _pendingVoiceAction = action;
+                Announce($"Confirm {action.Label}. Say confirm to proceed or cancel.");
+                return;
+            }
+            action.Execute();
+            _pendingVoiceAction = null;
+            Announce(_status);
+        }
+
+        private void AnnounceAccessibleActions()
+        {
+            RebuildAccessibleActions();
+            if (_accessibleActions.Count == 0) { Announce("No legal actions available. " + _status); return; }
+            Announce($"{_accessibleActions.Count} legal actions. " + string.Join(" ",
+                _accessibleActions.Select((action, index) => $"{index + 1}, {action.Label}.")));
+        }
+
+        private void ExecuteAccessibleMovement(string directionName)
+        {
+            var direction = AccessibleDirections().FirstOrDefault(item => item.Name == directionName);
+            var force = _game?.State.ActiveForce;
+            if (force == null || _game.State.Phase != ActivationPhase.PlayerMove || force.MovementRemaining <= 0)
+            {
+                Announce("Movement is not available now.");
+                return;
+            }
+            var destination = Offset(force.Position, direction.OffsetColumn, direction.OffsetRow);
+            if (!_game.State.Map.IsNavigable(destination, force.Side))
+            {
+                Announce($"Cannot move {directionName}. Hex {SpeakHex(destination)} is blocked or off map.");
+                return;
+            }
+            TryLocalMove(destination);
+            Announce(_status + " " + DescribeAccessibleLocation());
+        }
+
+        private void ExecuteAccessibleDirection(string directionName)
+        {
+            if (_accessibleCursorActive && (_placingPlanDeployment ||
+                _game?.State.Phase == ActivationPhase.AircraftAction))
+                MoveAccessibleCursor(directionName);
+            else ExecuteAccessibleMovement(directionName);
+        }
+
+        private void ExecuteVoiceCommand(string command)
+        {
+            _lastRecognized = command;
+            if (command == "help") { _showAccessibilityHelp = true; Announce(AccessibilityHelpText()); return; }
+            if (command == "status") { Announce(DescribeAccessibleState()); return; }
+            if (command == "repeat") { Announce(_lastSpoken, false); return; }
+            if (command == "where am i" || command == "location") { Announce(DescribeAccessibleLocation()); return; }
+            if (command == "legal actions" || command == "list actions") { AnnounceAccessibleActions(); return; }
+            if (command == "next action") { MoveAccessibleActionSelection(1); return; }
+            if (command == "previous action") { MoveAccessibleActionSelection(-1); return; }
+            if (command == "activate") { ExecuteAccessibleAction(_accessibleActionIndex, true); return; }
+            if (command == "confirm")
+            {
+                if (_pendingVoiceAction == null) { Announce("There is no pending voice command."); return; }
+                var pending = _pendingVoiceAction;
+                _pendingVoiceAction = null;
+                pending.Execute();
+                Announce(_status);
+                return;
+            }
+            if (command == "cancel") { _pendingVoiceAction = null; Announce("Voice command cancelled."); return; }
+            if (command == "voice commands off") { ToggleVoiceCommands(); return; }
+            if (command == "multiplayer") { _showMultiplayer = true; Announce("Multiplayer screen opened."); return; }
+            if (command == "system menu") { _accessibleSystemMenu = true; AnnounceAccessibleActions(); return; }
+            if (command == "pause game") { SetPaused(true); Announce("Game paused."); return; }
+            if (command == "read chat") { AnnounceRecentChat(); return; }
+            if (command == "send clipboard chat") { SendClipboardChat(); Announce(_status); return; }
+            if (command == "increase text") { AdjustTextScale(1); return; }
+            if (command == "decrease text") { AdjustTextScale(-1); return; }
+            if (command == "high contrast on" && !_highContrast || command == "high contrast off" && _highContrast)
+            { ToggleHighContrast(); return; }
+            if (command == "self voicing on" && !_selfVoicing || command == "self voicing off" && _selfVoicing)
+            { ToggleSelfVoicing(); return; }
+            if (command.StartsWith("cursor ")) { MoveAccessibleCursor(command.Substring(7)); return; }
+            if (command == "inspect cursor") { Announce(DescribeAccessibleCursor()); return; }
+            if (command.StartsWith("move ")) { ExecuteAccessibleMovement(command.Substring(5)); return; }
+
+            var number = SpokenNumber(command.Split(' ').Last());
+            if (command.StartsWith("choose ") && number > 0) { ExecuteAccessibleAction(number - 1, true); return; }
+            if (command.StartsWith("speed ") && number >= 0)
+            {
+                var action = _accessibleActions.FindIndex(item => item.Label == "Declare speed " + number);
+                ExecuteAccessibleAction(action, true);
+                return;
+            }
+            RebuildAccessibleActions();
+            var phrase = command == "draw chit" ? "Draw movement chit" :
+                command == "radar silent" ? "Keep surface radar silent" :
+                command == "radiate radar" ? "Radiate surface search radar" :
+                command == "end activation" ? "End activation" :
+                command == "attack" ? "Attack " :
+                command == "paste join code" ? "Paste relay join code" :
+                command == "deploy here" ? "Deploy " :
+                command == "relocate here" ? "Relocate aircraft" :
+                command == "continue" ? "Continue to briefing" :
+                command == "resume" ? "Resume game" : string.Empty;
+            if (string.IsNullOrEmpty(phrase))
+            {
+                Announce($"Command {command} is not available. Say legal actions for choices.");
+                return;
+            }
+            var index = _accessibleActions.FindIndex(item => item.Label.StartsWith(phrase,
+                StringComparison.OrdinalIgnoreCase));
+            if (index >= 0) ExecuteAccessibleAction(index, true);
+            else Announce($"Command {command} is not legal now. Say legal actions for choices.");
+        }
+
+        private void EndLocalActivation()
+        {
+            if (IsClientSession)
+            {
+                SendCommand(GameCommandType.EndActivation);
+                _status = "End activation sent to host.";
+                return;
+            }
+            var result = _game.Execute(new GameCommand(GameCommandType.EndActivation,
+                LocalSide, _game.State.Revision));
+            _status = result.Accepted
+                ? _game.State.IsGameOver ? _game.State.Result : "Waiting for the other activation."
+                : result.Summary;
+            RefreshViews();
+            if (IsHostSession) BroadcastSnapshot();
+        }
+
+        private void DrawAccessibilityOverlay()
+        {
+            RebuildAccessibleActions();
+            var rect = new Rect(Mathf.Max(400f, Screen.width * 0.28f), Screen.height - 116f,
+                Mathf.Max(420f, Screen.width * 0.44f), 96f);
+            GUI.Box(rect, GUIContent.none);
+            GUILayout.BeginArea(new Rect(rect.x + 12f, rect.y + 8f, rect.width - 24f, rect.height - 16f));
+            GUILayout.Label("ACCESSIBLE COMMAND MODE  |  F1 HELP  F4 HOLD TO TALK  F5 STATUS  F6 ACTIONS  F7 LOCATION  F8 VOICE",
+                _cardStatStyle);
+            var selected = _accessibleActions.Count == 0 ? "NO LEGAL ACTION" :
+                $"ACTION {_accessibleActionIndex + 1}/{_accessibleActions.Count}: {_accessibleActions[_accessibleActionIndex].Label}";
+            GUILayout.Label(selected, _cardHeaderStyle);
+            GUILayout.Label(_accessibilityNotice +
+                (string.IsNullOrEmpty(_lastRecognized) ? string.Empty : "  |  HEARD: " + _lastRecognized), _cardStatStyle);
+            GUILayout.EndArea();
+
+            if (!_showAccessibilityHelp) return;
+            var help = new Rect(Screen.width * 0.18f, Screen.height * 0.12f, Screen.width * 0.64f, Screen.height * 0.68f);
+            GUI.Box(help, GUIContent.none);
+            GUILayout.BeginArea(new Rect(help.x + 22f, help.y + 18f, help.width - 44f, help.height - 36f));
+            GUILayout.Label("ACCESSIBILITY HELP", _titleStyle);
+            GUILayout.Label(AccessibilityHelpText(), _labelStyle);
+            if (GUILayout.Button("CLOSE ACCESSIBILITY HELP  [F1]", _buttonStyle)) _showAccessibilityHelp = false;
+            GUILayout.EndArea();
+        }
+
+        private static string AccessibilityHelpText() =>
+            "F2 toggles accessible command mode. Tab and Shift plus Tab cycle legal actions; Enter activates. " +
+            "F5 reads game status, F6 reads all legal actions, F7 reads location and visible contacts, and Control R repeats. " +
+            "The numeric keypad moves north with 8, northeast 9, southeast 6, south 2, southwest 1, and northwest 4. " +
+            "F8 enables local Windows voice commands. Hold F4 while speaking and release it when finished. " +
+            "Say status, location, legal actions, next action, previous action, activate, choose followed by a number, " +
+            "speed followed by a number, or move followed by a direction. Voice input is off at every launch until enabled.";
+
+        private int AccessibleTextScalePercent() => _textScaleStep == 0 ? 100 : _textScaleStep == 1 ? 125 : 150;
+
+        private void AdjustTextScale(int delta)
+        {
+            _textScaleStep = Mathf.Clamp(_textScaleStep + delta, 0, 2);
+            InvalidateGuiStyles();
+            SaveAccessibilitySettings();
+            Announce($"Text size {AccessibleTextScalePercent()} percent.");
+        }
+
+        private void ToggleHighContrast()
+        {
+            _highContrast = !_highContrast;
+            InvalidateGuiStyles();
+            SaveAccessibilitySettings();
+            Announce("High contrast " + (_highContrast ? "on." : "off."));
+        }
+
+        private void ToggleSelfVoicing()
+        {
+            _selfVoicing = !_selfVoicing;
+            SaveAccessibilitySettings();
+            if (_selfVoicing) Announce("Self voicing on.");
+            else _accessibilityNotice = "Self voicing off. Keyboard accessibility remains active.";
+        }
+
+        private void InvalidateGuiStyles()
+        {
+            _titleStyle = null;
+            _labelStyle = null;
+            _buttonStyle = null;
+            _sectionHeaderStyle = null;
+            _cardHeaderStyle = null;
+            _cardStatStyle = null;
+            _supplementCardStyle = null;
+            _supplementTitleStyle = null;
+            _supplementMetaStyle = null;
+            _supplementBadgeStyle = null;
+            _supplementSensorStyle = null;
+            _supplementWeaponStyle = null;
+            _supplementHullStyle = null;
+            _tooltipStyle = null;
+            _debugHeaderStyle = null;
+            _debugStyle = null;
+            _activationStyle = null;
+        }
+
+        private static string SpeakHex(HexCoord coordinate) =>
+            $"column {coordinate.Column}, row {coordinate.Row}";
+
+        private static int SpokenNumber(string value)
+        {
+            var words = SpokenNumbers();
+            var index = Array.IndexOf(words, value);
+            return index >= 0 ? index : int.TryParse(value, out var parsed) ? parsed : -1;
+        }
+
+        private static string[] SpokenNumbers() => new[]
+        {
+            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
+            "eighteen", "nineteen", "twenty"
+        };
+
+        private static HexCoord Offset(HexCoord origin, int column, int row) =>
+            new HexCoord(origin.Column + column, origin.Row + row);
+
+        private static AccessibleDirection[] AccessibleDirections() => new[]
+        {
+            new AccessibleDirection("north", 0, -1),
+            new AccessibleDirection("north east", 1, -1),
+            new AccessibleDirection("south east", 1, 0),
+            new AccessibleDirection("south", 0, 1),
+            new AccessibleDirection("south west", -1, 1),
+            new AccessibleDirection("north west", -1, 0)
+        };
+
+        private static string AccessibleBearing(HexCoord origin, HexCoord destination)
+        {
+            if (origin == destination) return "same hex";
+            var originPoint = origin.ToMapPoint();
+            var destinationPoint = destination.ToMapPoint();
+            var x = destinationPoint.X - originPoint.X;
+            var north = destinationPoint.Y - originPoint.Y;
+            var angle = (Math.Atan2(x, north) * 180d / Math.PI + 360d) % 360d;
+            if (angle < 30d || angle >= 330d) return "north";
+            if (angle < 90d) return "north east";
+            if (angle < 150d) return "south east";
+            if (angle < 210d) return "south";
+            if (angle < 270d) return "south west";
+            return "north west";
         }
 
         private void DrawVictoryOverlay()
@@ -2767,7 +4107,9 @@ namespace Harpoon.Runtime
                     GUI.enabled = true;
                 }
                 GUI.enabled = _sessionMode == SessionMode.SinglePlayer || _sessionMode == SessionMode.HotSeat || NetworkConnected;
-                if (GUILayout.Button("DRAW FIRST CHIT", _buttonStyle)) DrawLocalMovementChit();
+                var drawChitClicked = GUILayout.Button("DRAW FIRST CHIT", _buttonStyle);
+                DrawGuidanceAroundLastControl(GuidanceTarget.DrawChit);
+                if (drawChitClicked) DrawLocalMovementChit();
                 GUI.enabled = true;
                 return;
             }
@@ -2803,9 +4145,13 @@ namespace Harpoon.Runtime
                         : "DECLARE SURFACE-SEARCH RADAR", _cardHeaderStyle);
                     GUILayout.BeginHorizontal();
                     GUI.enabled = CanLocalAct();
-                    if (GUILayout.Button("RADAR SILENT", _buttonStyle)) DeclareLocalRadar(false);
+                    var radarSilentClicked = GUILayout.Button("RADAR SILENT", _buttonStyle);
+                    DrawGuidanceAroundLastControl(GuidanceTarget.RadarChoice);
+                    if (radarSilentClicked) DeclareLocalRadar(false);
                     GUI.enabled = CanLocalAct() && force.CanRadiateRadar;
-                    if (GUILayout.Button("RADIATE SSR", _buttonStyle)) DeclareLocalRadar(true);
+                    var radiateClicked = GUILayout.Button("RADIATE SSR", _buttonStyle);
+                    DrawGuidanceAroundLastControl(GuidanceTarget.RadarChoice);
+                    if (radiateClicked) DeclareLocalRadar(true);
                     GUI.enabled = true;
                     GUILayout.EndHorizontal();
                 }
@@ -2816,7 +4162,9 @@ namespace Harpoon.Runtime
                 for (var speed = 0; speed <= force.EffectiveSpeed; speed++)
                 {
                     var selectedSpeed = speed;
-                    if (GUILayout.Button(speed.ToString(), _buttonStyle)) DeclareLocalSpeed(selectedSpeed);
+                    var speedClicked = GUILayout.Button(speed.ToString(), _buttonStyle);
+                    DrawGuidanceAroundLastControl(GuidanceTarget.SpeedChoice);
+                    if (speedClicked) DeclareLocalSpeed(selectedSpeed);
                 }
                 GUI.enabled = true;
                 GUILayout.EndHorizontal();
@@ -3000,7 +4348,9 @@ namespace Harpoon.Runtime
                 GUILayout.EndVertical();
             }
             GUI.enabled = CanLocalAct();
-            if (GUILayout.Button("LOCK FIRING FORMATION", _buttonStyle))
+            var lockFormationClicked = GUILayout.Button("LOCK FIRING FORMATION", _buttonStyle);
+            DrawGuidanceAroundLastControl(GuidanceTarget.GunArrangement);
+            if (lockFormationClicked)
                 SubmitCombatCommand(new GameCommand(GameCommandType.ArrangeGunfire, LocalSide,
                     _game.State.Revision, gunPairs: _gunPairDraft.ToArray()),
                     "Gunfire formation sent to host.");
@@ -3025,7 +4375,9 @@ namespace Harpoon.Runtime
                 GUI.enabled = CanLocalAct();
                 var label = $"FIRE AT {target.Definition.DisplayName.ToUpperInvariant()}" +
                             (screened ? "  ·  SCREENED −1" : "  ·  EXPOSED");
-                if (GUILayout.Button(label, _buttonStyle))
+                var fireClicked = GUILayout.Button(label, _buttonStyle);
+                DrawGuidanceAroundLastControl(GuidanceTarget.GunTarget);
+                if (fireClicked)
                     SubmitCombatCommand(new GameCommand(GameCommandType.FireGuns, LocalSide,
                         _game.State.Revision, targetId: target.Definition.Id,
                         sourceUnitId: shooter.Definition.Id), "Gun target sent to host.");
@@ -3036,7 +4388,9 @@ namespace Harpoon.Runtime
         private void GunDecisionButton(string label, bool enabled)
         {
             GUI.enabled = CanLocalAct();
-            if (GUILayout.Button(label, _buttonStyle))
+            var decisionClicked = GUILayout.Button(label, _buttonStyle);
+            DrawGuidanceAroundLastControl(GuidanceTarget.GunDecision);
+            if (decisionClicked)
                 SubmitCombatCommand(new GameCommand(GameCommandType.BreakOff, LocalSide,
                     _game.State.Revision, enabled: enabled), "Gun engagement decision sent to host.");
             GUI.enabled = true;
@@ -3065,11 +4419,15 @@ namespace Harpoon.Runtime
                     GUI.enabled = factors[0] > 0;
                     if (GUILayout.Button("−", _buttonStyle, GUILayout.Width(34f))) factors[0]--;
                     GUI.enabled = CanLocalAct() && range <= 1 && usedShort < source.AvailableShortSsm;
-                    if (GUILayout.Button($"SR {factors[0]}  +", _buttonStyle)) factors[0]++;
+                    var addShortClicked = GUILayout.Button($"SR {factors[0]}  +", _buttonStyle);
+                    DrawGuidanceAroundLastControl(GuidanceTarget.MissileAllocation);
+                    if (addShortClicked) factors[0]++;
                     GUI.enabled = factors[1] > 0;
                     if (GUILayout.Button("−", _buttonStyle, GUILayout.Width(34f))) factors[1]--;
                     GUI.enabled = CanLocalAct() && range <= 3 && usedLong < source.AvailableLongSsm;
-                    if (GUILayout.Button($"LR {factors[1]}  +", _buttonStyle)) factors[1]++;
+                    var addLongClicked = GUILayout.Button($"LR {factors[1]}  +", _buttonStyle);
+                    DrawGuidanceAroundLastControl(GuidanceTarget.MissileAllocation);
+                    if (addLongClicked) factors[1]++;
                     GUI.enabled = true;
                     GUILayout.EndHorizontal();
                 }
@@ -3088,7 +4446,9 @@ namespace Harpoon.Runtime
                     };
                 }).ToArray();
             GUI.enabled = CanLocalAct() && allocations.Length > 0;
-            if (GUILayout.Button($"LAUNCH {allocations.Sum(item => item.shortFactors + item.longFactors)} ALLOCATED FACTOR(S)", _buttonStyle))
+            var launchClicked = GUILayout.Button($"LAUNCH {allocations.Sum(item => item.shortFactors + item.longFactors)} ALLOCATED FACTOR(S)", _buttonStyle);
+            DrawGuidanceAroundLastControl(GuidanceTarget.MissileAllocation);
+            if (launchClicked)
                 SubmitCombatCommand(new GameCommand(GameCommandType.AllocateMissileFire, LocalSide,
                     _game.State.Revision, missileAllocations: allocations), "Missile allocation sent to host.");
             GUI.enabled = true;
@@ -3107,7 +4467,9 @@ namespace Harpoon.Runtime
                 var selected = _pairSelection == ship.Definition.Id;
                 var oldColor = GUI.backgroundColor;
                 if (selected) GUI.backgroundColor = new Color(0.95f, 0.72f, 0.18f);
-                if (GUILayout.Button((selected ? "SELECTED: " : "PAIR: ") + ship.Definition.DisplayName.ToUpperInvariant(), _buttonStyle))
+                var pairClicked = GUILayout.Button((selected ? "SELECTED: " : "PAIR: ") + ship.Definition.DisplayName.ToUpperInvariant(), _buttonStyle);
+                DrawGuidanceAroundLastControl(GuidanceTarget.MissileDeployment);
+                if (pairClicked)
                 {
                     if (string.IsNullOrEmpty(_pairSelection)) _pairSelection = ship.Definition.Id;
                     else if (_pairSelection != ship.Definition.Id)
@@ -3130,7 +4492,9 @@ namespace Harpoon.Runtime
                 _pairSelection = string.Empty;
             }
             GUI.enabled = CanLocalAct();
-            if (GUILayout.Button("DEPLOY DEFENSE", _buttonStyle))
+            var deployClicked = GUILayout.Button("DEPLOY DEFENSE", _buttonStyle);
+            DrawGuidanceAroundLastControl(GuidanceTarget.MissileDeployment);
+            if (deployClicked)
                 SubmitCombatCommand(new GameCommand(GameCommandType.Defend, LocalSide,
                     _game.State.Revision, defensePairs: _defensePairDraft.ToArray()), "Defensive deployment sent to host.");
             GUI.enabled = true;
@@ -3151,13 +4515,17 @@ namespace Harpoon.Runtime
                 var assigned = _longRangeRemovalDraft.Values.Sum();
                 GUI.enabled = assigned < engagement.LongRangeHits &&
                               _longRangeRemovalDraft[salvo.Id] < salvo.RemainingFactors;
-                if (GUILayout.Button("+", _buttonStyle, GUILayout.Width(42f))) _longRangeRemovalDraft[salvo.Id]++;
+                var addRemovalClicked = GUILayout.Button("+", _buttonStyle, GUILayout.Width(42f));
+                DrawGuidanceAroundLastControl(GuidanceTarget.LongRangeRemoval);
+                if (addRemovalClicked) _longRangeRemovalDraft[salvo.Id]++;
                 GUI.enabled = true;
                 GUILayout.EndHorizontal();
             }
             var total = _longRangeRemovalDraft.Values.Sum();
             GUI.enabled = CanLocalAct() && total == engagement.LongRangeHits;
-            if (GUILayout.Button($"CONFIRM LR SAM REMOVALS  {total}/{engagement.LongRangeHits}", _buttonStyle))
+            var confirmRemovalsClicked = GUILayout.Button($"CONFIRM LR SAM REMOVALS  {total}/{engagement.LongRangeHits}", _buttonStyle);
+            DrawGuidanceAroundLastControl(GuidanceTarget.LongRangeRemoval);
+            if (confirmRemovalsClicked)
                 SubmitCombatCommand(new GameCommand(GameCommandType.Defend, LocalSide,
                     _game.State.Revision, missileReductions: _longRangeRemovalDraft.Where(item => item.Value > 0)
                     .Select(item => new MissileReductionData { salvoId = item.Key, factors = item.Value }).ToArray()),
@@ -3181,13 +4549,17 @@ namespace Harpoon.Runtime
                     var selected = _shortRangeDefenseDraft.TryGetValue(ship.Definition.Id, out var salvoId) && salvoId == salvo.Id;
                     var oldColor = GUI.backgroundColor;
                     if (selected) GUI.backgroundColor = new Color(0.18f, 0.78f, 0.92f);
-                    if (GUILayout.Button($"{(selected ? "ASSIGNED" : "ENGAGE")} {salvo.Id} → {salvo.TargetUnitId}", _buttonStyle))
+                    var assignDefenseClicked = GUILayout.Button($"{(selected ? "ASSIGNED" : "ENGAGE")} {salvo.Id} → {salvo.TargetUnitId}", _buttonStyle);
+                    DrawGuidanceAroundLastControl(GuidanceTarget.ShortRangeDefense);
+                    if (assignDefenseClicked)
                         _shortRangeDefenseDraft[ship.Definition.Id] = salvo.Id;
                     GUI.backgroundColor = oldColor;
                 }
             }
             GUI.enabled = CanLocalAct();
-            if (GUILayout.Button("FIRE SHORT-RANGE SAM / RESOLVE RAID", _buttonStyle))
+            var resolveRaidClicked = GUILayout.Button("FIRE SHORT-RANGE SAM / RESOLVE RAID", _buttonStyle);
+            DrawGuidanceAroundLastControl(GuidanceTarget.ShortRangeDefense);
+            if (resolveRaidClicked)
                 SubmitCombatCommand(new GameCommand(GameCommandType.Defend, LocalSide,
                     _game.State.Revision, shortRangeDefenses: _shortRangeDefenseDraft.Select(item =>
                     new ShortRangeDefenseData { defendingUnitId = item.Key, salvoId = item.Value }).ToArray()),
@@ -3200,10 +4572,14 @@ namespace Harpoon.Runtime
             GUILayout.Label("The non-moving force may launch its missile counterattack now, before the moving formation resumes.", _cardStatStyle);
             GUILayout.BeginHorizontal();
             GUI.enabled = CanLocalAct();
-            if (GUILayout.Button("COUNTERATTACK", _buttonStyle))
+            var counterattackClicked = GUILayout.Button("COUNTERATTACK", _buttonStyle);
+            DrawGuidanceAroundLastControl(GuidanceTarget.Counterattack);
+            if (counterattackClicked)
                 SubmitCombatCommand(new GameCommand(GameCommandType.Counterattack, LocalSide,
                     _game.State.Revision, enabled: true), "Counterattack decision sent to host.");
-            if (GUILayout.Button("DECLINE", _buttonStyle))
+            var declineClicked = GUILayout.Button("DECLINE", _buttonStyle);
+            DrawGuidanceAroundLastControl(GuidanceTarget.Counterattack);
+            if (declineClicked)
                 SubmitCombatCommand(new GameCommand(GameCommandType.Counterattack, LocalSide,
                     _game.State.Revision, enabled: false), "Counterattack declined.");
             GUI.enabled = true;
@@ -3780,26 +5156,30 @@ namespace Harpoon.Runtime
         private void EnsureStyles()
         {
             if (_titleStyle != null) return;
-            _titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold };
-            _titleStyle.normal.textColor = new Color(0.87f, 0.94f, 1f);
-            _labelStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, wordWrap = true };
-            _labelStyle.normal.textColor = new Color(0.85f, 0.9f, 0.94f);
-            _buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 14, fixedHeight = 34f };
+            var textScale = _textScaleStep == 0 ? 1f : _textScaleStep == 1 ? 1.25f : 1.5f;
+            int Scaled(int value) => Mathf.RoundToInt(value * textScale);
+            var primaryText = _highContrast ? Color.white : new Color(0.87f, 0.94f, 1f);
+            var secondaryText = _highContrast ? Color.white : new Color(0.85f, 0.9f, 0.94f);
+            _titleStyle = new GUIStyle(GUI.skin.label) { fontSize = Scaled(22), fontStyle = FontStyle.Bold };
+            _titleStyle.normal.textColor = primaryText;
+            _labelStyle = new GUIStyle(GUI.skin.label) { fontSize = Scaled(13), wordWrap = true };
+            _labelStyle.normal.textColor = secondaryText;
+            _buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = Scaled(14), fixedHeight = 34f * textScale };
             _sectionHeaderStyle = new GUIStyle(GUI.skin.button)
             {
-                fontSize = 13,
+                fontSize = Scaled(13),
                 fontStyle = FontStyle.Bold,
-                fixedHeight = 32f,
+                fixedHeight = 32f * textScale,
                 alignment = TextAnchor.MiddleLeft,
                 padding = new RectOffset(10, 8, 4, 4)
             };
             _sectionHeaderStyle.normal.textColor = Color.white;
             _sectionHeaderStyle.hover.textColor = Color.white;
             _sectionHeaderStyle.active.textColor = Color.white;
-            _cardHeaderStyle = new GUIStyle(GUI.skin.label) { fontSize = 15, fontStyle = FontStyle.Bold, wordWrap = true };
-            _cardHeaderStyle.normal.textColor = new Color(0.87f, 0.94f, 1f);
-            _cardStatStyle = new GUIStyle(GUI.skin.label) { fontSize = 12, wordWrap = true };
-            _cardStatStyle.normal.textColor = new Color(0.82f, 0.87f, 0.9f);
+            _cardHeaderStyle = new GUIStyle(GUI.skin.label) { fontSize = Scaled(15), fontStyle = FontStyle.Bold, wordWrap = true };
+            _cardHeaderStyle.normal.textColor = primaryText;
+            _cardStatStyle = new GUIStyle(GUI.skin.label) { fontSize = Scaled(12), wordWrap = true };
+            _cardStatStyle.normal.textColor = _highContrast ? Color.white : new Color(0.82f, 0.87f, 0.9f);
             _supplementCardStyle = new GUIStyle(GUI.skin.box)
             {
                 padding = new RectOffset(10, 10, 8, 9),
@@ -3808,7 +5188,7 @@ namespace Harpoon.Runtime
             SetStyleBackground(_supplementCardStyle, SolidTexture(new Color(0.94f, 0.93f, 0.9f)));
             _supplementTitleStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 16,
+                fontSize = Scaled(16),
                 fontStyle = FontStyle.Bold,
                 wordWrap = true,
                 padding = new RectOffset(0, 0, 0, 3)
@@ -3816,14 +5196,14 @@ namespace Harpoon.Runtime
             _supplementTitleStyle.normal.textColor = new Color(0.08f, 0.09f, 0.1f);
             _supplementMetaStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 11,
+                fontSize = Scaled(11),
                 wordWrap = true,
                 padding = new RectOffset(2, 2, 2, 3)
             };
             _supplementMetaStyle.normal.textColor = new Color(0.18f, 0.2f, 0.22f);
             _supplementBadgeStyle = new GUIStyle(GUI.skin.box)
             {
-                fontSize = 11,
+                fontSize = Scaled(11),
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 fixedHeight = 20f,
@@ -3832,24 +5212,24 @@ namespace Harpoon.Runtime
             SetStyleBackground(_supplementBadgeStyle, SolidTexture(Color.white));
             _supplementBadgeStyle.normal.textColor = Color.white;
             _supplementSensorStyle = SupplementStatStyle(new Color(0.55f, 0.81f, 0.82f),
-                new Color(0.04f, 0.16f, 0.18f));
-            _supplementWeaponStyle = SupplementStatStyle(new Color(0.13f, 0.53f, 0.56f), Color.white);
+                new Color(0.04f, 0.16f, 0.18f), Scaled(11));
+            _supplementWeaponStyle = SupplementStatStyle(new Color(0.13f, 0.53f, 0.56f), Color.white, Scaled(11));
             _supplementHullStyle = SupplementStatStyle(new Color(0.7f, 0.84f, 0.92f),
-                new Color(0.04f, 0.13f, 0.19f));
-            _tooltipStyle = new GUIStyle(GUI.skin.box) { fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+                new Color(0.04f, 0.13f, 0.19f), Scaled(11));
+            _tooltipStyle = new GUIStyle(GUI.skin.box) { fontSize = Scaled(13), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
             _tooltipStyle.normal.textColor = new Color(0.9f, 0.98f, 1f);
-            _debugHeaderStyle = new GUIStyle(_titleStyle) { fontSize = 18 };
+            _debugHeaderStyle = new GUIStyle(_titleStyle) { fontSize = Scaled(18) };
             _debugHeaderStyle.normal.textColor = new Color(0.18f, 0.88f, 1f);
             _activationStyle = new GUIStyle(_cardHeaderStyle)
             {
                 alignment = TextAnchor.MiddleCenter,
-                fontSize = 15
+                fontSize = Scaled(15)
             };
             _activationStyle.normal.textColor = Color.white;
             _debugStyle = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 12,
-                font = Font.CreateDynamicFontFromOSFont("Consolas", 12),
+                fontSize = Scaled(12),
+                font = Font.CreateDynamicFontFromOSFont("Consolas", Scaled(12)),
                 wordWrap = true,
                 richText = false,
                 padding = new RectOffset(7, 7, 3, 3)
@@ -3857,11 +5237,11 @@ namespace Harpoon.Runtime
             _debugStyle.normal.textColor = new Color(0.72f, 0.94f, 0.98f);
         }
 
-        private static GUIStyle SupplementStatStyle(Color background, Color text)
+        private static GUIStyle SupplementStatStyle(Color background, Color text, int fontSize)
         {
             var style = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 11,
+                fontSize = fontSize,
                 wordWrap = true,
                 padding = new RectOffset(7, 6, 4, 4),
                 margin = new RectOffset(0, 0, 1, 1)
@@ -3889,8 +5269,55 @@ namespace Harpoon.Runtime
 
         private void OnDestroy()
         {
+            _speech.Dispose();
             _network.Dispose();
             _publicNetwork.Dispose();
+        }
+
+        private sealed class AccessibleAction
+        {
+            public string Label { get; }
+            public Action Execute { get; }
+            public bool RequiresVoiceConfirmation { get; }
+
+            public AccessibleAction(string label, Action execute, bool requiresVoiceConfirmation)
+            {
+                Label = label;
+                Execute = execute;
+                RequiresVoiceConfirmation = requiresVoiceConfirmation;
+            }
+        }
+
+        private enum GuidanceTarget
+        {
+            None,
+            DrawChit,
+            RadarChoice,
+            SpeedChoice,
+            AttackOrEnd,
+            EndActivation,
+            MissileAllocation,
+            MissileDeployment,
+            LongRangeRemoval,
+            ShortRangeDefense,
+            Counterattack,
+            GunDecision,
+            GunArrangement,
+            GunTarget
+        }
+
+        private readonly struct AccessibleDirection
+        {
+            public string Name { get; }
+            public int OffsetColumn { get; }
+            public int OffsetRow { get; }
+
+            public AccessibleDirection(string name, int offsetColumn, int offsetRow)
+            {
+                Name = name;
+                OffsetColumn = offsetColumn;
+                OffsetRow = offsetRow;
+            }
         }
 
         private void QuitGame()

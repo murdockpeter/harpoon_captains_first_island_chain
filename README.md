@@ -32,6 +32,11 @@ Use **Hot-seat 1 vs 1** for two players on one computer. The command panel shows
 
 Press **F1** for the selected scenario's operational briefing and quick reference. Press **P** or Escape to pause; the pause menu provides deterministic save/load and confirmed restart/exit controls.
 
+Press **F2** anywhere to enable the self-voicing accessible command mode for blind and low-vision
+players. It provides keyboard action navigation, spoken state/location/legal-action reports,
+hex-direction movement, high-contrast and scalable text, and opt-in push-to-talk Windows voice commands.
+See [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md) for controls, privacy behavior, and testing guidance.
+
 Release validation is also one command: `release-check.cmd`. Use `test.cmd` for the standalone .NET core suite or `smoke.cmd` for only the Windows build/player smoke gate. Each command returns a nonzero exit code when its gate fails.
 
 Windows builds check published GitHub Releases for verified updates. Release tags drive the tested build/publish workflow, while installation remains an explicit player choice under **Match & System**. See [`docs/AUTO_UPDATES.md`](docs/AUTO_UPDATES.md) for the release contract, one-time Unity license setup, security checks, and recovery path.

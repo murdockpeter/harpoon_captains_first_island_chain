@@ -6,13 +6,14 @@ $artifactFolder = Join-Path $projectPath 'Artifacts'
 $archiveName = 'Harpoon-Captains-Edition-Windows.zip'
 $archivePath = Join-Path $artifactFolder $archiveName
 $checksumPath = "$archivePath.sha256"
-$expectedVersion = '1.0.0'
+$expectedVersion = '1.0.2'
 
 & (Join-Path $projectPath 'release-check.ps1')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $requiredFiles = @(
     (Join-Path $windowsBuild 'HarpoonCaptainsEdition.exe'),
+    (Join-Path $windowsBuild 'HarpoonAccessibilitySpeech.exe'),
     (Join-Path $windowsBuild 'HarpoonCaptainsEdition_Data'),
     (Join-Path $windowsBuild 'UnityPlayer.dll'),
     (Join-Path $windowsBuild 'harpoon-version.txt')

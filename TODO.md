@@ -309,6 +309,22 @@ Each scenario is both playable content and the acceptance test for a new rules f
 
 ---
 
+# Accessibility and voice-command release gate
+
+- [x] Add persistent keyboard-first accessible command mode.
+- [x] Add local Windows self-voicing without cloud transmission.
+- [x] Add opt-in push-to-talk constrained voice commands and recognized-command feedback.
+- [x] Add spoken status, location, visible-contact range/bearing, legal actions, and repeat.
+- [x] Add six-direction keyboard movement and an inspectable setup/aircraft map cursor.
+- [x] Add keyboard/voice actions for setup, splitting, dummy transfers, movement, detection, missile combat, gun combat, patrol aircraft, and tactical air.
+- [x] Require spoken confirmation for consequential combat and setup actions.
+- [x] Add 100/125/150-percent text and high-contrast presentation controls.
+- [x] Keep voice input disabled until explicit opt-in on every launch.
+- [x] Build and smoke-test the speech companion with every Windows player.
+- [ ] Complete blind-player acceptance sessions across Scenarios 1–10 with the player's preferred screen-reader workflow.
+
+---
+
 # Post-MVP — Advanced mission system
 
 - [ ] Implement secret mission draw for both sides.
