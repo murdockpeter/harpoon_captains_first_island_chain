@@ -167,13 +167,27 @@ namespace Harpoon.Editor
 
         private static void BuildAccessibilitySpeechHelper(string outputDirectory)
         {
+            var source = Path.GetFullPath("Tools/AccessibilitySpeech/Program.cs");
+            var output = Path.GetFullPath(Path.Combine(outputDirectory, "HarpoonAccessibilitySpeech.exe"));
+            if (!File.Exists(source))
+                throw new InvalidOperationException("Accessibility speech helper source is missing.");
+
+            if (Environment.OSVersion.Platform != PlatformID.Win32NT)
+            {
+                var prebuilt = Path.GetFullPath(
+                    "Tools/AccessibilitySpeech/bin/Release/net48/HarpoonAccessibilitySpeech.exe");
+                if (!File.Exists(prebuilt))
+                    throw new InvalidOperationException(
+                        "Prebuild the accessibility speech helper with dotnet before running Unity on a non-Windows host.");
+                File.Copy(prebuilt, output, true);
+                return;
+            }
+
             var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             var framework = Path.Combine(windows, "Microsoft.NET", "Framework64", "v4.0.30319");
             var compiler = Path.Combine(framework, "csc.exe");
             var speechAssembly = Path.Combine(framework, "WPF", "System.Speech.dll");
-            var source = Path.GetFullPath("Tools/AccessibilitySpeech/Program.cs");
-            var output = Path.GetFullPath(Path.Combine(outputDirectory, "HarpoonAccessibilitySpeech.exe"));
-            if (!File.Exists(compiler) || !File.Exists(speechAssembly) || !File.Exists(source))
+            if (!File.Exists(compiler) || !File.Exists(speechAssembly))
                 throw new InvalidOperationException("Windows accessibility speech build prerequisites are missing.");
             var startInfo = new DiagnosticsProcessStartInfo(compiler,
                 $"/nologo /target:exe /optimize+ /reference:\"{speechAssembly}\" /out:\"{output}\" \"{source}\"")

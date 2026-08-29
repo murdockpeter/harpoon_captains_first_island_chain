@@ -54,6 +54,10 @@ jobs:
             exit 1
           fi
 
+      - name: Build Windows accessibility speech helper
+        shell: pwsh
+        run: dotnet build Tools/AccessibilitySpeech/HarpoonAccessibilitySpeech.csproj --configuration Release
+
       - name: Build tagged Windows player
         uses: game-ci/unity-builder@v5
         env:

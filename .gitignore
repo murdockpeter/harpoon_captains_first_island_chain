@@ -17,6 +17,7 @@
 .idea/
 *.csproj
 !Tools/Harpoon.Core.Validation/Harpoon.Core.Validation.csproj
+!Tools/AccessibilitySpeech/HarpoonAccessibilitySpeech.csproj
 *.sln
 *.suo
 *.user
