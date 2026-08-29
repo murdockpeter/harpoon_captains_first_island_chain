@@ -16,12 +16,12 @@ jobs:
       RELEASE_ASSET: Harpoon-Captains-Edition-Windows.zip
     steps:
       - name: Check out tagged source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '8.0.x'
 
@@ -30,17 +30,37 @@ jobs:
         run: ./test.ps1
 
       - name: Cache Unity Library
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: Library
           key: Library-${{ runner.os }}-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
           restore-keys: |
             Library-${{ runner.os }}-
 
-      - name: Build tagged Windows player
-        uses: game-ci/unity-builder@v4
+      - name: Verify Unity activation secrets
+        shell: bash
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          if [[ -z "$UNITY_LICENSE" && -z "$UNITY_SERIAL" ]]; then
+            echo "::error::Add UNITY_LICENSE for Personal, or UNITY_SERIAL for Pro, in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          if [[ -z "$UNITY_EMAIL" || -z "$UNITY_PASSWORD" ]]; then
+            echo "::error::Add UNITY_EMAIL and UNITY_PASSWORD in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Build tagged Windows player
+        uses: game-ci/unity-builder@v5
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           unityVersion: 6000.2.12f1
           targetPlatform: StandaloneWindows64
@@ -65,8 +85,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "$RELEASE_TAG" \
+          if [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null)" == "false" ]]; then
+            echo "Release $RELEASE_TAG is already published; leaving its immutable assets unchanged."
+            exit 0
+          fi
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --generate-notes --draft \
+              --title "Harpoon Captain's Edition $RELEASE_TAG"
+          fi
+          gh release upload "$RELEASE_TAG" \
             "$RELEASE_ASSET#Windows x64 auto-update package" \
-            "$RELEASE_ASSET.sha256#SHA-256 checksum" \
-            --verify-tag --generate-notes --draft --title "Harpoon Captain's Edition $RELEASE_TAG"
+            "$RELEASE_ASSET.sha256#SHA-256 checksum" --clobber
           gh release edit "$RELEASE_TAG" --draft=false --latest

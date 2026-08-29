@@ -21,7 +21,9 @@ Installation requires a deliberate **Install Update** click. The game downloads 
 
 ## One-time GitHub setup
 
-The tag workflow uses GameCI because GitHub-hosted runners do not include this project's Unity editor/module. Add an Actions repository secret named `UNITY_LICENSE` containing a Unity license accepted by GameCI. The workflow already has only the `contents: write` permission needed to publish the release.
+The tag workflow uses GameCI because GitHub-hosted runners do not include this project's Unity editor/module. For Unity Personal, add Actions repository secrets named `UNITY_LICENSE`, `UNITY_EMAIL`, and `UNITY_PASSWORD`; `UNITY_LICENSE` must contain the complete text of the `.ulf` file created by Unity Hub. For Unity Pro, add `UNITY_SERIAL`, `UNITY_EMAIL`, and `UNITY_PASSWORD` instead. The workflow validates that the appropriate secret set is present before starting Unity and has only the `contents: write` permission needed to publish the release. Never commit any of these values to the repository.
+
+On Windows, Unity Hub normally writes a Personal license to `C:\ProgramData\Unity\Unity_lic.ulf` after **Preferences > Licenses > Add > Get a free personal license**. Copy the file contents into the GitHub secret, not into a tracked file. The workflow supports safe reruns: an existing draft is completed, while an already-published immutable release is left unchanged.
 
 For supply-chain protection, enable **Settings → General → Releases → Enable release immutability** after validating the first pipeline release. The workflow creates a draft, attaches both the ZIP and checksum, and only then publishes it so all assets are present before immutability applies.
 
