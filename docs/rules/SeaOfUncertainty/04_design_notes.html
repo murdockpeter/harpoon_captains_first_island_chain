@@ -5,24 +5,24 @@
   <div class="navlinks">
     <a href="index.html">Home</a>
     <a href="01_design_constitution.html">Design Constitution</a>
-    <a href="02_draft_rules_v0_3.html">Draft Rules</a>
+    <a href="02_prototype_rules_v0_4.html">Prototype Rules</a>
     <a href="03_player_aid.html">Player Aid</a>
     <a href="04_design_notes.html">Design Notes</a>
   </div>
 </div></div>
 <main class="wrap">
-<section class="hero"><span class="kicker">Design Notes • Current Assessment</span><h1>Is This One Game?</h1>
-<p class="subtitle">A candid snapshot of what currently feels strongest, what remains questionable, and what should be proven at the table before the design expands.</p></section>
+<section class="hero"><span class="kicker">Design Notes • v0.4 Playtest Agenda</span><h1>What Are We Testing Now?</h1>
+<p class="subtitle">The v0.4 playtest agenda: what is now authoritative, what remains provisional, and what we need to observe before adding additional naval detail.</p></section>
 
 <h2>Current Answer</h2>
-<div class="callout good"><strong>Yes — mostly.</strong> There is one strong game emerging around <strong>Mission → Time → Information → Command Intervention → Movement → Search → Combat → Friction → New Information</strong>. The remaining work is to make every subsystem speak that same mechanical language.</div>
+<div class="callout good"><strong>v0.4 is the first version that should be judged as a playable game rather than a design essay.</strong> The authoritative loop is now <strong>Ready → Choose One Action → React → Resolve → Entropy → Schedule</strong>. All other theory must prove that it improves this loop.</div>
 
 <h2>Strongest Mechanics</h2>
 <table><thead><tr><th>Mechanic</th><th>Confidence</th><th>Why it belongs</th></tr></thead><tbody>
-<tr><td>Asynchronous Ready Time</td><td>★★★★★</td><td>Turns tempo into a real operational resource.</td></tr>
-<tr><td>Standing Mission Orders</td><td>★★★★★</td><td>Lets players command organizations instead of repeatedly “activating units.”</td></tr>
+<tr><td>Asynchronous Ready Time / Clock</td><td>★★★★★</td><td>Turns tempo into a real operational resource.</td></tr>
+<tr><td>Standing Missions + Action Menu</td><td>★★★★★</td><td>Lets players command organizations instead of repeatedly “activating units.”</td></tr>
 <tr><td>Friction expressed through time</td><td>★★★★★</td><td>Creates consequences without a giant random-event subsystem.</td></tr>
-<tr><td>Physical maneuver + tangible combat</td><td>★★★★★</td><td>Preserves the essential pleasure of a naval wargame.</td></tr>
+<tr><td>Physical maneuver + bounded combat</td><td>★★★★★</td><td>Preserves the essential pleasure of a naval wargame.</td></tr>
 <tr><td>Synchronization</td><td>★★★★☆</td><td>Potentially the signature operational decision.</td></tr>
 <tr><td>Information aging</td><td>★★★★☆</td><td>Makes reconnaissance a continuous contest rather than a binary reveal.</td></tr>
 </tbody></table>
@@ -35,7 +35,7 @@
 
 <details open><summary>Entropy / Cohesion</summary>
 <p>Entropy is now restored as an explicit core system, but not as a generic morale bar. It represents physical capability that remains present yet is temporarily unavailable because friction, disruption, destruction, exhaustion, and mission churn interfere with effective action.</p>
-<p>The current prototype direction uses an <strong>Entropy State</strong> of Low / Moderate / High / Critical, while preserving visible causes. <strong>Cohesion</strong> remains the concise execution-state summary: Cohesive / Disrupted / Disorganized. This is promising, but it must be tested to ensure that two linked state systems do not create needless marker burden.</p>
+<p>v0.4 compresses Entropy to three visible source boxes: <strong>Friction / Disruption / Destruction</strong>. The count yields Low / Moderate / High / Critical Entropy; two sources make the Formation Disrupted and all three make it Disorganized. This is intentionally simple, but the playtest must tell us whether the source boxes feel explanatory or merely punitive.</p>
 </details>
 
 <details open><summary>Contact Model</summary>
@@ -61,7 +61,7 @@
 <tr><td>Position</td><td>Where can I influence the fight?</td></tr>
 <tr><td>Information</td><td>What do I believe is happening?</td></tr>
 <tr><td>Command</td><td>What can I deliberately change or coordinate?</td></tr>
-<tr><td>Entropy / Cohesion</td><td>How much physical potential is unavailable, and how effectively can the formation execute?</td></tr>
+<tr><td>Entropy</td><td>Which sources are making otherwise-present capability unavailable?</td></tr>
 <tr><td>Physical Capability</td><td>What can this force actually do?</td></tr>
 </tbody></table>
 
@@ -71,33 +71,36 @@
 <div class="card wide"><h3>Pew Pew Pew</h3><p>Detection, target selection, weapon commitment, defense, leakers, damage, and force preservation must remain dramatic and satisfying.</p></div>
 </div>
 
-<h2>Prototype Test</h2>
-<p>The next real test should be deliberately small but kinetic:</p>
+<h2>v0.4 Playtest Setup</h2>
+<p>Do not add more systems before testing the action chassis. Use the smallest kinetic scenario that lets every core action matter:</p>
 <ul>
 <li>Blue: 1 Carrier Group, 1 SAG, 1 SSN, 1 land-based air group.</li>
 <li>Red: same.</li>
 <li>Approximately 12 × 10 operational hexes.</li>
 <li>12–16 operational Time spaces.</li>
-<li>One clear operational objective, such as protecting or preventing an amphibious transit.</li>
-<li>Only enough rules for movement, detection, command, time, strike, air defense, submarine attack, damage, and recovery.</li>
+<li>One clear objective, such as protecting or preventing an amphibious transit.</li>
+<li>Use the v0.4 Action Rules and Sequence of Play as written wherever possible; record every place where a rule is missing, ambiguous, automatic, or uninteresting.</li>
 </ul>
-
 <h2>Questions the Prototype Must Answer</h2>
 <ul>
-<li>Do I repeatedly face 2–4 legitimate choices, or is one option obvious?</li>
-<li>Do I care that my information is old?</li>
-<li>Do I feel tension between acting now and preparing better?</li>
-<li>Is synchronization always worth waiting for? If yes, redesign it.</li>
-<li>Do Command Slots create prioritization or chores?</li>
-<li>Does Entropy create meaningful decisions, or does it merely add markers and penalties?</li>
-<li>Can I usually explain <em>why</em> a formation has high Entropy?</li>
-<li>Do Mission Orders preserve agency or remove too much direct control?</li>
-<li>Do I physically move pieces enough to feel like a naval wargame?</li>
-<li>Does combat provide satisfying “how many got through?” moments?</li>
-<li>Can I explain a loss in terms of decisions rather than dice?</li>
+<li>When a Formation becomes Ready, are there usually at least 2–4 plausible Actions?</li>
+<li>Does the Ready Time system create tempo decisions without becoming cumbersome?</li>
+<li>Is Cautious / Normal / High Tempo movement a real tradeoff?</li>
+<li>Does Passive / Active / Focused Search make information feel valuable and contested?</li>
+<li>Do Contact Age and certainty actually change what players decide to do?</li>
+<li>Does Strike commitment create meaningful weapon-conservation decisions?</li>
+<li>Is “strike now versus synchronize” genuinely difficult rather than obviously solved?</li>
+<li>Do defender Reactions keep the non-active player engaged?</li>
+<li>Do Combat Bands feel shaped by decisions rather than by luck?</li>
+<li>Do Friction / Disruption / Destruction explain Entropy clearly enough?</li>
+<li>Is Recover a painful but attractive choice?</li>
+<li>Do 3 Command Slots create prioritization instead of bookkeeping?</li>
+<li>Does Push Through feel powerful enough to tempt the player but costly enough to ration?</li>
+<li>Are we physically moving and fighting enough for this to feel like a naval wargame?</li>
+<li>After a loss, can the player explain it mostly in terms of decisions, timing, information, and commitment?</li>
 </ul>
 
-<div class="quote">The decisive test: when three plausible choices are in front of the player, do they have to think hard about which one to take?</div>
+<div class="quote">The decisive test: when a Formation becomes Ready, does the player immediately see several meaningful choices — and care about the consequences of each?</div>
 
 <h2>Source Lineage</h2>
 <p>The design is inspired by the Perla-led framework’s emphasis on the six dimensions of wargaming, the interaction of operational / information / command topologies, friction and uncertainty, command as a countervailing force, and the importance of time and synchronization. The current rules deliberately translate those ideas into a hobby-boardgame structure rather than reproduce the paper’s example game.</p>

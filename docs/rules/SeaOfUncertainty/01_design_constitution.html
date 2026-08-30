@@ -5,22 +5,25 @@
   <div class="navlinks">
     <a href="index.html">Home</a>
     <a href="01_design_constitution.html">Design Constitution</a>
-    <a href="02_draft_rules_v0_3.html">Draft Rules</a>
+    <a href="02_prototype_rules_v0_4.html">Prototype Rules</a>
     <a href="03_player_aid.html">Player Aid</a>
     <a href="04_design_notes.html">Design Notes</a>
   </div>
 </div></div>
 <main class="wrap">
-<section class="hero"><span class="kicker">Design Constitution • v0.1</span><h1>Design Constitution</h1>
+<section class="hero"><span class="kicker">Design Constitution • v0.2</span><h1>Design Constitution</h1>
 <p class="subtitle">The rules that govern the rules. Every mechanic must serve the same game: approachable operational naval warfare with high agency, meaningful risk/reward, and uncertainty that reflects player decisions rather than replacing them.</p></section>
 
 <h2>1. Agency Before Procedure</h2>
 <p>Every major phase must present at least one meaningful player choice. If a phase exists only to maintain the simulation, merge it, simplify it, or automate it.</p>
 
-<h2>2. Detail Must Create Decisions</h2>
+<h2>2. Playable Verbs Before Theory</h2>
+<p>The player experiences the game through a concise action menu: <strong>Move, Search, Strike, Patrol / Screen, Support, Recover, Replenish, and Hold</strong>. Command, information, friction, entropy, and synchronization must change the meaning or consequences of those verbs rather than becoming detached mini-games.</p>
+
+<h2>3. Detail Must Create Decisions</h2>
 <p>Keep detail when it changes player behavior. Remove detail that exists only to prove fidelity. Range, signature, endurance, sensor posture, weapon commitment, and readiness matter because they alter choices. Decorative sub-ratings do not.</p>
 
-<h2>3. Every Strong Option Carries Cost</h2>
+<h2>4. Every Strong Option Carries Cost</h2>
 <div class="callout good"><strong>Design test:</strong> If an option is powerful and almost always correct, it is probably missing a price.</div>
 <table><thead><tr><th>Choice</th><th>Reward</th><th>Risk / Cost</th></tr></thead><tbody>
 <tr><td>High-Tempo movement</td><td>Arrive sooner</td><td>Higher signature, endurance use, friction</td></tr>
@@ -31,39 +34,37 @@
 <tr><td>Recover</td><td>Restore effectiveness</td><td>Surrender tempo</td></tr>
 </tbody></table>
 
-<h2>4. Luck Reflects Decisions</h2>
+<h2>5. Luck Reflects Decisions</h2>
 <p>Players should construct the likely result range before a die is rolled. Randomness determines the exact expression of uncertainty inside that range. The dice do not decide whether the plan mattered.</p>
 <div class="quote">A player should say, “I accepted a risky shot with stale targeting and it failed,” not “the dice decided the game.”</div>
 
-<h2>5. Physical Warfare Remains Tangible</h2>
+<h2>6. Physical Warfare Remains Tangible</h2>
 <p>The theory may shape the game, but it may never erase the game. Players still maneuver formations, establish patrol lines, manage sensor posture, launch strikes, defend against incoming weapons, expend ammunition, take damage, and fight for geographic objectives.</p>
 
-<h2>6. Time Is a Resource</h2>
+<h2>7. Time Is a Resource</h2>
 <p>Actions consume operational time. Friction primarily changes time. Waiting can improve preparation but surrender initiative. Synchronization is valuable because effects arriving inside the opponent’s reaction window behave differently from the same effects arriving separately.</p>
 
-<h2>7. Information Is Imperfect, Stale, and Contestable</h2>
+<h2>8. Information Is Imperfect, Stale, and Contestable</h2>
 <p>Detection does not permanently reveal the enemy. Contacts possess location certainty, identity certainty, and age. Search improves knowledge but can expose the searcher. Deception succeeds when it causes the opponent to move, wait, expend attention, or fire at the wrong problem.</p>
 
-<h2>8. Command Attention Is Finite</h2>
+<h2>9. Command Attention Is Finite</h2>
 <p>Routine execution should not consume command attention. Changing missions, forcing timing, focusing intelligence, and coordinating complex operations should. Command is represented as limited attention and staff capacity, not a generic mana pool.</p>
 
-<h2>9. Entropy Is a Core System — But Never a Generic Morale Track</h2>
+<h2>10. Entropy Is a Core System — But Never a Generic Morale Track</h2>
 <p><strong>Entropy</strong> represents the portion of a formation’s physical potential that is temporarily unavailable for effective use because friction, disruption, destruction, exhaustion, uncertainty, and command problems interfere with execution.</p>
-<p>Entropy must always have visible causes. A player should be able to look at a formation and understand <em>why</em> it is losing effectiveness.</p>
-<table><thead><tr><th>Entropy Source</th><th>Typical Cause</th><th>Likely Consequence</th></tr></thead><tbody>
-<tr><td>Friction</td><td>Complex activity, high tempo, difficult conditions</td><td>Delay / added action time</td></tr>
-<tr><td>Disruption</td><td>EW, cyber, deception, command attack</td><td>Command and information impairment</td></tr>
-<tr><td>Destruction</td><td>Combat losses and physical damage</td><td>Reduced capability and increased disorder</td></tr>
-<tr><td>Exhaustion</td><td>Sustained operations / low endurance</td><td>Higher friction and slower recovery</td></tr>
-<tr><td>Mission Churn</td><td>Repeated retasking and intervention</td><td>Lost cohesion and planning efficiency</td></tr>
+<p>Entropy must always have visible causes. In v0.4, those causes are tracked through the three source boxes <strong>Friction, Disruption, and Destruction</strong>. A player should be able to look at a formation and understand <em>why</em> it is losing effectiveness.</p>
+<table><thead><tr><th>Entropy Source</th><th>Typical Cause</th><th>Direct Effect in v0.4</th></tr></thead><tbody>
+<tr><td>Friction</td><td>High tempo, difficult coordination, rapid retasking, extended operations</td><td>+1 Time after complex Actions</td></tr>
+<tr><td>Disruption</td><td>EW, cyber, deception, broken command links</td><td>−1 Search and synchronization effectiveness</td></tr>
+<tr><td>Destruction</td><td>Heavy physical damage</td><td>−1 offensive capability</td></tr>
 </tbody></table>
-<p>The player should not normally “remove an entropy point.” Instead, the player addresses causes: recover, simplify the mission, restore communications, replenish, slow the tempo, or accept the disorder and keep pressing.</p>
+<p>The player does not remove a generic entropy point. The player removes an eligible source by addressing its cause: pause and reorganize, restore communications, recover from disruption, replenish, or accept the disorder and keep pressing. Destruction normally requires repair rather than ordinary Recovery.</p>
 
-<h2>10. Cohesion Is the Visible Summary of Entropy</h2>
-<p>Formation <strong>Cohesion</strong> is the concise player-facing summary of accumulated entropy. Use a small state ladder such as <strong>Cohesive / Disrupted / Disorganized</strong>, but ensure that each state was produced by concrete events rather than arbitrary marker accumulation.</p>
+<h2>11. Cohesion Is the Visible Summary of Entropy</h2>
+<p>Formation <strong>Cohesion</strong> is the concise execution-state summary produced by Entropy. In v0.4, two marked Entropy sources make a Formation <strong>Disrupted</strong>; all three make it <strong>Disorganized</strong>. Each state must still be traceable to concrete causes.</p>
 <div class="callout"><strong>Relationship:</strong> Physical Capability = what the formation could theoretically do. Entropy = how much of that capability is currently unavailable. Cohesion = the visible summary of that operational condition.</div>
 
-<h2>11. One Mechanical Language</h2>
+<h2>12. One Mechanical Language</h2>
 <p>Every rule should alter one or more of these core variables:</p>
 <div class="grid">
 <div class="card"><h3>Time</h3><p>When can this force act?</p></div>
@@ -74,13 +75,13 @@
 <div class="card"><h3>Physical Capability</h3><p>What can the force actually do?</p></div>
 </div>
 
-<h2>12. The Phase Sequence Teaches the Game</h2>
-<p>A new player should be able to follow the phase descriptions and understand what choices are available without memorizing the entire rulebook. Each phase should include a short “Ask yourself” prompt and a rules reference.</p>
+<h2>13. The Sequence of Play Teaches the Game</h2>
+<p>A new player should be able to follow the <strong>10-step Sequence of Play</strong> and understand what choices are available without memorizing the entire rulebook. The player aid should repeatedly answer: what do I know, what can I do, what do I risk, and when can I act again?</p>
 
-<h2>13. Layers of Mastery</h2>
+<h2>14. Layers of Mastery</h2>
 <p>First game: move, search, shoot, defend. Fifth game: signatures, readiness, endurance, reserves, and weapon conservation. Fifteenth game: tempo, deception, command workload, synchronization, and manipulating the enemy’s picture. Same rules — deeper understanding.</p>
 
-<h2>14. Operational Skill, Not Stat Optimization</h2>
+<h2>15. Operational Skill, Not Stat Optimization</h2>
 <p>The best player should win primarily by managing uncertainty, position, attention, timing, delegation, risk, and synchronization better than the opponent — while still understanding the capabilities of the forces at sea.</p>
 
 <h2>Rule-Adoption Test</h2>
