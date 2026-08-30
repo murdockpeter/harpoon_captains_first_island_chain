@@ -1,0 +1,194 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sea of Uncertainty — Draft Rules v0.3</title><link rel="stylesheet" href="styles.css"></head><body>
+<div class="site-nav"><div class="inner">
+  <div class="brand">Sea of Uncertainty</div>
+  <div class="navlinks">
+    <a href="index.html">Home</a>
+    <a href="01_design_constitution.html">Design Constitution</a>
+    <a href="02_draft_rules_v0_3.html">Draft Rules</a>
+    <a href="03_player_aid.html">Player Aid</a>
+    <a href="04_design_notes.html">Design Notes</a>
+  </div>
+</div></div>
+<main class="wrap">
+<section class="hero"><span class="kicker">Draft Rules • v0.3</span><h1>Sea of Uncertainty</h1>
+<p class="subtitle">An operational naval wargame of command, information, tempo, and combat.</p>
+<div class="quote">The player should still move the pieces and fire the weapons — but the quality of those moves and attacks should depend on command, information, timing, and friction.</div></section>
+
+<h2>Contents</h2>
+<div class="toc">
+<a href="#commanding">1. What You Are Commanding</a><a href="#map">2. The Map</a><a href="#time">3. Time</a><a href="#missions">4. Missions</a>
+<a href="#command">5. Command Attention</a><a href="#information">6. Information</a><a href="#search">7. Search</a><a href="#movement">8. Movement</a>
+<a href="#signature">9. Signatures</a><a href="#friction">10. Friction</a><a href="#cohesion">11. Cohesion</a><a href="#endurance">12. Endurance</a>
+<a href="#reaction">13. Reaction</a><a href="#strike">14. Strike Planning</a><a href="#sync">15. Synchronization</a><a href="#combat">16. Combat</a>
+<a href="#damage">17. Damage</a><a href="#deception">18. Deception</a><a href="#disruption">19. Command Disruption</a><a href="#missioncommand">20. Mission Command</a>
+<a href="#recovery">21. Recovery</a><a href="#cycle">22. Operational Cycle</a>
+</div>
+
+<h2 id="commanding">1. What You Are Commanding</h2>
+<p>Each player commands a naval/joint operational force. The basic maneuver piece is the <strong>Formation</strong>, not the individual ship.</p>
+<ul><li>Carrier Strike Group</li><li>Surface Action Group</li><li>Amphibious Group</li><li>Submarine</li><li>Maritime Patrol Group</li><li>Land-Based Air Group</li><li>Bomber Group</li><li>Logistics Group</li></ul>
+<table><thead><tr><th>Formation Rating</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>Mobility</td><td>How quickly the formation can reposition.</td></tr>
+<tr><td>Search</td><td>Ability to detect and improve contacts.</td></tr>
+<tr><td>Signature</td><td>How easy the formation is to find.</td></tr>
+<tr><td>Surface Strike</td><td>Anti-ship offensive capability.</td></tr>
+<tr><td>Air Defense</td><td>Ability to defeat air and missile attack.</td></tr>
+<tr><td>ASW</td><td>Ability against submarines.</td></tr>
+<tr><td>Command</td><td>Ability to act independently under standing orders.</td></tr>
+<tr><td>Endurance</td><td>Ability to sustain operations.</td></tr>
+<tr><td>Integrity</td><td>Physical combat condition.</td></tr>
+</tbody></table>
+
+<h2 id="map">2. The Map</h2>
+<p>The prototype uses large operational hexes, initially around <strong>50 nautical miles per hex</strong>. Scenarios may alter scale. The hex map preserves screening, flanking, chokepoints, patrol lines, threat envelopes, standoff distance, and the simple pleasure of deciding exactly where a formation should go.</p>
+
+<h2 id="time">3. Time</h2>
+<p>There are no conventional alternating turns. Each Formation has a <strong>Ready Time</strong> on an Operational Time Track. Actions consume time; when the formation acts, determine the action duration and place its Ready marker that many spaces ahead.</p>
+<pre>00  01  02  03  04  05  06  07  08  09  10  11  12
+                    ▲ CSG acts
+                              ▲ next Ready Time</pre>
+<p>Forces therefore do not all act together. Tempo becomes an emergent property of preparation, friction, cohesion, and command.</p>
+
+<h2 id="missions">4. Missions</h2>
+<p>Every Formation maintains a standing Mission until changed.</p>
+<table><thead><tr><th>Element</th><th>Question</th></tr></thead><tbody>
+<tr><td>Task</td><td>What are you doing?</td></tr><tr><td>Objective</td><td>Where or against whom?</td></tr>
+<tr><td>Posture</td><td>How aggressively?</td></tr><tr><td>Trigger</td><td>When should the formation deviate from routine execution?</td></tr>
+</tbody></table>
+<p>Typical Tasks: Move, Patrol, Screen, Search, Intercept, Strike, Escort, Defend, Shadow, Withdraw, Replenish, Support.</p>
+<div class="callout"><strong>Example:</strong> TASK: Screen • OBJECTIVE: Amphibious Group Alpha • POSTURE: Balanced • TRIGGER: Intercept hostile surface force within two hexes.</div>
+
+<h2 id="command">5. Command Attention</h2>
+<p>Headquarters possess a limited number of <strong>Command Slots</strong>. Routine execution does not use a slot. Intervention does.</p>
+<pre>FLEET HQ — 4 SLOTS
+[ PLAN STRIKE ]
+[ DIRECT CSG  ]
+[ MONITOR BRAVO ]
+[ FREE        ]</pre>
+<p>A slot may be committed to changing a Mission, coordinating a major operation, pushing through friction, focused intelligence, restoring disrupted command, close supervision, or contingency planning.</p>
+
+<h2 id="information">6. Information</h2>
+<p>Players normally see contacts rather than enemy formations. A Contact tracks:</p>
+<ul><li><strong>Location Certainty:</strong> Low / Medium / High</li><li><strong>Identity Certainty:</strong> Unknown / General / Identified</li><li><strong>Age:</strong> 0 / 1 / 2 / 3+</li></ul>
+<p>Information ages. Old information becomes less useful for interception and attack and can eventually become Lost.</p>
+
+<h2 id="search">7. Search</h2>
+<table><thead><tr><th>Mode</th><th>Reward</th><th>Risk / Cost</th></tr></thead><tbody>
+<tr><td>Passive</td><td>Low exposure</td><td>Lower detection performance</td></tr>
+<tr><td>Active</td><td>Better detection</td><td>Greater signature exposure</td></tr>
+<tr><td>Focused</td><td>Best against one area/contact</td><td>Consumes Command Attention</td></tr>
+</tbody></table>
+
+<h2 id="movement">8. Movement</h2>
+<table><thead><tr><th>Mode</th><th>Reward</th><th>Risk / Cost</th></tr></thead><tbody>
+<tr><td>Cautious</td><td>Lower signature, reduced friction</td><td>Slower repositioning</td></tr>
+<tr><td>Normal</td><td>Balanced performance</td><td>No special benefit</td></tr>
+<tr><td>High Tempo</td><td>Moves farther/faster</td><td>Higher signature, endurance cost, friction</td></tr>
+</tbody></table>
+
+<h2 id="signature">9. Signatures</h2>
+<p>Formation signature states are <strong>QUIET / NORMAL / LOUD</strong>. Active radar, high-speed movement, and major weapons use may raise signature. EMCON can lower signature but usually reduces Search effectiveness.</p>
+
+<h2 id="friction">10. Friction</h2>
+<p>Friction primarily changes <strong>time</strong>. Complex or demanding actions may require a Friction Check.</p>
+<table><thead><tr><th>d6</th><th>Effect</th></tr></thead><tbody>
+<tr><td>1</td><td>+1 Delay</td></tr><tr><td>2–5</td><td>No additional delay</td></tr><tr><td>6</td><td>Exceptional execution: −1 Time</td></tr>
+</tbody></table>
+<p>High Tempo, low Endurance, disruption, and poor cohesion worsen the risk envelope. Preparation, local command quality, and appropriate mission posture improve it.</p>
+<h3>Push Through Friction</h3>
+<p>The player may assign Command Attention to reduce a delay. Doing so generates <strong>Command Strain</strong>. Repeated strain temporarily reduces the HQ’s available Command Slots.</p>
+
+<h2 id="cohesion">11. Operational Cohesion</h2>
+<p>Instead of an abstract Entropy 0–4 meter, the prototype uses three summary states: <strong>Cohesive / Disrupted / Disorganized</strong>. These states should arise from concrete causes such as losses, mission churn, enemy disruption, prolonged high tempo, failed coordination, and exhaustion.</p>
+
+<h2 id="endurance">12. Endurance</h2>
+<p>Formation endurance is <strong>Ready / Extended / Critical</strong>. High Tempo and major combat operations accelerate degradation. Extended formations suffer minor friction increases; Critical formations face reduced movement and greater disruption risk. Replenishment restores endurance.</p>
+
+<h2 id="reaction">13. Reaction</h2>
+<p>When affected by enemy activity, a formation may receive a Reaction Opportunity based on readiness, information, posture, time, and command state. Possible reactions include maneuver, CAP / air response, missile defense, counter-detection, submarine evasion, breaking contact, launching ready aircraft, or executing a contingency order.</p>
+
+<h2 id="strike">14. Strike Planning</h2>
+<ol><li>Select a target based on current information.</li><li>Select participating forces.</li><li>Select weapon / capability commitment.</li><li>Choose timing: launch now or synchronize.</li></ol>
+
+<h2 id="sync">15. Synchronization</h2>
+<p>Multiple formations may deliver effects in the same operational window. Synchronized effects are valuable because they reduce the defender’s ability to recover and react between engagements.</p>
+<pre>TIME 09
+   EW  ─────┐
+   SSN ─────┼──► ENEMY CSG
+   AIR ─────┘</pre>
+<p>The cost is planning time, Command Attention, and greater exposure to friction. The target may move; information may age; one element may be delayed.</p>
+
+<h2 id="combat">16. Combat</h2>
+<p>Combat should remain tactile without becoming a platform-by-platform engineering simulation.</p>
+<ol>
+<li><strong>Targeting:</strong> determine quality of target information.</li>
+<li><strong>Weapon Allocation:</strong> attacker chooses how much capability to commit.</li>
+<li><strong>Outer Defense:</strong> CAP / long-range interception.</li>
+<li><strong>Area Defense:</strong> SAM and escort defenses.</li>
+<li><strong>Terminal Defense:</strong> point defense, decoys, maneuver.</li>
+<li><strong>Impact:</strong> surviving attacks generate Damage Effects.</li>
+</ol>
+<h3>Weapon Commitment</h3>
+<p>Greater commitment improves penetration but depletes future offensive capacity. The player should frequently ask: overwhelm this target now, or preserve striking power for a more important contact later?</p>
+<h3>Bounded Resolution</h3>
+<p>The player’s choices establish an Outcome Band before the die is rolled. The die chooses the exact result inside that band.</p>
+<table><thead><tr><th>Situation</th><th>1</th><th>2–5</th><th>6</th></tr></thead><tbody>
+<tr><td>Weak Attack</td><td>Ineffective</td><td>Ineffective / Limited</td><td>Limited</td></tr>
+<tr><td>Favorable Attack</td><td>Limited</td><td>Effective</td><td>Severe</td></tr>
+<tr><td>Dominant Attack</td><td>Effective</td><td>Severe</td><td>Devastating</td></tr>
+</tbody></table>
+
+<h2 id="damage">17. Damage</h2>
+<p>Physical damage states are <strong>Light / Heavy / Crippled / Destroyed</strong>. Scenarios may add component damage such as impaired flight operations, radar damage, reduced missile capacity, or mobility damage.</p>
+
+<h2 id="deception">18. Deception</h2>
+<p>Deception may create false contacts or reduce enemy certainty. Its value is measured by what it causes the opponent to do: move the wrong formation, launch the wrong aircraft, spend command attention, delay a plan, or expend weapons against a false problem.</p>
+
+<h2 id="disruption">19. Command Disruption</h2>
+<ul><li><strong>Degraded Command:</strong> one fewer Command Slot.</li><li><strong>Delayed Information:</strong> reports arrive later.</li><li><strong>Broken Link:</strong> specified formation cannot receive a new Mission until restored.</li></ul>
+<p>Existing Mission Orders continue unless their triggers dictate otherwise.</p>
+
+<h2 id="missioncommand">20. Mission Command</h2>
+<p>A disconnected formation acts according to its current Mission, its Trigger, and its local Command rating. Strong local command enables adaptation; tightly controlled forces may hesitate or continue literally.</p>
+
+<h2 id="recovery">21. Recovery</h2>
+<table><thead><tr><th>Choice</th><th>Reward</th><th>Risk</th></tr></thead><tbody>
+<tr><td>Continue</td><td>Maintain tempo</td><td>Higher friction / vulnerability</td></tr>
+<tr><td>Recover</td><td>Restore cohesion/readiness/endurance</td><td>Surrender tempo</td></tr>
+</tbody></table>
+
+<h2 id="cycle">22. Operational Cycle</h2>
+
+<div class="phase"><div class="phase-no">1</div><h3>Situation Update</h3><p class="ask">Ask: What changed? What new reports arrived? Which contacts are becoming stale?</p><p>Resolve incoming information, contact aging, and any delayed reports.</p></div>
+<div class="phase"><div class="phase-no">2</div><h3>Command</h3><p class="ask">Ask: Do I need to change a Mission? Where is command attention most valuable? What can I safely delegate?</p><p>Assign Command Slots, issue orders, plan contingencies, and prepare synchronization.</p></div>
+<div class="phase"><div class="phase-no">3</div><h3>Ready Formations</h3><p class="ask">Ask: Continue the current Mission, or intervene?</p><p>Every formation whose Ready marker occupies the current Time may act.</p></div>
+<div class="phase"><div class="phase-no">4</div><h3>Movement & Search</h3><p class="ask">Ask: How fast? How visible? How aggressively do I search?</p><p>Choose movement mode, search mode, and signature posture. Move the pieces and resolve detection.</p></div>
+<div class="phase"><div class="phase-no">5</div><h3>Engagement</h3><p class="ask">Ask: Attack now, hold, or synchronize? How much do I commit? What do I preserve?</p><p>Resolve strikes, reaction, defenses, leakers, and damage.</p></div>
+<div class="phase"><div class="phase-no">6</div><h3>Friction & Next Action</h3><p class="ask">Ask: Do I accept the delay, push through it, or recover?</p><p>Resolve endurance, cohesion, friction, and the formation’s next Ready Time.</p></div>
+
+<h2>The Core Loop</h2>
+<pre>INFORMATION
+    ↓
+COMMAND
+    ↓
+MOVEMENT → POSITION
+    ↓
+SEARCH → NEW INFORMATION
+    ↓
+STRIKE / REACTION
+    ↓
+DAMAGE + COHESION
+    ↓
+FRICTION → TIME
+    ↺</pre>
+
+<div class="callout good"><strong>Current design intent:</strong> one coherent game in which information determines what you think you should do; command determines what you can change; movement creates position; position and information create attack opportunities; combat changes capability and cohesion; friction changes time; and time changes information and synchronization.</div>
+
+<footer>
+  <strong>Sea of Uncertainty</strong> — working design archive.<br>
+  Inspired by the design framework in <em>Transforming Naval Wargaming: A Framework for Operational-Level Wargaming</em>
+  (Peter P. Perla, Michael C. Markowitz, Christopher A. Weuve, Stephen Downes-Martin, Michael Martin, and Paul V. Vebber).
+  This is an original game design, not a reconstruction of <em>Road to Baghdad</em>.
+</footer>
+</main></body></html>
