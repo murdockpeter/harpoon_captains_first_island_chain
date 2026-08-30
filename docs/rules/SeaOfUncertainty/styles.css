@@ -27,7 +27,7 @@ body{
 }
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
-.wrap{max-width:1180px;margin:0 auto;padding:34px 24px 72px}
+.wrap{max-width:1180px;margin:0 auto;padding:34px 32px 72px}
 .site-nav{
   position:sticky;top:0;z-index:10;
   backdrop-filter:blur(16px);
@@ -152,3 +152,6 @@ summary{cursor:pointer;font-weight:800;color:#fff}
   a{color:#111}
   .quote{background:#f6f6f6;color:#111}
 }
+
+main.wrap > h2:first-of-type{margin-top:1.6em}
+main.wrap > .callout:first-of-type{margin-top:1.25rem}
