@@ -1,127 +1,24 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sea of Uncertainty — Sequence of Play Aid v0.4</title><link rel="stylesheet" href="styles.css"></head><body><div class="site-nav"><div class="inner">
-  <div class="brand">Sea of Uncertainty</div>
-  <div class="navlinks">
-    <a href="index.html">Home</a>
-    <a href="01_design_constitution.html">Design Constitution</a>
-    <a href="02_prototype_rules_v0_4.html">Prototype Rules</a>
-    <a href="03_player_aid.html">Player Aid</a>
-    <a href="04_design_notes.html">Design Notes</a>
-  </div>
-</div></div><main class="wrap">
-<section class="hero"><span class="kicker">Sequence of Play Aid • v0.4</span><h1>What Do I Do Now?</h1>
-<p class="subtitle">Use this beside the board. Follow the 10 steps, make one meaningful choice at a time, and schedule the Formation's next opportunity to act.</p>
-<div class="quote">Ready → Choose → Act → React → Resolve → Entropy → Schedule</div></section>
-
-<h2>Action Menu</h2>
-<table><thead><tr><th>Action</th><th>Why choose it?</th><th>Main tradeoff</th></tr></thead><tbody>
-<tr><td><strong>Move</strong></td><td>Change position and geometry.</td><td>Speed versus signature and friction.</td></tr>
-<tr><td><strong>Search</strong></td><td>Find or improve a Contact.</td><td>Information versus exposure / command attention.</td></tr>
-<tr><td><strong>Strike</strong></td><td>Attack a Contact.</td><td>Tempo and weapon commitment versus targeting quality.</td></tr>
-<tr><td><strong>Patrol / Screen</strong></td><td>Prepare to react in an area.</td><td>Protection / interception versus offensive freedom.</td></tr>
-<tr><td><strong>Support</strong></td><td>Improve another operation.</td><td>Commit capability elsewhere instead of acting independently.</td></tr>
-<tr><td><strong>Recover</strong></td><td>Remove an eligible Entropy source.</td><td>Restore effectiveness versus surrender tempo.</td></tr>
-<tr><td><strong>Replenish</strong></td><td>Restore Endurance / weapons / repairable capability.</td><td>Staying power versus 3 Time out of useful action.</td></tr>
-<tr><td><strong>Hold</strong></td><td>Remain quiet and ready.</td><td>Preserve position / endurance versus doing nothing immediately.</td></tr>
-</tbody></table>
-
-<h2>10-Step Sequence of Play</h2>
-
-<div class="phase"><div class="phase-no">1</div><h3>Advance Time</h3><p class="ask">Who is ready to act?</p>
-<p>Move the Clock directly to the next Ready marker(s). If both sides are ready: <strong>Lower Entropy → Higher Command → 1d6 tie-break.</strong></p></div>
-
-<div class="phase"><div class="phase-no">2</div><h3>Update Information</h3><p class="ask">What do I actually know?</p>
-<p>Age unrefreshed Contacts. Age 3+ contacts degrade Location; Low Location + Age 3+ becomes Lost.</p></div>
-
-<div class="phase"><div class="phase-no">3</div><h3>Select a Ready Formation</h3><p class="ask">Does its current Mission still make sense?</p>
-<p>If yes, continue. If no, changing it immediately may require Command Attention.</p></div>
-
-<div class="phase"><div class="phase-no">4</div><h3>Choose One Action</h3><p class="ask">Move • Search • Strike • Patrol / Screen • Support • Recover • Replenish • Hold</p></div>
-
-<div class="phase"><div class="phase-no">5</div><h3>Choose the Risk / Reward Posture</h3>
-<p class="ask">How hard am I pushing?</p>
-<ul>
-<li><strong>Move:</strong> Cautious / Normal / High Tempo</li>
-<li><strong>Search:</strong> Passive / Active / Focused</li>
-<li><strong>Strike:</strong> Light / Standard / Heavy; now or synchronize</li>
-<li><strong>Recover:</strong> choose eligible Entropy source</li>
-</ul></div>
-
-<div class="phase"><div class="phase-no">6</div><h3>Enemy Reacts</h3><p class="ask">Defend • Evade • Counterattack • Hold</p>
-<p>Only when the action creates a Reaction Opportunity.</p></div>
-
-<div class="phase"><div class="phase-no">7</div><h3>Resolve Search / Combat</h3><p class="ask">What band did my decisions create?</p>
-<p>Use the appropriate table. Then roll 1d6 to resolve the remaining uncertainty.</p></div>
-
-<div class="phase"><div class="phase-no">8</div><h3>Apply Consequences</h3>
-<p>Update Contact certainty, damage, Signature, Endurance, Friction, Disruption, Destruction, and Weapon Expenditure.</p></div>
-
-<div class="phase"><div class="phase-no">9</div><h3>Check Entropy</h3>
-<p class="ask">What is making this Formation less usable?</p>
-<p><strong>Friction □ &nbsp;&nbsp; Disruption □ &nbsp;&nbsp; Destruction □</strong></p>
-<p>0 = Low • 1 = Moderate • 2 = High / Disrupted • 3 = Critical / Disorganized</p></div>
-
-<div class="phase"><div class="phase-no">10</div><h3>Schedule Next Action</h3><p class="ask">Accept the delay or Push Through?</p>
-<p>Apply the Action's Time Cost and Friction. Optionally use Command Attention to Push Through. Move the Ready marker.</p></div>
-
-<h2>Quick Tables</h2>
-<h3>Move</h3>
-<table><thead><tr><th>Mode</th><th>Move</th><th>Effect</th></tr></thead><tbody>
-<tr><td>Cautious</td><td>1 hex</td><td>−1 Signature</td></tr>
-<tr><td>Normal</td><td>2 hexes</td><td>No modifier</td></tr>
-<tr><td>High Tempo</td><td>3 hexes</td><td>+1 Signature; mark Friction</td></tr>
-</tbody></table>
-
-<h3>Search</h3>
-<table><thead><tr><th>Mode</th><th>Modifier</th><th>Cost</th></tr></thead><tbody>
-<tr><td>Passive</td><td>+0</td><td>No extra exposure</td></tr>
-<tr><td>Active</td><td>+1</td><td>Become Loud</td></tr>
-<tr><td>Focused</td><td>+2</td><td>1 Command Slot</td></tr>
-</tbody></table>
-
-<h3>Strike Commitment</h3>
-<table><thead><tr><th>Salvo</th><th>Modifier</th><th>Cost</th></tr></thead><tbody>
-<tr><td>Light</td><td>+0</td><td>Low expenditure</td></tr>
-<tr><td>Standard</td><td>+1</td><td>Normal expenditure</td></tr>
-<tr><td>Heavy</td><td>+2</td><td>Mark Weapon Expenditure</td></tr>
-</tbody></table>
-
-<h3>Combat Bands</h3>
-<table><thead><tr><th>Attack − Defense</th><th>Band</th><th>1</th><th>2–5</th><th>6</th></tr></thead><tbody>
-<tr><td>−2 or worse</td><td>Poor</td><td>No Effect</td><td>No Effect</td><td>Light</td></tr>
-<tr><td>−1 to +1</td><td>Even</td><td>No Effect</td><td>Light</td><td>Heavy</td></tr>
-<tr><td>+2 to +3</td><td>Favorable</td><td>Light</td><td>Heavy</td><td>Crippled</td></tr>
-<tr><td>+4 or more</td><td>Dominant</td><td>Heavy</td><td>Crippled</td><td>Destroyed</td></tr>
-</tbody></table>
-
-<h3>Reaction</h3>
-<table><thead><tr><th>Reaction</th><th>Effect</th></tr></thead><tbody>
-<tr><td>Defend</td><td>+1 Defense</td></tr>
-<tr><td>Evade</td><td>+1 Defense; move 1 hex away after combat</td></tr>
-<tr><td>Counterattack</td><td>No Defense bonus; if capable, make immediate Light attack afterward</td></tr>
-<tr><td>Hold</td><td>No modifier; preserve exact position / mission geometry</td></tr>
-</tbody></table>
-
-<h2>Command Attention</h2>
-<p>Prototype baseline: <strong>3 Command Slots per side.</strong></p>
-<p>Use them for Focused Search, immediate Mission change, Synchronized Strike, Push Through, Restore Command, or forcing a Critical-Entropy Formation into a complex action.</p>
-
-<h2>Before I Commit</h2>
-<ol>
-<li>What do I know — and how old is it?</li>
-<li>What position am I trying to create?</li>
-<li>What am I exposing to get there?</li>
-<li>Do I act now or wait for better information / synchronization?</li>
-<li>How much capability am I willing to spend?</li>
-<li>What will the opponent be allowed to do in reaction?</li>
-<li>What Entropy am I creating or accepting?</li>
-<li>When will this Formation be ready again?</li>
-</ol>
-
-<div class="quote">The dice should never be the plan. Your decisions create the band; the die reflects the uncertainty left inside it.</div>
-<footer>
-  <strong>Sea of Uncertainty</strong> — working design archive.<br>
-  Inspired by the design framework in <em>Transforming Naval Wargaming: A Framework for Operational-Level Wargaming</em>
-  (Peter P. Perla, Michael C. Markowitz, Christopher A. Weuve, Stephen Downes-Martin, Michael Martin, and Paul V. Vebber).
-  This is an original game design, not a reconstruction of <em>Road to Baghdad</em>.
-</footer></main></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sea of Uncertainty — Player Aid v0.5</title><link rel="stylesheet" href="styles.css"></head><body><div class="site-nav"><div class="inner">
+<div class="brand"><strong>Sea of Uncertainty</strong></div>
+<div class="navlinks">
+<a href="index.html">Home</a>
+<a href="01_design_constitution.html">Design Constitution</a>
+<a href="02_prototype_rules_v0_5.html">Prototype Rules</a>
+<a href="03_player_aid.html">Player Aid</a>
+<a href="04_design_notes.html">Design Notes</a>
+</div></div></div><main>
+<section class="hero"><span class="kicker">Player Aid • v0.5</span><h1>Sequence of Play & Decision Aid</h1><p>Use this beside the board. It compresses the expanded rules without hiding the important choices.</p></section>
+<h2>10-Step Sequence</h2><ol><li>Advance Time.</li><li>Update Information.</li><li>Select Ready Formation.</li><li>Choose One Action.</li><li>Choose Posture / Commitment.</li><li>Enemy Reacts.</li><li>Resolve.</li><li>Apply Consequences.</li><li>Check Entropy.</li><li>Schedule Next Action.</li></ol>
+<h2>Action Menu</h2><table><tr><th>Action</th><th>Time</th><th>Purpose</th><th>Risk</th></tr><tr><td>Move</td><td>2</td><td>Position</td><td>Exposure / Friction</td></tr><tr><td>Search</td><td>2</td><td>Information</td><td>Time / Signature / Command</td></tr><tr><td>Strike</td><td>2</td><td>Damage</td><td>Weapons / bad targeting</td></tr><tr><td>Patrol / Screen</td><td>1</td><td>Control / protect</td><td>Reduced flexibility</td></tr><tr><td>Support</td><td>1–2</td><td>Improve ally action</td><td>No independent action</td></tr><tr><td>Recover</td><td>2</td><td>Remove F/D</td><td>Yield tempo</td></tr><tr><td>Replenish</td><td>3</td><td>Restore capability</td><td>Leave fight</td></tr><tr><td>Hold</td><td>1</td><td>Ambush / wait</td><td>No immediate effect</td></tr></table>
+<h2>Move</h2><p>Cautious 1 hex / −1 Signature. Normal 2. High Tempo 3 / +1 Signature / Friction.</p>
+<h2>Search</h2><p>Search + Mode + Target Signature − Range + Support. Passive +0. Active +1 / Loud. Focused +2 / 1 Slot.</p>
+<h2>Targeting</h2><p>Low −2 • Medium −1 • High 0 • Identified +1.</p>
+<h2>Strike</h2><p>Light +0 • Standard +1 • Heavy +2 + Weapon Expenditure.</p>
+<h2>Reaction</h2><p>Defend +1 Defense • Evade +1 Defense + move 1 after • Counterattack Light strike if capable • Hold no modifier.</p>
+<h2>Combat Bands</h2><table><tr><th>Diff</th><th>Band</th><th>1</th><th>2–5</th><th>6</th></tr><tr><td>−2−</td><td>Poor</td><td>No</td><td>No</td><td>Light</td></tr><tr><td>−1 to +1</td><td>Even</td><td>No</td><td>Light</td><td>Heavy</td></tr><tr><td>+2 to +3</td><td>Favorable</td><td>Light</td><td>Heavy</td><td>Crippled</td></tr><tr><td>+4+</td><td>Dominant</td><td>Heavy</td><td>Crippled</td><td>Destroyed</td></tr></table>
+<h2>Synchronization</h2><p>1 Slot; declare Strike Time. First attack normal Defense; second −1; third+ −2. Three+ participants mark Friction.</p>
+<h2>Entropy</h2><p>Friction = +1 Time after complex Actions. Disruption = −1 Search/Sync. Destruction = −1 offense. 0 Low; 1 Moderate; 2 High/Disrupted; 3 Critical/Disorganized.</p>
+<h2>Command</h2><p>3 Slots. Focused Search • Immediate Retask • Synchronization • Push Through • Restore Command • Force complex Action.</p>
+<h2>Before I Commit</h2><ol><li>What do I know?</li><li>How old is it?</li><li>What position am I creating?</li><li>What am I exposing?</li><li>Act now or wait?</li><li>How much do I commit?</li><li>What Reaction am I allowing?</li><li>What Entropy am I creating?</li><li>When am I Ready again?</li></ol>
+<footer><strong>Sea of Uncertainty</strong> — working design archive.<br>
+Inspired by <em>Transforming Naval Wargaming: A Framework for Operational-Level Wargaming</em>. Original game design.</footer></main></body></html>

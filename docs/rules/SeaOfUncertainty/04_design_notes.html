@@ -1,114 +1,19 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sea of Uncertainty — Design Notes</title><link rel="stylesheet" href="styles.css"></head><body>
-<div class="site-nav"><div class="inner">
-  <div class="brand">Sea of Uncertainty</div>
-  <div class="navlinks">
-    <a href="index.html">Home</a>
-    <a href="01_design_constitution.html">Design Constitution</a>
-    <a href="02_prototype_rules_v0_4.html">Prototype Rules</a>
-    <a href="03_player_aid.html">Player Aid</a>
-    <a href="04_design_notes.html">Design Notes</a>
-  </div>
-</div></div>
-<main class="wrap">
-<section class="hero"><span class="kicker">Design Notes • v0.4 Playtest Agenda</span><h1>What Are We Testing Now?</h1>
-<p class="subtitle">The v0.4 playtest agenda: what is now authoritative, what remains provisional, and what we need to observe before adding additional naval detail.</p></section>
-
-<h2>Current Answer</h2>
-<div class="callout good"><strong>v0.4 is the first version that should be judged as a playable game rather than a design essay.</strong> The authoritative loop is now <strong>Ready → Choose One Action → React → Resolve → Entropy → Schedule</strong>. All other theory must prove that it improves this loop.</div>
-
-<h2>Strongest Mechanics</h2>
-<table><thead><tr><th>Mechanic</th><th>Confidence</th><th>Why it belongs</th></tr></thead><tbody>
-<tr><td>Asynchronous Ready Time / Clock</td><td>★★★★★</td><td>Turns tempo into a real operational resource.</td></tr>
-<tr><td>Standing Missions + Action Menu</td><td>★★★★★</td><td>Lets players command organizations instead of repeatedly “activating units.”</td></tr>
-<tr><td>Friction expressed through time</td><td>★★★★★</td><td>Creates consequences without a giant random-event subsystem.</td></tr>
-<tr><td>Physical maneuver + bounded combat</td><td>★★★★★</td><td>Preserves the essential pleasure of a naval wargame.</td></tr>
-<tr><td>Synchronization</td><td>★★★★☆</td><td>Potentially the signature operational decision.</td></tr>
-<tr><td>Information aging</td><td>★★★★☆</td><td>Makes reconnaissance a continuous contest rather than a binary reveal.</td></tr>
-</tbody></table>
-
-<h2>Most Questionable Mechanics</h2>
-
-<details open><summary>Command Attention</summary>
-<p>The concept is strong; the exact implementation is not yet proven. Generic “Command Points” risk becoming abstract currency. Command Slots are better because they represent finite attention, but we still need to test whether slots create interesting prioritization rather than tedious assignment.</p>
-</details>
-
-<details open><summary>Entropy / Cohesion</summary>
-<p>Entropy is now restored as an explicit core system, but not as a generic morale bar. It represents physical capability that remains present yet is temporarily unavailable because friction, disruption, destruction, exhaustion, and mission churn interfere with effective action.</p>
-<p>v0.4 compresses Entropy to three visible source boxes: <strong>Friction / Disruption / Destruction</strong>. The count yields Low / Moderate / High / Critical Entropy; two sources make the Formation Disrupted and all three make it Disorganized. This is intentionally simple, but the playtest must tell us whether the source boxes feel explanatory or merely punitive.</p>
-</details>
-
-<details open><summary>Contact Model</summary>
-<p>A single detection ladder was too gamey. Location certainty + identity certainty + age feels more faithful and more decision-rich. It still needs a fast tabletop procedure so the information game does not become marker administration.</p>
-</details>
-
-<details open><summary>Universal Resolution</summary>
-<p>The earlier “2d6 + modifiers” concept is useful as prototype scaffolding but is too generic to define the final game. The intended resolution philosophy is now bounded uncertainty: decisions first establish a result band, then a small die result determines the exact outcome.</p>
-</details>
-
-<details open><summary>Command Network</summary>
-<p>This is the subsystem most likely to become a separate mini-game. Communications should matter only through three consequences: what you know, when you know it, and what orders you can transmit. If we start tracing packet routing, we have gone too far.</p>
-</details>
-
-<details open><summary>Logistics / Endurance</summary>
-<p>Endurance belongs only if it feeds the core engine. It should change time, friction, movement, and readiness — not create a detached logistics accounting game.</p>
-</details>
-
-<h2>The Unifying Mechanical Language</h2>
-<p>Every future rule should change one or more of these variables:</p>
-<table><thead><tr><th>Variable</th><th>Player-facing question</th></tr></thead><tbody>
-<tr><td>Time</td><td>When can I act?</td></tr>
-<tr><td>Position</td><td>Where can I influence the fight?</td></tr>
-<tr><td>Information</td><td>What do I believe is happening?</td></tr>
-<tr><td>Command</td><td>What can I deliberately change or coordinate?</td></tr>
-<tr><td>Entropy</td><td>Which sources are making otherwise-present capability unavailable?</td></tr>
-<tr><td>Physical Capability</td><td>What can this force actually do?</td></tr>
-</tbody></table>
-
-<h2>What Must Never Be Lost</h2>
-<div class="grid">
-<div class="card wide"><h3>Move Things Around</h3><p>Operational hexes, screens, patrol lines, flanking, standoff distances, chokepoints, and positioning are not ornamental. They are central player actions.</p></div>
-<div class="card wide"><h3>Pew Pew Pew</h3><p>Detection, target selection, weapon commitment, defense, leakers, damage, and force preservation must remain dramatic and satisfying.</p></div>
-</div>
-
-<h2>v0.4 Playtest Setup</h2>
-<p>Do not add more systems before testing the action chassis. Use the smallest kinetic scenario that lets every core action matter:</p>
-<ul>
-<li>Blue: 1 Carrier Group, 1 SAG, 1 SSN, 1 land-based air group.</li>
-<li>Red: same.</li>
-<li>Approximately 12 × 10 operational hexes.</li>
-<li>12–16 operational Time spaces.</li>
-<li>One clear objective, such as protecting or preventing an amphibious transit.</li>
-<li>Use the v0.4 Action Rules and Sequence of Play as written wherever possible; record every place where a rule is missing, ambiguous, automatic, or uninteresting.</li>
-</ul>
-<h2>Questions the Prototype Must Answer</h2>
-<ul>
-<li>When a Formation becomes Ready, are there usually at least 2–4 plausible Actions?</li>
-<li>Does the Ready Time system create tempo decisions without becoming cumbersome?</li>
-<li>Is Cautious / Normal / High Tempo movement a real tradeoff?</li>
-<li>Does Passive / Active / Focused Search make information feel valuable and contested?</li>
-<li>Do Contact Age and certainty actually change what players decide to do?</li>
-<li>Does Strike commitment create meaningful weapon-conservation decisions?</li>
-<li>Is “strike now versus synchronize” genuinely difficult rather than obviously solved?</li>
-<li>Do defender Reactions keep the non-active player engaged?</li>
-<li>Do Combat Bands feel shaped by decisions rather than by luck?</li>
-<li>Do Friction / Disruption / Destruction explain Entropy clearly enough?</li>
-<li>Is Recover a painful but attractive choice?</li>
-<li>Do 3 Command Slots create prioritization instead of bookkeeping?</li>
-<li>Does Push Through feel powerful enough to tempt the player but costly enough to ration?</li>
-<li>Are we physically moving and fighting enough for this to feel like a naval wargame?</li>
-<li>After a loss, can the player explain it mostly in terms of decisions, timing, information, and commitment?</li>
-</ul>
-
-<div class="quote">The decisive test: when a Formation becomes Ready, does the player immediately see several meaningful choices — and care about the consequences of each?</div>
-
-<h2>Source Lineage</h2>
-<p>The design is inspired by the Perla-led framework’s emphasis on the six dimensions of wargaming, the interaction of operational / information / command topologies, friction and uncertainty, command as a countervailing force, and the importance of time and synchronization. The current rules deliberately translate those ideas into a hobby-boardgame structure rather than reproduce the paper’s example game.</p>
-
-<footer>
-  <strong>Sea of Uncertainty</strong> — working design archive.<br>
-  Inspired by the design framework in <em>Transforming Naval Wargaming: A Framework for Operational-Level Wargaming</em>
-  (Peter P. Perla, Michael C. Markowitz, Christopher A. Weuve, Stephen Downes-Martin, Michael Martin, and Paul V. Vebber).
-  This is an original game design, not a reconstruction of <em>Road to Baghdad</em>.
-</footer>
-</main></body></html>
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sea of Uncertainty — Design Notes v0.5</title><link rel="stylesheet" href="styles.css"></head><body><div class="site-nav"><div class="inner">
+<div class="brand"><strong>Sea of Uncertainty</strong></div>
+<div class="navlinks">
+<a href="index.html">Home</a>
+<a href="01_design_constitution.html">Design Constitution</a>
+<a href="02_prototype_rules_v0_5.html">Prototype Rules</a>
+<a href="03_player_aid.html">Player Aid</a>
+<a href="04_design_notes.html">Design Notes</a>
+</div></div></div><main>
+<section class="hero"><span class="kicker">Design Notes • v0.5</span><h1>What Are We Testing Now?</h1><p>v0.5 is detailed enough to expose where the game works and where more realism may actually be useful.</p></section>
+<h2>Current Thesis</h2><p><strong>One loop:</strong> Ready → Choose → Posture → React → Resolve → Entropy → Schedule.</p>
+<h2>Must Prove</h2><ol><li>Ready Time creates tempo without bookkeeping.</li><li>Missions reduce chores without reducing agency.</li><li>Search and Contact Age matter repeatedly.</li><li>Combat stays tactile.</li><li>Bounded luck feels fair.</li><li>Entropy explains degradation.</li><li>Command Slots create prioritization.</li><li>Synchronization is strong but not automatic.</li></ol>
+<h2>Confidence</h2><table><tr><th>Mechanic</th><th>Confidence</th><th>Watch</th></tr><tr><td>Ready Time</td><td>★★★★★</td><td>Many simultaneous formations</td></tr><tr><td>Action Menu</td><td>★★★★★</td><td>All actions used?</td></tr><tr><td>Movement</td><td>★★★★☆</td><td>High Tempo dominance</td></tr><tr><td>Search</td><td>★★★★☆</td><td>Focused Search value</td></tr><tr><td>Contact Age</td><td>★★★★☆</td><td>Age 2 penalty</td></tr><tr><td>Combat Bands</td><td>★★★★☆</td><td>Variation</td></tr><tr><td>Reaction</td><td>★★★★☆</td><td>Counterattack strength</td></tr><tr><td>Synchronization</td><td>★★★★☆</td><td>Too strong?</td></tr><tr><td>Entropy</td><td>★★★☆☆</td><td>Explanatory vs punitive</td></tr><tr><td>Command</td><td>★★★☆☆</td><td>3 Slots right?</td></tr><tr><td>Endurance</td><td>★★★☆☆</td><td>Artificial degradation?</td></tr></table>
+<h2>Known Abstractions</h2><p>Air, submarine warfare, missile defense, weapon inventories, logistics, and EW are still intentionally coarse. Add detail only after the chassis proves fun.</p>
+<h2>Recommended Test</h2><ul><li>8 total Formations.</li><li>12×10 map.</li><li>12–16 Time spaces.</li><li>One central objective.</li><li>One/two chokepoints.</li><li>One ambiguous or false Contact.</li></ul>
+<h2>Record</h2><ul><li>Every obvious choice.</li><li>Repeated lookup.</li><li>Inactive-player lull.</li><li>Unfair-feeling die result.</li><li>Unused action.</li><li>Dominant action.</li><li>Contact Age changing a decision.</li><li>Command Slot scarcity.</li></ul>
+<h2>Next Detail Layers — Only If Earned</h2><ol><li>Distinct surface/sub/air behavior.</li><li>Nuanced Search/Signature.</li><li>Layered missile defense.</li><li>Weapon expenditure.</li><li>Scenario logistics.</li><li>EW/deception.</li><li>Different command architectures.</li></ol>
+<footer><strong>Sea of Uncertainty</strong> — working design archive.<br>
+Inspired by <em>Transforming Naval Wargaming: A Framework for Operational-Level Wargaming</em>. Original game design.</footer></main></body></html>
