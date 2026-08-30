@@ -27,7 +27,7 @@ body{
 }
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
-.wrap{max-width:1180px;margin:0 auto;padding:34px 32px 72px}
+.wrap{max-width:1120px;margin:0 auto;padding:34px 64px 72px}
 .site-nav{
   position:sticky;top:0;z-index:10;
   backdrop-filter:blur(16px);
@@ -35,7 +35,7 @@ a:hover{text-decoration:underline}
   border-bottom:1px solid rgba(89,195,217,.16);
 }
 .site-nav .inner{
-  max-width:1180px;margin:0 auto;padding:12px 24px;
+  max-width:1120px;margin:0 auto;padding:12px 64px;
   display:flex;gap:18px;align-items:center;flex-wrap:wrap;
 }
 .brand{font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#fff}
@@ -134,11 +134,19 @@ details{
   margin:12px 0;padding:14px 16px;border-radius:12px;border:1px solid var(--line);background:rgba(12,29,42,.55)
 }
 summary{cursor:pointer;font-weight:800;color:#fff}
+@media(max-width:1000px){
+  .wrap{padding-left:40px;padding-right:40px}
+  .site-nav .inner{padding-left:40px;padding-right:40px}
+}
 @media(max-width:850px){
   .card,.wide{grid-column:1/-1}
   .hero{padding:28px}
   .toc{columns:1}
   .choice-row{grid-template-columns:1fr}
+}
+@media(max-width:600px){
+  .wrap{padding-left:20px;padding-right:20px}
+  .site-nav .inner{padding-left:20px;padding-right:20px}
 }
 @media print{
   .site-nav{display:none}
